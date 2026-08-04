@@ -9,7 +9,7 @@
     "fishyume": "dist/cli.js",
     "wf": "dist/cli.js"
   },
-  "description": "Fishyume local-first recoverable workflow runner",
+  "description": "Fishyume 本地优先、可恢复工作流引擎",
   "license": "Apache-2.0",
   "files": ["dist", "README.md", "LICENSE"],
   "repository": {

@@ -1,7 +1,7 @@
 {
   "name": "fishyume-engine-linux-x64",
   "version": "0.2.1-alpha.1",
-  "description": "Fishyume Engine for Linux x64",
+  "description": "适用于 Linux x64 的 Fishyume 引擎",
   "license": "Apache-2.0",
   "os": ["linux"],
   "cpu": ["x64"],
