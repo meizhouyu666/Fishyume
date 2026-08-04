@@ -1,0 +1,16 @@
+{
+  "name": "fishyume-engine-linux-x64",
+  "version": "0.2.1-alpha.1",
+  "description": "Fishyume Engine for Linux x64",
+  "license": "Apache-2.0",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "files": ["bin", "LICENSE"],
+  "bin": {
+    "fishyume-engine": "bin/fishyume-engine"
+  },
+  "scripts": {
+    "prepack": "node scripts/ensure-executable.mjs"
+  },
+  "main": "bin/fishyume-engine"
+}

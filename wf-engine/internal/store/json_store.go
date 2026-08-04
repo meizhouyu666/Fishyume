@@ -1,15 +1,40 @@
 package store
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"sync"
 )
 
-type Store struct{ root string }
+type FaultInjector func(operation, path string) error
+
+type Store struct {
+	root string
+
+	faultMu       sync.RWMutex
+	faultInjector FaultInjector
+}
+
+var safeID = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,127}$`)
 
 func New(root string) *Store { return &Store{root: root} }
+
+// LegacyFallback returns the former default store for read-only compatibility
+// lookup. Callers must not use it for new writes or migration.
+func (s *Store) LegacyFallback() *Store {
+	legacyRoot, err := LegacyStateRoot()
+	if err != nil || filepath.Clean(legacyRoot) == filepath.Clean(s.root) {
+		return nil
+	}
+	return New(legacyRoot)
+}
 
 func NewDefault() (*Store, error) {
 	root, err := StateRoot()
@@ -20,6 +45,25 @@ func NewDefault() (*Store, error) {
 }
 
 func (s *Store) Root() string { return s.root }
+
+func (s *Store) SetFaultInjectorForTest(injector FaultInjector) {
+	s.faultMu.Lock()
+	defer s.faultMu.Unlock()
+	s.faultInjector = injector
+}
+
+func (s *Store) injectFault(operation, path string) error {
+	s.faultMu.RLock()
+	injector := s.faultInjector
+	s.faultMu.RUnlock()
+	if injector == nil {
+		return nil
+	}
+	if err := injector(operation, path); err != nil {
+		return fmt.Errorf("injected %s failure for %q: %w", operation, path, err)
+	}
+	return nil
+}
 
 func (s *Store) RunDir(runID string) string { return filepath.Join(s.root, "runs", runID) }
 
@@ -33,7 +77,34 @@ func (s *Store) OutputPath(runID string) string {
 	return filepath.Join(s.RunDir(runID), "nodes", "agent-1", "output.log")
 }
 
+func (s *Store) WorkflowPath(runID string) string {
+	return filepath.Join(s.RunDir(runID), "workflow.json")
+}
+
+func (s *Store) NodePath(runID, nodeID string) string {
+	return filepath.Join(s.RunDir(runID), "nodes", nodeID, "node.json")
+}
+
+func (s *Store) AttemptDir(runID, nodeID string, number int) string {
+	return filepath.Join(s.RunDir(runID), "nodes", nodeID, "attempts", strconv.Itoa(number))
+}
+
+func (s *Store) AttemptPath(runID, nodeID string, number int) string {
+	return filepath.Join(s.AttemptDir(runID, nodeID, number), "attempt.json")
+}
+
+func (s *Store) ResultPath(runID, nodeID string, number int) string {
+	return filepath.Join(s.AttemptDir(runID, nodeID, number), "result.json")
+}
+
+func (s *Store) NodeOutputPath(runID, nodeID string, number int) string {
+	return filepath.Join(s.AttemptDir(runID, nodeID, number), "output.log")
+}
+
 func (s *Store) InitRun(runID string) error {
+	if err := validateID("run", runID); err != nil {
+		return err
+	}
 	dir := filepath.Dir(s.OutputPath(runID))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create run directory %q: %w", dir, err)
@@ -48,9 +119,83 @@ func (s *Store) InitRun(runID string) error {
 	return nil
 }
 
+func (s *Store) InitWorkflowRun(runID string) error {
+	if err := validateID("run", runID); err != nil {
+		return err
+	}
+	dir := filepath.Join(s.RunDir(runID), "nodes")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create workflow run directory %q: %w", dir, err)
+	}
+	return nil
+}
+
 func (s *Store) WriteSnapshot(runID string, snapshot any) error {
+	if err := validateID("run", runID); err != nil {
+		return err
+	}
 	path := s.SnapshotPath(runID)
-	data, err := json.MarshalIndent(snapshot, "", "  ")
+	return s.writeJSON(path, snapshot)
+}
+
+func (s *Store) WriteWorkflow(runID string, document any) error {
+	if err := validateID("run", runID); err != nil {
+		return err
+	}
+	path := s.WorkflowPath(runID)
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("normalized workflow for run %q already exists", runID)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect workflow snapshot %q: %w", path, err)
+	}
+	return s.writeJSON(path, document)
+}
+
+func (s *Store) WriteNode(runID, nodeID string, snapshot any) error {
+	if err := validateRunNode(runID, nodeID); err != nil {
+		return err
+	}
+	return s.writeJSON(s.NodePath(runID, nodeID), snapshot)
+}
+
+func (s *Store) WriteAttempt(runID, nodeID string, number int, snapshot any) error {
+	if err := validateAttempt(runID, nodeID, number); err != nil {
+		return err
+	}
+	path := s.AttemptPath(runID, nodeID, number)
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("attempt %d for node %q already exists", number, nodeID)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect attempt %q: %w", path, err)
+	}
+	if err := s.writeJSON(path, snapshot); err != nil {
+		return err
+	}
+	return os.WriteFile(s.NodeOutputPath(runID, nodeID, number), nil, 0o600)
+}
+
+func (s *Store) UpdateAttempt(runID, nodeID string, number int, snapshot any) error {
+	if err := validateAttempt(runID, nodeID, number); err != nil {
+		return err
+	}
+	return s.writeJSON(s.AttemptPath(runID, nodeID, number), snapshot)
+}
+
+func (s *Store) WriteResult(runID, nodeID string, number int, result any) error {
+	if err := validateAttempt(runID, nodeID, number); err != nil {
+		return err
+	}
+	return s.writeJSON(s.ResultPath(runID, nodeID, number), result)
+}
+
+func (s *Store) writeJSON(path string, value any) error {
+	if err := s.injectFault("write_json", path); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create snapshot directory %q: %w", filepath.Dir(path), err)
+	}
+	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode snapshot for %q: %w", path, err)
 	}
@@ -87,7 +232,13 @@ func (s *Store) WriteSnapshot(runID string, snapshot any) error {
 }
 
 func (s *Store) AppendEvent(runID string, event any) error {
+	if err := validateID("run", runID); err != nil {
+		return err
+	}
 	path := s.EventsPath(runID)
+	if err := s.injectFault("append_event", path); err != nil {
+		return err
+	}
 	data, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("encode event for %q: %w", path, err)
@@ -104,9 +255,207 @@ func (s *Store) AppendEvent(runID string, event any) error {
 }
 
 func (s *Store) WriteOutput(runID, output string) error {
+	if err := validateID("run", runID); err != nil {
+		return err
+	}
 	path := s.OutputPath(runID)
+	if err := s.injectFault("write_output", path); err != nil {
+		return err
+	}
 	if err := os.WriteFile(path, []byte(output), 0o600); err != nil {
 		return fmt.Errorf("write node output %q: %w", path, err)
+	}
+	return nil
+}
+
+func (s *Store) WriteNodeOutput(runID, nodeID string, number int, output string) error {
+	if err := validateAttempt(runID, nodeID, number); err != nil {
+		return err
+	}
+	path := s.NodeOutputPath(runID, nodeID, number)
+	if err := s.injectFault("write_output", path); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, []byte(output), 0o600); err != nil {
+		return fmt.Errorf("write node output %q: %w", path, err)
+	}
+	return nil
+}
+
+func (s *Store) ReadSnapshot(runID string, target any) error {
+	if err := validateID("run", runID); err != nil {
+		return err
+	}
+	return readJSON(s.SnapshotPath(runID), target)
+}
+
+func (s *Store) ReadWorkflow(runID string, target any) error {
+	if err := validateID("run", runID); err != nil {
+		return err
+	}
+	return readJSON(s.WorkflowPath(runID), target)
+}
+
+func (s *Store) ReadNode(runID, nodeID string, target any) error {
+	if err := validateRunNode(runID, nodeID); err != nil {
+		return err
+	}
+	return readJSON(s.NodePath(runID, nodeID), target)
+}
+
+func (s *Store) ReadAttempt(runID, nodeID string, number int, target any) error {
+	if err := validateAttempt(runID, nodeID, number); err != nil {
+		return err
+	}
+	return readJSON(s.AttemptPath(runID, nodeID, number), target)
+}
+
+func (s *Store) ReadResult(runID, nodeID string, number int, target any) error {
+	if err := validateAttempt(runID, nodeID, number); err != nil {
+		return err
+	}
+	return readJSON(s.ResultPath(runID, nodeID, number), target)
+}
+
+func (s *Store) ListNodeIDs(runID string) ([]string, error) {
+	if err := validateID("run", runID); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(filepath.Join(s.RunDir(runID), "nodes"))
+	if err != nil {
+		return nil, fmt.Errorf("list nodes for run %q: %w", runID, err)
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() && safeID.MatchString(entry.Name()) {
+			ids = append(ids, entry.Name())
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func (s *Store) ListAttempts(runID, nodeID string) ([]int, error) {
+	if err := validateRunNode(runID, nodeID); err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(s.RunDir(runID), "nodes", nodeID, "attempts")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return []int{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list attempts for node %q: %w", nodeID, err)
+	}
+	numbers := make([]int, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		number, err := strconv.Atoi(entry.Name())
+		if err == nil && number > 0 {
+			numbers = append(numbers, number)
+		}
+	}
+	sort.Ints(numbers)
+	return numbers, nil
+}
+
+func (s *Store) ReadEvents(runID string, target func(json.RawMessage) error) error {
+	if err := validateID("run", runID); err != nil {
+		return err
+	}
+	file, err := os.Open(s.EventsPath(runID))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("open events for run %q: %w", runID, err)
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	buffer := make([]byte, 64*1024)
+	scanner.Buffer(buffer, 1024*1024)
+	for scanner.Scan() {
+		line := append(json.RawMessage(nil), scanner.Bytes()...)
+		if !json.Valid(line) {
+			return fmt.Errorf("corrupted event log for run %q", runID)
+		}
+		if err := target(line); err != nil {
+			return err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read events for run %q: %w", runID, err)
+	}
+	return nil
+}
+
+type SnapshotKind string
+
+const (
+	SnapshotM2       SnapshotKind = "m2"
+	SnapshotLegacyM1 SnapshotKind = "legacy-m1"
+)
+
+func (s *Store) DetectSnapshot(runID string) (SnapshotKind, error) {
+	var header struct {
+		ProtocolVersion int    `json:"protocolVersion"`
+		Phase           string `json:"phase"`
+		Status          string `json:"status"`
+	}
+	if err := s.ReadSnapshot(runID, &header); err != nil {
+		return "", err
+	}
+	if header.ProtocolVersion == 1 || (header.Status != "" && header.Phase == "") {
+		return SnapshotLegacyM1, nil
+	}
+	if header.ProtocolVersion == 2 && header.Phase != "" {
+		return SnapshotM2, nil
+	}
+	return "", fmt.Errorf("run %q has an unrecognized snapshot format", runID)
+}
+
+func readJSON(path string, target any) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open snapshot %q: %w", path, err)
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(io.LimitReader(file, 4*1024*1024))
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("decode snapshot %q: %w", path, err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("snapshot %q contains multiple JSON values", path)
+		}
+		return fmt.Errorf("decode trailing data in %q: %w", path, err)
+	}
+	return nil
+}
+
+func validateID(kind, value string) error {
+	if !safeID.MatchString(value) {
+		return fmt.Errorf("invalid %s id %q", kind, value)
+	}
+	return nil
+}
+
+func validateRunNode(runID, nodeID string) error {
+	if err := validateID("run", runID); err != nil {
+		return err
+	}
+	return validateID("node", nodeID)
+}
+
+func validateAttempt(runID, nodeID string, number int) error {
+	if err := validateRunNode(runID, nodeID); err != nil {
+		return err
+	}
+	if number < 1 {
+		return fmt.Errorf("attempt number must be positive")
 	}
 	return nil
 }

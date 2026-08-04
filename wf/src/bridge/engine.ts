@@ -6,6 +6,8 @@ import type {EngineHello, RpcNotification, RpcRequest, RpcResponse, RunEvent} fr
 import {protocolVersion} from './types.js';
 
 const maxMessageBytes = 1024 * 1024;
+const gracefulCloseTimeoutMs = 1500;
+const forcedCloseTimeoutMs = 5000;
 
 export type EventListener = (event: RunEvent) => void;
 export type DiagnosticListener = (message: string) => void;
@@ -18,11 +20,24 @@ export interface EngineClient {
   close(): Promise<void>;
 }
 
+export class EngineRpcError extends Error {
+  constructor(message: string, readonly code: number, readonly data?: unknown) { super(message); this.name = 'EngineRpcError'; }
+}
+
 export function resolveEnginePath(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.WF_ENGINE_PATH) return env.WF_ENGINE_PATH;
+  if (env.FISHYUME_ENGINE_PATH) return env.FISHYUME_ENGINE_PATH;
   const here = dirname(fileURLToPath(import.meta.url));
-  const sibling = join(here, '..', process.platform === 'win32' ? 'wf-engine.exe' : 'wf-engine');
-  return existsSync(sibling) ? sibling : 'wf-engine';
+  const binary = process.platform === 'win32' ? 'fishyume-engine.exe' : 'fishyume-engine';
+  const platformPackage = process.platform === 'win32' && process.arch === 'x64'
+    ? join(here, '..', '..', '..', 'fishyume-engine-win32-x64', 'bin', binary)
+    : process.platform === 'linux' && process.arch === 'x64'
+      ? join(here, '..', '..', '..', 'fishyume-engine-linux-x64', 'bin', binary)
+      : undefined;
+  if (platformPackage && existsSync(platformPackage)) return platformPackage;
+  const development = join(here, '..', '..', '..', 'wf-engine', process.platform === 'win32' ? 'wf-engine.exe' : 'wf-engine');
+  if (existsSync(development)) return development;
+  if (env.WF_ENGINE_PATH) return env.WF_ENGINE_PATH;
+  return binary;
 }
 
 export class EngineBridge implements EngineClient {
@@ -33,15 +48,27 @@ export class EngineBridge implements EngineClient {
   #pending = new Map<number, {resolve(value: unknown): void; reject(reason: Error): void}>();
   #eventListeners = new Set<EventListener>();
   #diagnosticListeners = new Set<DiagnosticListener>();
+  #processClosed = false;
+  #closedPromise: Promise<void>;
+  #resolveClosed!: () => void;
+  #closePromise?: Promise<void>;
 
   constructor(enginePath = resolveEnginePath(), engineArgs: string[] = []) {
+    this.#closedPromise = new Promise(resolve => {this.#resolveClosed = resolve});
     this.child = spawn(enginePath, engineArgs, {stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true});
     this.child.stdout.setEncoding('utf8');
     this.child.stderr.setEncoding('utf8');
     this.child.stdout.on('data', chunk => this.#consumeStdout(String(chunk)));
     this.child.stderr.on('data', chunk => this.#consumeStderr(String(chunk)));
-    this.child.on('error', error => this.#rejectAll(error));
-    this.child.on('exit', (code, signal) => this.#rejectAll(new Error(`wf-engine exited (${code ?? signal ?? 'unknown'})`)));
+    this.child.on('error', error => {
+	  const diagnostic = (error as NodeJS.ErrnoException).code === 'ENOENT'
+	    ? new Error(`Fishyume Engine not found at ${enginePath}. Install the matching platform package or set FISHYUME_ENGINE_PATH.`)
+	    : error;
+	  this.#rejectAll(diagnostic);
+      if (this.child.pid === undefined) this.#markClosed();
+    });
+    this.child.on('exit', (code, signal) => this.#rejectAll(new Error(`fishyume engine exited (${code ?? signal ?? 'unknown'})`)));
+    this.child.on('close', () => this.#markClosed());
   }
 
   onRunEvent(listener: EventListener): () => void {
@@ -79,12 +106,8 @@ export class EngineBridge implements EngineClient {
   }
 
   async close(): Promise<void> {
-    if (this.child.exitCode !== null) return;
-    this.child.stdin.end();
-    await new Promise<void>(resolve => {
-      const timer = setTimeout(() => { this.child.kill(); resolve(); }, 1000);
-      this.child.once('exit', () => { clearTimeout(timer); resolve(); });
-    });
+    this.#closePromise ??= this.#closeProcess();
+    return this.#closePromise;
   }
 
   #consumeStdout(chunk: string): void {
@@ -120,7 +143,7 @@ export class EngineBridge implements EngineClient {
     const pending = this.#pending.get(message.id);
     if (!pending) return;
     this.#pending.delete(message.id);
-    if (message.error) pending.reject(new Error(message.error.message));
+    if (message.error) pending.reject(new EngineRpcError(message.error.message, message.error.code, message.error.data));
     else pending.resolve(message.result);
   }
 
@@ -138,5 +161,35 @@ export class EngineBridge implements EngineClient {
   #rejectAll(error: Error): void {
     for (const pending of this.#pending.values()) pending.reject(error);
     this.#pending.clear();
+  }
+
+  async #closeProcess(): Promise<void> {
+    if (this.#processClosed) return;
+    if (!this.child.stdin.destroyed) this.child.stdin.end();
+    if (await this.#waitForClose(gracefulCloseTimeoutMs)) return;
+    const killSent = this.child.kill('SIGKILL');
+    if (!killSent && !this.#processClosed) throw new Error('fishyume engine did not accept termination request');
+    if (!await this.#waitForClose(forcedCloseTimeoutMs)) {
+      throw new Error(`fishyume engine child ${this.child.pid ?? 'unknown'} did not exit after termination`);
+    }
+  }
+
+  async #waitForClose(timeoutMs: number): Promise<boolean> {
+    if (this.#processClosed) return true;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        this.#closedPromise.then(() => true),
+        new Promise<boolean>(resolve => {timer = setTimeout(() => resolve(false), timeoutMs)}),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  #markClosed(): void {
+    if (this.#processClosed) return;
+    this.#processClosed = true;
+    this.#resolveClosed();
   }
 }

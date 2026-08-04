@@ -58,6 +58,15 @@ func (c *Client) invoke(ctx context.Context, category string, args ...string) (a
 		return nil, fmt.Errorf("cc-panes-ctl %s could not start: %w", category, err)
 	}
 	if result.exitCode != 0 {
+		if strings.HasPrefix(category, "call wait_for_session") {
+			diagnostic := strings.TrimSpace(string(result.stderr))
+			if len(diagnostic) > 512 {
+				diagnostic = diagnostic[:512]
+			}
+			if diagnostic != "" {
+				return nil, fmt.Errorf("cc-panes-ctl %s failed with exit code %d: %s", category, result.exitCode, diagnostic)
+			}
+		}
 		return nil, fmt.Errorf("cc-panes-ctl %s failed with exit code %d", category, result.exitCode)
 	}
 	value, err := decodeStructured(result.stdout)
@@ -79,15 +88,25 @@ func (c *Client) Call(ctx context.Context, tool string, payload any) (any, error
 	return c.invoke(ctx, "call "+tool, "call", tool, "--json", string(data))
 }
 
-func (c *Client) Launch(ctx context.Context, project, tool, runtimeKind, prompt, title string) (launchResult, error) {
-	value, err := c.invoke(ctx, "launch", "launch", "--prompt", prompt, "--cli", tool,
-		"--runtime", runtimeKind, "--title", title, project)
+func (c *Client) LaunchTask(ctx context.Context, project, tool, runtimeKind, prompt, title, profileID string) (launchResult, error) {
+	value, err := c.Call(ctx, "launch_task", map[string]any{
+		"projectPath": project,
+		"cliTool":     tool,
+		"runtimeKind": runtimeKind,
+		"prompt":      prompt,
+		"title":       title,
+		"profileId":   profileID,
+	})
 	if err != nil {
 		return launchResult{}, err
 	}
-	result := launchResult{LaunchID: findString(value, "launchId", "launchID", "id"), SessionID: findString(value, "sessionId", "sessionID")}
+	result := launchResult{
+		LaunchID:  findString(value, "launchId", "launchID", "id"),
+		SessionID: findString(value, "sessionId", "sessionID"),
+		Metadata:  stringFields(value),
+	}
 	if result.SessionID == "" {
-		return launchResult{}, errorsf("launch response did not contain a sessionId")
+		return launchResult{}, errorsf("launch_task response did not contain a sessionId")
 	}
 	return result, nil
 }
@@ -120,8 +139,39 @@ func (c *Client) WaitForSession(ctx context.Context, sessionID string) (string, 
 	}
 }
 
+func (c *Client) ObserveSession(ctx context.Context, sessionID string) (string, error) {
+	value, err := c.Call(ctx, "wait_for_session", map[string]any{
+		"sessionId": sessionID,
+		"waitFor":   []string{"idle", "waitingInput", "error", "exited"},
+		"timeoutMs": 1000,
+	})
+	if err != nil {
+		return "", err
+	}
+	status := findString(value, "finalStatus", "status", "state", "sessionStatus")
+	switch strings.ToLower(status) {
+	case "initializing", "active", "thinking", "toolrunning", "compacting", "idle", "waitinginput", "error", "exited":
+		return status, nil
+	case "":
+		return "", errorsf("wait response did not contain finalStatus")
+	default:
+		return "", errorsf("wait response contained unsupported session state %q", status)
+	}
+}
+
 func (c *Client) QueryBinding(ctx context.Context, project, sessionID, bindingID string) (*taskBinding, error) {
-	value, err := c.Call(ctx, "query_task_bindings", map[string]any{"projectPath": project, "sessionId": sessionID, "limit": 20})
+	binding, err := c.queryBinding(ctx, map[string]any{"projectPath": project, "sessionId": sessionID, "limit": 20}, bindingID)
+	if err != nil {
+		return nil, err
+	}
+	if binding != nil {
+		return binding, nil
+	}
+	return c.queryBinding(ctx, map[string]any{"projectPath": project, "limit": 50}, bindingID)
+}
+
+func (c *Client) queryBinding(ctx context.Context, payload map[string]any, bindingID string) (*taskBinding, error) {
+	value, err := c.Call(ctx, "query_task_bindings", payload)
 	if err != nil {
 		return nil, err
 	}
@@ -149,8 +199,31 @@ func (c *Client) ReadOutput(ctx context.Context, sessionID string, lines int) (s
 }
 
 func (c *Client) Kill(ctx context.Context, sessionID string) error {
-	_, err := c.invoke(ctx, "sessions kill", "sessions", "kill", sessionID)
-	return err
+	value, err := c.Call(ctx, "kill_session", map[string]any{"sessionId": sessionID})
+	if err != nil {
+		return err
+	}
+	response, ok := value.(map[string]any)
+	if !ok {
+		return errorsf("kill_session response was not an object")
+	}
+	success, ok := response["success"].(bool)
+	if !ok {
+		return errorsf("kill_session response did not contain a boolean success field")
+	}
+	if !success {
+		return errorsf("kill_session response reported success=false")
+	}
+	if returned, exists := response["sessionId"]; exists {
+		returnedSessionID, ok := returned.(string)
+		if !ok || returnedSessionID == "" {
+			return errorsf("kill_session response contained an invalid sessionId")
+		}
+		if returnedSessionID != sessionID {
+			return errorsf("kill_session response sessionId %q did not match requested session %q", returnedSessionID, sessionID)
+		}
+	}
+	return nil
 }
 
 func decodeStructured(data []byte) (any, error) {
@@ -222,6 +295,20 @@ func findArray(value any, key string) []any {
 		}
 	}
 	return nil
+}
+
+func stringFields(value any) map[string]string {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	fields := make(map[string]string)
+	for key, value := range object {
+		if text, ok := value.(string); ok && text != "" {
+			fields[key] = text
+		}
+	}
+	return fields
 }
 
 func containsProject(value any, project string) bool {

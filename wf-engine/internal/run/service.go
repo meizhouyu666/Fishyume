@@ -3,15 +3,33 @@ package run
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/store"
+	"wf.local/wf-engine/internal/workflow"
+)
+
+const protocolVersion = 2
+
+// State schema versioning is independent from the JSON-RPC protocol version.
+const stateSchemaVersion = 1
+
+const (
+	startupIdleReconcileChecks = 20
+	startupIdleReconcileDelay  = 500 * time.Millisecond
+	cancelRequestPollInterval  = 25 * time.Millisecond
+	cancelStateReadGrace       = 2 * time.Second
+	cancelSessionPersistGrace  = 30 * time.Second
+	cancelBackendTimeout       = 30 * time.Second
 )
 
 type StartRequest struct {
@@ -19,6 +37,26 @@ type StartRequest struct {
 	Tool    string `json:"tool"`
 	Runtime string `json:"runtime"`
 	Task    string `json:"task"`
+}
+
+type StartWorkflowRequest struct {
+	Project    string               `json:"project"`
+	Filename   string               `json:"filename"`
+	Content    string               `json:"content"`
+	Inputs     map[string]any       `json:"inputs,omitempty"`
+	Normalized *workflow.Normalized `json:"normalized,omitempty"`
+}
+
+type ResumeAction struct {
+	Type                     string `json:"type"`
+	NodeID                   string `json:"nodeId"`
+	Reason                   string `json:"reason,omitempty"`
+	AcknowledgeDuplicateRisk bool   `json:"acknowledgeDuplicateRisk,omitempty"`
+}
+
+type ResumeRequest struct {
+	RunID  string        `json:"runId"`
+	Action *ResumeAction `json:"action,omitempty"`
 }
 
 type DoctorReport struct {
@@ -29,42 +67,46 @@ type DoctorReport struct {
 	ProjectDiagnostic string `json:"projectDiagnostic,omitempty"`
 }
 
-type EventSink func(RunEvent)
-
-type activeRun struct {
-	mu              sync.Mutex
-	persistMu       sync.Mutex
-	snapshot        RunSnapshot
-	sequence        uint64
-	session         *backend.Session
-	sessionKilled   bool
-	launchPending   bool
-	launchDone      chan struct{}
-	cancelRequested bool
-	killInFlight    bool
-	killDone        chan struct{}
-	cancel          context.CancelFunc
-	detached        bool
-	cancelled       bool
+type StatusView struct {
+	ProtocolVersion int               `json:"protocolVersion"`
+	Legacy          bool              `json:"legacy"`
+	Run             *WorkflowSnapshot `json:"run,omitempty"`
+	LegacyRun       *LegacySnapshot   `json:"legacyRun,omitempty"`
+	Nodes           []NodeSnapshot    `json:"nodes,omitempty"`
+	ActiveAttempt   *AttemptSnapshot  `json:"activeAttempt,omitempty"`
 }
 
-type serviceHooks struct {
-	beforeDispatch func()
-	beforeRunning  func()
-	afterExecute   func()
-	onCancelWait   func()
+type EventSink func(WorkflowEvent)
+
+type controller struct {
+	cancel     context.CancelFunc
+	done       chan struct{}
+	lease      *store.Lease
+	generation uint64
+	stopping   bool
+	err        error
+}
+
+type serviceTestHooks struct {
+	beforeControllerMutation func(point string)
+	afterLaunch              func()
+	idleReconcileDelay       func(context.Context) error
+	cancelRequestDelay       func(context.Context) error
 }
 
 type Service struct {
 	backend backend.Backend
 	store   *store.Store
+	leases  *store.LeaseManager
 	now     func() time.Time
 
-	mu        sync.RWMutex
-	runs      map[string]*activeRun
-	sinkMu    sync.RWMutex
-	eventSink EventSink
-	hooks     serviceHooks
+	mu             sync.Mutex
+	controllers    map[string]*controller
+	nextGeneration uint64
+	persistMu      sync.Mutex
+	sinkMu         sync.RWMutex
+	eventSink      EventSink
+	testHooks      serviceTestHooks
 }
 
 func NewService(b backend.Backend, stores ...*store.Store) *Service {
@@ -74,7 +116,11 @@ func NewService(b backend.Backend, stores ...*store.Store) *Service {
 	} else if defaultStore, err := store.NewDefault(); err == nil {
 		state = defaultStore
 	}
-	return &Service{backend: b, store: state, now: time.Now, runs: make(map[string]*activeRun)}
+	service := &Service{backend: b, store: state, now: time.Now, controllers: make(map[string]*controller)}
+	if state != nil {
+		service.leases = store.NewLeaseManager(state)
+	}
+	return service
 }
 
 func (s *Service) SetEventSink(sink EventSink) {
@@ -109,11 +155,11 @@ func (s *Service) Doctor(ctx context.Context, project string) DoctorReport {
 	return report
 }
 
-func (s *Service) Start(_ context.Context, request StartRequest) (RunSnapshot, error) {
+func (s *Service) Start(ctx context.Context, request StartRequest) (WorkflowSnapshot, error) {
 	request.Project = strings.TrimSpace(request.Project)
 	request.Task = strings.TrimSpace(request.Task)
 	if request.Project == "" || request.Task == "" {
-		return RunSnapshot{}, errors.New("project and task are required")
+		return WorkflowSnapshot{}, errors.New("project and task are required")
 	}
 	if request.Tool == "" {
 		request.Tool = "codex"
@@ -121,317 +167,1336 @@ func (s *Service) Start(_ context.Context, request StartRequest) (RunSnapshot, e
 	if request.Runtime == "" {
 		request.Runtime = "local"
 	}
-	if request.Tool != "codex" && request.Tool != "claude" && request.Tool != "opencode" {
-		return RunSnapshot{}, fmt.Errorf("unsupported tool %q", request.Tool)
+	doc := workflow.Document{
+		APIVersion: workflow.APIVersion, Name: "ad-hoc", Inputs: map[string]workflow.InputDeclaration{},
+		Defaults:  workflow.Defaults{Tool: request.Tool, Runtime: request.Runtime},
+		Execution: workflow.Execution{MaxConcurrency: 1},
+		Nodes:     map[string]workflow.Node{"agent-1": {Type: "agent", Task: request.Task, DependsOn: []string{}, RequiredSkills: []string{}}},
 	}
-	if request.Runtime != "local" && request.Runtime != "wsl" && request.Runtime != "ssh" {
-		return RunSnapshot{}, fmt.Errorf("unsupported runtime %q", request.Runtime)
+	order, err := workflow.Validate(doc)
+	if err != nil {
+		return WorkflowSnapshot{}, err
 	}
+	return s.startNormalized(ctx, request.Project, workflow.Normalized{Document: doc, Inputs: map[string]any{}, TopologicalOrder: order}, "run")
+}
 
+func (s *Service) StartWorkflow(ctx context.Context, request StartWorkflowRequest) (WorkflowSnapshot, error) {
+	request.Project = strings.TrimSpace(request.Project)
+	if request.Project == "" {
+		return WorkflowSnapshot{}, errors.New("project is required")
+	}
+	if strings.TrimSpace(request.Content) == "" && request.Normalized == nil {
+		return WorkflowSnapshot{}, errors.New("workflow content is required")
+	}
+	if strings.TrimSpace(request.Content) != "" && request.Normalized != nil {
+		return WorkflowSnapshot{}, errors.New("provide workflow content or normalized document, not both")
+	}
+	if request.Filename == "" {
+		request.Filename = "workflow.yaml"
+	}
+	var normalized workflow.Normalized
+	var err error
+	if request.Normalized != nil {
+		normalized = *request.Normalized
+		normalized.TopologicalOrder, err = workflow.Validate(normalized.Document)
+		if err == nil {
+			provided := request.Inputs
+			if provided == nil {
+				provided = normalized.Inputs
+			}
+			normalized.Inputs, err = workflow.ResolveInputs(normalized.Document, provided)
+		}
+	} else {
+		normalized, err = workflow.Parse([]byte(request.Content), request.Filename, request.Inputs)
+	}
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	return s.startNormalized(ctx, request.Project, normalized, "run")
+}
+
+func (s *Service) startNormalized(_ context.Context, project string, normalized workflow.Normalized, command string) (WorkflowSnapshot, error) {
+	if s.store == nil || s.leases == nil {
+		return WorkflowSnapshot{}, errors.New("workflow state directory is unavailable")
+	}
 	id, err := newRunID()
 	if err != nil {
-		return RunSnapshot{}, err
+		return WorkflowSnapshot{}, err
 	}
-	if s.store == nil {
-		return RunSnapshot{}, errors.New("workflow state directory is unavailable")
+	if err := s.store.InitWorkflowRun(id); err != nil {
+		return WorkflowSnapshot{}, err
 	}
-	if err := s.store.InitRun(id); err != nil {
-		return RunSnapshot{}, err
+	if err := s.store.WriteWorkflow(id, normalized); err != nil {
+		return WorkflowSnapshot{}, err
 	}
 	now := s.now().UTC()
-	runCtx, cancel := context.WithCancel(context.Background())
-	rt := &activeRun{snapshot: RunSnapshot{
-		ProtocolVersion: 1,
-		ID:              id,
-		Status:          RunCreated,
-		NodeStatus:      NodeCreated,
-		Project:         request.Project,
-		Tool:            request.Tool,
-		Runtime:         request.Runtime,
-		Backend:         s.backend.Name(),
-		StateDir:        s.store.RunDir(id),
-		CreatedAt:       now,
-		UpdatedAt:       now,
-	}, cancel: cancel}
+	nodeSummaries := make(map[string]NodeSummary, len(normalized.Document.Nodes))
+	for _, nodeID := range normalized.TopologicalOrder {
+		definition := normalized.Document.Nodes[nodeID]
+		node := NodeSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: id, ID: nodeID, Type: definition.Type, Phase: NodePhasePending, CreatedAt: now, UpdatedAt: now}
+		if err := s.store.WriteNode(id, nodeID, node); err != nil {
+			return WorkflowSnapshot{}, err
+		}
+		nodeSummaries[nodeID] = summarizeNode(node)
+	}
+	run := WorkflowSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, ID: id, WorkflowName: normalized.Document.Name, Project: project,
+		Backend: s.backend.Name(), Phase: PhaseCreated, Inputs: normalized.Inputs, TopologicalOrder: normalized.TopologicalOrder,
+		Nodes: nodeSummaries, StateDir: s.store.RunDir(id), CreatedAt: now, UpdatedAt: now}
+	if err := s.persistRun(&run, nil, "run.created", "workflow run created"); err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	lease, err := s.leases.Acquire(id, command)
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	s.startController(id, lease, func(ctx context.Context, generation uint64) { s.control(ctx, id, generation) })
+	return run, nil
+}
+
+func (s *Service) startController(runID string, lease *store.Lease, control func(context.Context, uint64)) {
+	ctx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
-	s.runs[id] = rt
+	s.nextGeneration++
+	entry := &controller{cancel: cancel, done: make(chan struct{}), lease: lease, generation: s.nextGeneration}
+	s.controllers[runID] = entry
 	s.mu.Unlock()
-	if err := s.record(rt, "run.created", "run created"); err != nil {
-		return RunSnapshot{}, err
-	}
-	snapshot := s.snapshot(rt)
-	go s.execute(runCtx, rt, request)
-	return snapshot, nil
+	go func() {
+		defer cancel()
+		defer close(entry.done)
+		defer func() {
+			_ = lease.Release()
+			s.mu.Lock()
+			if s.controllers[runID] == entry {
+				delete(s.controllers, runID)
+			}
+			s.mu.Unlock()
+		}()
+		heartbeatErrors := lease.KeepAlive(ctx)
+		go func() {
+			if heartbeatErr, ok := <-heartbeatErrors; ok && heartbeatErr != nil {
+				cancel()
+			}
+		}()
+		monitorDone := make(chan struct{})
+		monitorCtx, stopMonitor := context.WithCancel(ctx)
+		go func() {
+			defer close(monitorDone)
+			s.monitorCancellationRequests(monitorCtx, runID, entry.generation)
+		}()
+		control(ctx, entry.generation)
+		stopMonitor()
+		<-monitorDone
+	}()
 }
 
-func (s *Service) execute(ctx context.Context, rt *activeRun, request StartRequest) {
-	if s.hooks.afterExecute != nil {
-		defer s.hooks.afterExecute()
+func (s *Service) Status(runID string) (StatusView, error) {
+	if s.store == nil {
+		return StatusView{}, errors.New("workflow state directory is unavailable")
 	}
-	if s.hooks.beforeDispatch != nil {
-		s.hooks.beforeDispatch()
-	}
-	moved, err := s.transitionIfActive(rt, RunDispatching, NodeDispatching, "run.dispatching", "dispatching agent", RunCreated)
-	if err != nil || !moved {
-		return
-	}
-	if err := s.backend.Doctor(ctx); err != nil {
-		if s.stopped(rt) {
-			return
+	state := s.store
+	kind, err := state.DetectSnapshot(runID)
+	if err != nil && os.IsNotExist(err) {
+		if legacy := s.store.LegacyFallback(); legacy != nil {
+			if legacyKind, legacyErr := legacy.DetectSnapshot(runID); legacyErr == nil {
+				state, kind, err = legacy, legacyKind, nil
+			}
 		}
-		s.fail(rt, fmt.Errorf("backend doctor: %w", err))
-		return
 	}
-	rt.persistMu.Lock()
-	rt.mu.Lock()
-	if !activeLocked(rt) {
-		rt.mu.Unlock()
-		rt.persistMu.Unlock()
-		return
-	}
-	rt.launchPending = true
-	rt.launchDone = make(chan struct{})
-	rt.mu.Unlock()
-	rt.persistMu.Unlock()
-	session, err := s.backend.Launch(ctx, backend.LaunchSpec{
-		RunID: requestID(rt), Project: request.Project, Tool: request.Tool,
-		Runtime: request.Runtime, Prompt: request.Task,
-	})
-	rt.persistMu.Lock()
-	rt.mu.Lock()
-	rt.launchPending = false
-	if rt.launchDone != nil {
-		close(rt.launchDone)
-		rt.launchDone = nil
-	}
-	if err == nil {
-		rt.session = session
-	}
-	stopped := !activeLocked(rt)
-	rt.mu.Unlock()
-	rt.persistMu.Unlock()
 	if err != nil {
-		if stopped {
-			return
+		return StatusView{}, err
+	}
+	if kind == store.SnapshotLegacyM1 {
+		var legacy LegacySnapshot
+		if err := state.ReadSnapshot(runID, &legacy); err != nil {
+			return StatusView{}, err
 		}
-		s.fail(rt, fmt.Errorf("backend launch: %w", err))
-		return
+		return StatusView{ProtocolVersion: protocolVersion, Legacy: true, LegacyRun: &legacy}, nil
 	}
-	if stopped {
-		return
+	if _, err := resetEventSequence(state, runID); err != nil {
+		return StatusView{}, fmt.Errorf("invalid event history: %w", err)
 	}
-	if s.hooks.beforeRunning != nil {
-		s.hooks.beforeRunning()
-	}
-	moved, err = s.transitionIfActive(rt, RunRunning, NodeRunning, "run.running", "agent session is running", RunDispatching)
-	if err != nil || !moved {
-		return
-	}
-	result, err := s.backend.Wait(ctx, *session)
-	if output, outputErr := s.backend.Output(context.Background(), *session, 200); outputErr == nil {
-		_ = s.store.WriteOutput(requestID(rt), output)
-	}
-	rt.mu.Lock()
-	stopped = !activeLocked(rt)
-	rt.mu.Unlock()
-	if stopped {
-		return
-	}
+	run, nodes, err := s.loadRunFrom(state, runID)
 	if err != nil {
-		s.fail(rt, fmt.Errorf("backend wait: %w", err))
-		return
+		return StatusView{}, err
 	}
-	if result == nil {
-		s.fail(rt, errors.New("backend wait returned no result"))
-		return
+	view := StatusView{ProtocolVersion: protocolVersion, Run: &run, Nodes: nodes}
+	if run.ActiveNodeID != "" {
+		for _, node := range nodes {
+			if node.ID == run.ActiveNodeID && node.CurrentAttempt > 0 {
+				var attempt AttemptSnapshot
+				if err := state.ReadAttempt(runID, node.ID, node.CurrentAttempt, &attempt); err != nil {
+					return StatusView{}, err
+				}
+				if attempt.StateSchemaVersion == 0 {
+					attempt.StateSchemaVersion = 1
+				}
+				view.ActiveAttempt = &attempt
+				break
+			}
+		}
 	}
-	status, nodeStatus := normalizedStatus(result.Status)
-	_, _ = s.transitionIfActive(rt, status, nodeStatus, "run.terminal", result.Summary, RunRunning)
+	return view, nil
 }
 
-func (s *Service) Get(runID string) (RunSnapshot, error) {
-	rt, err := s.lookup(runID)
+func (s *Service) Get(runID string) (WorkflowSnapshot, error) {
+	view, err := s.Status(runID)
 	if err != nil {
-		return RunSnapshot{}, err
+		return WorkflowSnapshot{}, err
 	}
-	return s.snapshot(rt), nil
+	if view.Legacy {
+		return WorkflowSnapshot{}, fmt.Errorf("legacy M1 run %q is read-only", runID)
+	}
+	return *view.Run, nil
 }
 
-func (s *Service) Detach(runID string) (RunSnapshot, error) {
-	rt, err := s.lookup(runID)
+func (s *Service) Resume(_ context.Context, request ResumeRequest) (WorkflowSnapshot, error) {
+	if request.RunID == "" {
+		return WorkflowSnapshot{}, errors.New("runId is required")
+	}
+	kind, err := s.store.DetectSnapshot(request.RunID)
 	if err != nil {
-		return RunSnapshot{}, err
+		return WorkflowSnapshot{}, err
 	}
-	rt.persistMu.Lock()
-	defer rt.persistMu.Unlock()
-	rt.mu.Lock()
-	if rt.snapshot.Status.Terminal() {
-		result := rt.snapshot
-		rt.mu.Unlock()
-		return result, nil
+	if kind == store.SnapshotLegacyM1 {
+		return WorkflowSnapshot{}, fmt.Errorf("legacy M1 run %q is status-only and cannot be resumed", request.RunID)
 	}
-	rt.detached = true
-	cancel := rt.cancel
-	rt.snapshot.Status = RunPaused
-	rt.snapshot.NodeStatus = NodePaused
-	rt.snapshot.Summary = "detached; agent session left running"
-	rt.snapshot.UpdatedAt = s.now().UTC()
-	rt.mu.Unlock()
-	cancel()
-	if err := s.recordLocked(rt, "run.paused", "detached; agent session left running"); err != nil {
-		return RunSnapshot{}, err
+	if _, err := s.resetEventSequence(request.RunID); err != nil {
+		return WorkflowSnapshot{}, fmt.Errorf("invalid event history: %w", err)
 	}
-	return s.snapshot(rt), nil
+	run, _, err := s.loadRun(request.RunID)
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	if run.Phase == PhaseCompleted && request.Action == nil {
+		return run, nil
+	}
+	lease, err := s.acquireLease(request.RunID, "resume", time.Second)
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	if request.Action != nil {
+		if err := validateResumeAction(*request.Action); err != nil {
+			_ = lease.Release()
+			return WorkflowSnapshot{}, err
+		}
+		if err := s.applyAction(&run, *request.Action); err != nil {
+			_ = lease.Release()
+			return WorkflowSnapshot{}, err
+		}
+		if run.Phase == PhaseCompleted {
+			_ = lease.Release()
+			return run, nil
+		}
+	} else {
+		if run.CancelRequested {
+			_ = lease.Release()
+			return WorkflowSnapshot{}, fmt.Errorf("run %q has cancellation pending; use fishyume cancel to retry", run.ID)
+		}
+		if run.Phase == PhaseWaiting && run.Reason == ReasonApprovalRequired {
+			_ = lease.Release()
+			return run, nil
+		}
+		run.Phase, run.Conclusion, run.Reason, run.Summary, run.UpdatedAt = PhaseRunning, "", "", "controller resumed", s.now().UTC()
+		if err := s.persistRun(&run, nil, "run.resumed", run.Summary); err != nil {
+			_ = lease.Release()
+			return WorkflowSnapshot{}, err
+		}
+	}
+	s.startController(request.RunID, lease, func(ctx context.Context, generation uint64) { s.control(ctx, request.RunID, generation) })
+	updated, err := s.Get(request.RunID)
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	return updated, nil
 }
 
-func (s *Service) Cancel(ctx context.Context, runID string) (RunSnapshot, error) {
-	rt, err := s.lookup(runID)
+func (s *Service) Detach(runID string) (WorkflowSnapshot, error) {
+	s.mu.Lock()
+	active := s.controllers[runID]
+	if active == nil {
+		s.mu.Unlock()
+		run, err := s.Get(runID)
+		if err != nil {
+			return WorkflowSnapshot{}, err
+		}
+		if run.Phase == PhaseCompleted {
+			return run, nil
+		}
+		return run, fmt.Errorf("run %q has no controller in this engine process", runID)
+	}
+	active.stopping = true
+	run, _, err := s.loadRun(runID)
 	if err != nil {
-		return RunSnapshot{}, err
+		s.mu.Unlock()
+		active.cancel()
+		<-active.done
+		return WorkflowSnapshot{}, err
+	}
+	run.Phase, run.Reason, run.Summary, run.UpdatedAt = PhasePaused, ReasonControllerDetach, "controller detached; active Agent session left running", s.now().UTC()
+	persistErr := s.persistRun(&run, nil, "run.paused", run.Summary)
+	active.cancel()
+	s.mu.Unlock()
+	<-active.done
+	if persistErr != nil {
+		return WorkflowSnapshot{}, persistErr
+	}
+	return s.Get(runID)
+}
+
+func (s *Service) Cancel(ctx context.Context, runID string) (WorkflowSnapshot, error) {
+	run, _, err := s.loadRunForCancellation(ctx, runID)
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	if run.Phase == PhaseCompleted {
+		return run, nil
+	}
+	request, err := s.store.RequestCancellation(runID, s.now().UTC())
+	if err != nil {
+		return WorkflowSnapshot{}, fmt.Errorf("persist cancellation request: %w", err)
 	}
 	for {
-		rt.persistMu.Lock()
-		rt.mu.Lock()
-		if rt.snapshot.Status == RunSucceeded || rt.snapshot.Status == RunFailed || rt.snapshot.Status == RunCancelled {
-			result := rt.snapshot
-			rt.mu.Unlock()
-			rt.persistMu.Unlock()
+		if response, responseErr := s.store.ReadCancellationResponse(runID, request.ID); responseErr == nil {
+			result, _, loadErr := s.loadRunForCancellation(ctx, runID)
+			if loadErr != nil {
+				return WorkflowSnapshot{}, loadErr
+			}
+			if response.Status == store.CancelResponseCompleted {
+				return result, nil
+			}
+			return result, errors.New(response.Message)
+		}
+		lease, acquireErr := s.leases.Acquire(runID, "cancel")
+		if acquireErr == nil {
+			result, cancelErr := s.handleCancellationRequest(ctx, runID)
+			resolveErr := s.resolveCancellationRequest(runID, request.ID, cancelErr)
+			releaseErr := lease.Release()
+			if cancelErr != nil || resolveErr != nil || releaseErr != nil {
+				return result, errors.Join(cancelErr, resolveErr, releaseErr)
+			}
 			return result, nil
 		}
-		rt.cancelRequested = true
-		if rt.killInFlight {
-			done := rt.killDone
-			rt.mu.Unlock()
-			rt.persistMu.Unlock()
-			if s.hooks.onCancelWait != nil {
-				s.hooks.onCancelWait()
-			}
-			select {
-			case <-done:
-				continue
-			case <-ctx.Done():
-				return s.snapshot(rt), ctx.Err()
-			}
+		var conflict *store.LeaseConflictError
+		if !errors.As(acquireErr, &conflict) {
+			return WorkflowSnapshot{}, acquireErr
 		}
-		if rt.session != nil && !rt.sessionKilled {
-			rt.killInFlight = true
-			rt.killDone = make(chan struct{})
-			done := rt.killDone
-			copy := *rt.session
-			rt.mu.Unlock()
-			rt.persistMu.Unlock()
+		if err := s.waitCancellationPoll(ctx); err != nil {
+			return WorkflowSnapshot{}, err
+		}
+	}
+}
 
-			killErr := s.backend.Cancel(ctx, copy)
+func (s *Service) loadRunForCancellation(ctx context.Context, runID string) (WorkflowSnapshot, []NodeSnapshot, error) {
+	deadline := time.Now().Add(cancelStateReadGrace)
+	for {
+		run, nodes, err := s.loadRun(runID)
+		if err == nil {
+			return run, nodes, nil
+		}
+		if time.Now().After(deadline) {
+			return WorkflowSnapshot{}, nil, err
+		}
+		if waitErr := s.waitCancellationPoll(ctx); waitErr != nil {
+			return WorkflowSnapshot{}, nil, waitErr
+		}
+	}
+}
 
-			rt.persistMu.Lock()
-			rt.mu.Lock()
-			rt.killInFlight = false
-			close(done)
-			rt.killDone = nil
-			if killErr != nil {
-				rt.cancelRequested = false
-				rt.mu.Unlock()
-				rt.persistMu.Unlock()
-				return s.snapshot(rt), fmt.Errorf("cancel backend session: %w", killErr)
-			}
-			rt.sessionKilled = true
-			rt.cancelRequested = false
-			rt.cancelled = true
-			cancel := rt.cancel
-			rt.snapshot.Status = RunCancelled
-			rt.snapshot.NodeStatus = NodeCancelled
-			rt.snapshot.Summary = "agent session cancelled"
-			rt.snapshot.UpdatedAt = s.now().UTC()
-			rt.mu.Unlock()
+func (s *Service) monitorCancellationRequests(ctx context.Context, runID string, generation uint64) {
+	for {
+		request, err := s.store.ReadCancellationRequest(runID)
+		if err == nil {
+			cancelCtx, cancel := context.WithTimeout(context.Background(), cancelBackendTimeout)
+			_, cancelErr := s.handleCancellationRequest(cancelCtx, runID)
 			cancel()
-			if err := s.recordLocked(rt, "run.cancelled", "agent session cancelled"); err != nil {
-				rt.persistMu.Unlock()
-				return RunSnapshot{}, err
-			}
-			rt.persistMu.Unlock()
-			return s.snapshot(rt), nil
+			_ = s.resolveCancellationRequest(runID, request.ID, cancelErr)
+			s.stopController(runID, generation)
+			return
 		}
-		if rt.launchPending {
-			done := rt.launchDone
-			cancelLaunch := rt.cancel
-			rt.mu.Unlock()
-			rt.persistMu.Unlock()
-			cancelLaunch()
-			if s.hooks.onCancelWait != nil {
-				s.hooks.onCancelWait()
+		if err := s.waitCancellationPoll(ctx); err != nil {
+			return
+		}
+	}
+}
+
+func (s *Service) handleCancellationRequest(ctx context.Context, runID string) (WorkflowSnapshot, error) {
+	activeNodeID, attemptNumber, err := s.markCancellationIntent(runID)
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	if activeNodeID != "" && attemptNumber > 0 {
+		attempt, session, sessionErr := s.waitForCancellationSession(ctx, runID, activeNodeID, attemptNumber)
+		if sessionErr != nil {
+			return s.persistCancelFailure(runID, activeNodeID, sessionErr.Error())
+		}
+		alreadyCancelled := attempt.Phase == NodePhaseCompleted && attempt.Conclusion == ConclusionCancelled
+		if !alreadyCancelled && session != nil {
+			if err := s.backend.Cancel(ctx, *session); err != nil {
+				message := "cancel backend session: " + err.Error()
+				return s.persistCancelFailure(runID, activeNodeID, message)
 			}
+		}
+	}
+	return s.finalizeCancellation(runID, activeNodeID)
+}
+
+func (s *Service) markCancellationIntent(runID string) (string, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, nodes, err := s.loadRun(runID)
+	if err != nil {
+		return "", 0, err
+	}
+	if run.Phase == PhaseCompleted {
+		return "", 0, nil
+	}
+	if !run.CancelRequested || run.Phase != PhaseCancelling {
+		run.CancelRequested, run.Phase, run.Conclusion, run.Reason, run.Summary, run.UpdatedAt = true, PhaseCancelling, "", "", "workflow cancellation requested", s.now().UTC()
+		if err := s.persistRun(&run, nil, "run.cancelling", run.Summary); err != nil {
+			return "", 0, err
+		}
+	}
+	for index := range nodes {
+		if nodes[index].CurrentAttempt > 0 && (nodes[index].Phase == NodePhaseRunning || nodes[index].Phase == NodePhaseWaiting) {
+			return nodes[index].ID, nodes[index].CurrentAttempt, nil
+		}
+	}
+	return "", 0, nil
+}
+
+func (s *Service) waitForCancellationSession(ctx context.Context, runID, nodeID string, attemptNumber int) (AttemptSnapshot, *backend.Session, error) {
+	deadline := time.Now().Add(cancelSessionPersistGrace)
+	for {
+		var attempt AttemptSnapshot
+		if err := s.store.ReadAttempt(runID, nodeID, attemptNumber, &attempt); err != nil {
+			if time.Now().After(deadline) {
+				return AttemptSnapshot{}, nil, fmt.Errorf("read active Attempt while waiting for session persistence: %w", err)
+			}
+			if waitErr := s.waitCancellationPoll(ctx); waitErr != nil {
+				return AttemptSnapshot{}, nil, waitErr
+			}
+			continue
+		}
+		if attempt.Session != nil && attempt.Session.ID != "" {
+			session := backend.Session{ID: attempt.Session.ID, Metadata: attempt.Session.Metadata}
+			return attempt, &session, nil
+		}
+		switch attempt.LaunchState {
+		case LaunchPrepared:
+			return attempt, nil, nil
+		case "":
+			return attempt, nil, errors.New("cannot confirm cancellation because the active Attempt predates durable launch-state tracking and has no persisted session")
+		case LaunchFinishedWithoutSession:
+			return attempt, nil, errors.New("cannot confirm cancellation because Backend launch finished without a persisted session")
+		case LaunchSessionPersisted:
+			return attempt, nil, errors.New("cannot confirm cancellation because launch state is session_persisted but session metadata is missing")
+		case LaunchDispatching:
+			if time.Now().After(deadline) {
+				return attempt, nil, errors.New("cannot confirm cancellation because Backend launch did not persist a session before the cancellation grace expired")
+			}
+		}
+		if err := s.waitCancellationPoll(ctx); err != nil {
+			return attempt, nil, err
+		}
+	}
+}
+
+func (s *Service) persistCancelFailure(runID, activeNodeID, message string) (WorkflowSnapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, nodes, err := s.loadRun(runID)
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	var activeNode *NodeSnapshot
+	for index := range nodes {
+		if nodes[index].ID == activeNodeID {
+			activeNode = &nodes[index]
+			break
+		}
+	}
+	run.CancelRequested, run.Phase, run.Conclusion, run.Reason, run.Summary, run.UpdatedAt = true, PhaseWaiting, "", ReasonCancelFailed, message, s.now().UTC()
+	if err := s.persistRun(&run, activeNode, "run.cancel_failed", run.Summary); err != nil {
+		return WorkflowSnapshot{}, errors.Join(errors.New(message), err)
+	}
+	return run, errors.New(message)
+}
+
+func (s *Service) finalizeCancellation(runID, activeNodeID string) (WorkflowSnapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run, nodes, err := s.loadRun(runID)
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	if run.Phase == PhaseCompleted {
+		return run, nil
+	}
+	var activeNode *NodeSnapshot
+	for index := range nodes {
+		node := &nodes[index]
+		if node.ID == activeNodeID {
+			activeNode = node
+			if node.CurrentAttempt > 0 {
+				var attempt AttemptSnapshot
+				if err := s.store.ReadAttempt(runID, node.ID, node.CurrentAttempt, &attempt); err != nil {
+					return WorkflowSnapshot{}, err
+				}
+				if attempt.Phase != NodePhaseCompleted || attempt.Conclusion != ConclusionCancelled {
+					now := s.now().UTC()
+					attempt.Phase, attempt.Conclusion, attempt.Reason, attempt.UpdatedAt, attempt.CompletedAt = NodePhaseCompleted, ConclusionCancelled, ReasonUserRequested, now, &now
+					if err := s.writeAttempt(attempt, false); err != nil {
+						return WorkflowSnapshot{}, err
+					}
+				}
+			}
+			now := s.now().UTC()
+			node.Phase, node.Conclusion, node.Reason, node.UpdatedAt = NodePhaseCompleted, ConclusionCancelled, ReasonUserRequested, now
+			if err := s.store.WriteNode(runID, node.ID, node); err != nil {
+				return WorkflowSnapshot{}, err
+			}
+			run.Nodes[node.ID] = summarizeNode(*node)
+		}
+	}
+	for index := range nodes {
+		node := &nodes[index]
+		if node.Phase == NodePhasePending || node.Phase == NodePhaseReady || (node.Phase == NodePhaseWaiting && node.Type == "approval") {
+			node.Phase, node.Reason, node.UpdatedAt = NodePhaseSkipped, ReasonWorkflowCancelled, s.now().UTC()
+			if err := s.store.WriteNode(runID, node.ID, node); err != nil {
+				return WorkflowSnapshot{}, err
+			}
+			run.Nodes[node.ID] = summarizeNode(*node)
+		}
+	}
+	run.CancelRequested, run.Phase, run.Conclusion, run.Reason, run.Summary, run.ActiveNodeID, run.UpdatedAt = true, PhaseCompleted, ConclusionCancelled, ReasonUserRequested, "workflow cancelled", "", s.now().UTC()
+	if err := s.persistRun(&run, activeNode, "run.cancelled", run.Summary); err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	return run, nil
+}
+
+func (s *Service) resolveCancellationRequest(runID, requestID string, cancelErr error) error {
+	response := store.CancelResponse{RequestID: requestID, Status: store.CancelResponseCompleted, UpdatedAt: s.now().UTC()}
+	if cancelErr != nil {
+		response.Status, response.Message = store.CancelResponseFailed, cancelErr.Error()
+	}
+	return s.store.ResolveCancellation(runID, response)
+}
+
+func (s *Service) waitCancellationPoll(ctx context.Context) error {
+	if hook := s.testHooks.cancelRequestDelay; hook != nil {
+		return hook(ctx)
+	}
+	timer := time.NewTimer(cancelRequestPollInterval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (s *Service) stopController(runID string, generation uint64) {
+	s.mu.Lock()
+	active := s.controllers[runID]
+	if active != nil && active.generation == generation {
+		active.stopping = true
+		active.cancel()
+	}
+	s.mu.Unlock()
+}
+
+func (s *Service) controller(runID string) *controller {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.controllers[runID]
+}
+
+func (s *Service) WaitControllers(ctx context.Context) error {
+	for {
+		s.mu.Lock()
+		controllers := make([]*controller, 0, len(s.controllers))
+		for _, active := range s.controllers {
+			controllers = append(controllers, active)
+		}
+		s.mu.Unlock()
+		if len(controllers) == 0 {
+			return nil
+		}
+		for _, active := range controllers {
 			select {
-			case <-done:
-				continue
+			case <-active.done:
+				if active.err != nil {
+					return active.err
+				}
 			case <-ctx.Done():
-				return s.snapshot(rt), ctx.Err()
+				return ctx.Err()
 			}
 		}
-		rt.cancelRequested = false
-		rt.cancelled = true
-		cancel := rt.cancel
-		rt.snapshot.Status = RunCancelled
-		rt.snapshot.NodeStatus = NodeCancelled
-		rt.snapshot.Summary = "run cancelled before an agent session was created"
-		rt.snapshot.UpdatedAt = s.now().UTC()
-		rt.mu.Unlock()
-		cancel()
-		if err := s.recordLocked(rt, "run.cancelled", "run cancelled before an agent session was created"); err != nil {
-			rt.persistMu.Unlock()
-			return RunSnapshot{}, err
+	}
+}
+
+func (s *Service) acquireLease(runID, command string, wait time.Duration) (*store.Lease, error) {
+	deadline := time.Now().Add(wait)
+	for {
+		lease, err := s.leases.Acquire(runID, command)
+		if err == nil {
+			return lease, nil
 		}
-		rt.persistMu.Unlock()
-		return s.snapshot(rt), nil
-	}
-}
-
-func (s *Service) transitionIfActive(rt *activeRun, status RunStatus, nodeStatus NodeStatus, eventType, message string, expected ...RunStatus) (bool, error) {
-	rt.persistMu.Lock()
-	defer rt.persistMu.Unlock()
-	rt.mu.Lock()
-	if !activeLocked(rt) || !containsStatus(expected, rt.snapshot.Status) {
-		rt.mu.Unlock()
-		return false, nil
-	}
-	rt.snapshot.Status = status
-	rt.snapshot.NodeStatus = nodeStatus
-	rt.snapshot.Summary = message
-	rt.snapshot.UpdatedAt = s.now().UTC()
-	rt.mu.Unlock()
-	return true, s.recordLocked(rt, eventType, message)
-}
-
-func containsStatus(statuses []RunStatus, status RunStatus) bool {
-	for _, candidate := range statuses {
-		if candidate == status {
-			return true
+		var conflict *store.LeaseConflictError
+		if !errors.As(err, &conflict) || time.Now().After(deadline) {
+			return nil, err
 		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	return false
 }
 
-func activeLocked(rt *activeRun) bool {
-	return !rt.detached && !rt.cancelled && !rt.cancelRequested
-}
+var errControllerInactive = errors.New("controller is no longer active")
 
-func (s *Service) record(rt *activeRun, eventType, message string) error {
-	rt.persistMu.Lock()
-	defer rt.persistMu.Unlock()
-	return s.recordLocked(rt, eventType, message)
-}
-
-func (s *Service) recordLocked(rt *activeRun, eventType, message string) error {
-	rt.mu.Lock()
-	rt.sequence++
-	event := RunEvent{ProtocolVersion: 1, RunID: rt.snapshot.ID, Sequence: rt.sequence,
-		Type: eventType, Status: rt.snapshot.Status, NodeStatus: rt.snapshot.NodeStatus,
-		Message: message, Timestamp: s.now().UTC()}
-	snapshot := rt.snapshot
-	rt.mu.Unlock()
-	if err := s.store.WriteSnapshot(snapshot.ID, snapshot); err != nil {
+func (s *Service) controllerMutation(runID string, generation uint64, point string, action func(*WorkflowSnapshot, []NodeSnapshot) error) error {
+	if hook := s.testHooks.beforeControllerMutation; hook != nil {
+		hook(point)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	active := s.controllers[runID]
+	if active == nil || active.generation != generation || active.stopping {
+		return errControllerInactive
+	}
+	run, nodes, err := s.loadRun(runID)
+	if err != nil {
 		return err
 	}
-	if err := s.store.AppendEvent(snapshot.ID, event); err != nil {
+	if run.CancelRequested || run.Phase == PhasePaused || run.Phase == PhaseCancelling || run.Phase == PhaseCompleted {
+		return errControllerInactive
+	}
+	return action(&run, nodes)
+}
+
+func (s *Service) control(ctx context.Context, runID string, generation uint64) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		run, nodes, err := s.loadRun(runID)
+		if err != nil {
+			return
+		}
+		var normalized workflow.Normalized
+		if err := s.store.ReadWorkflow(runID, &normalized); err != nil {
+			s.pauseControllerOnError(runID, generation, err)
+			return
+		}
+		if run.Phase == PhaseCompleted || run.CancelRequested {
+			return
+		}
+		if active := findActiveNode(nodes); active != nil && active.CurrentAttempt > 0 {
+			progressed, err := s.reconcileAttempt(ctx, runID, active.ID, active.CurrentAttempt, generation)
+			if err != nil {
+				if ctx.Err() == nil && !errors.Is(err, errControllerInactive) {
+					s.pauseControllerOnError(runID, generation, err)
+				}
+				return
+			}
+			if !progressed {
+				return
+			}
+			continue
+		}
+		progressed, stop, err := s.scheduleOne(ctx, runID, generation, normalized)
+		if err != nil {
+			if ctx.Err() == nil && !errors.Is(err, errControllerInactive) {
+				s.pauseControllerOnError(runID, generation, err)
+			}
+			return
+		}
+		if stop || !progressed {
+			return
+		}
+	}
+}
+
+type pendingLaunch struct {
+	runID      string
+	nodeID     string
+	attempt    int
+	launchSpec backend.LaunchSpec
+}
+
+func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint64, normalized workflow.Normalized) (bool, bool, error) {
+	var launch *pendingLaunch
+	progressed, stop := false, false
+	point := "node.schedule"
+	if _, nodes, err := s.loadRun(runID); err == nil {
+		for _, nodeID := range normalized.TopologicalOrder {
+			for _, node := range nodes {
+				if node.ID == nodeID && (node.Phase == NodePhasePending || node.Phase == NodePhaseReady) {
+					if normalized.Document.Nodes[nodeID].Type == "approval" {
+						point = "approval.waiting"
+					} else {
+						point = "agent.prelaunch"
+					}
+					break
+				}
+			}
+			if point != "node.schedule" {
+				break
+			}
+		}
+	}
+	err := s.controllerMutation(runID, generation, point, func(run *WorkflowSnapshot, nodes []NodeSnapshot) error {
+		nodeMap := make(map[string]*NodeSnapshot, len(nodes))
+		results := make(map[string]workflow.Result)
+		for index := range nodes {
+			nodeMap[nodes[index].ID] = &nodes[index]
+			if nodes[index].Result != nil {
+				results[nodes[index].ID] = *nodes[index].Result
+			}
+		}
+		for _, nodeID := range normalized.TopologicalOrder {
+			node := nodeMap[nodeID]
+			if node.Phase != NodePhasePending && node.Phase != NodePhaseReady {
+				continue
+			}
+			definition := normalized.Document.Nodes[nodeID]
+			stable, upstreamFailed := true, false
+			for _, dependency := range definition.DependsOn {
+				dependencyNode := nodeMap[dependency]
+				if dependencyNode.Phase != NodePhaseCompleted && dependencyNode.Phase != NodePhaseSkipped {
+					stable = false
+					break
+				}
+				if dependencyNode.Conclusion == ConclusionFailed || dependencyNode.Conclusion == ConclusionIndeterminate || dependencyNode.Conclusion == ConclusionCancelled || dependencyNode.Reason == ReasonUpstreamFailed {
+					upstreamFailed = true
+				}
+			}
+			if !stable {
+				continue
+			}
+			if upstreamFailed {
+				node.Phase, node.Reason, node.UpdatedAt = NodePhaseSkipped, ReasonUpstreamFailed, s.now().UTC()
+				if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
+					return err
+				}
+				run.Nodes[node.ID] = summarizeNode(*node)
+				progressed = true
+				return s.persistRun(run, node, "node.skipped", "upstream failed")
+			}
+			if definition.When != nil {
+				matches, err := workflow.Evaluate(*definition.When, results)
+				if err != nil {
+					return err
+				}
+				if !matches {
+					node.Phase, node.Reason, node.UpdatedAt = NodePhaseSkipped, ReasonConditionFalse, s.now().UTC()
+					if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
+						return err
+					}
+					run.Nodes[node.ID] = summarizeNode(*node)
+					progressed = true
+					return s.persistRun(run, node, "node.skipped", "condition evaluated false")
+				}
+			}
+			if definition.Type == "approval" {
+				template, err := workflow.ParseTemplate(definition.Prompt, normalized.Document.Inputs, ancestorSet(normalized.Document, node.ID))
+				if err != nil {
+					return err
+				}
+				renderedPrompt, err := template.Render(normalized.Inputs, results)
+				if err != nil {
+					return err
+				}
+				now := s.now().UTC()
+				node.Phase, node.Reason, node.UpdatedAt = NodePhaseWaiting, ReasonApprovalRequired, now
+				run.Phase, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = PhaseWaiting, ReasonApprovalRequired, node.ID, renderedPrompt, now
+				if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
+					return err
+				}
+				run.Nodes[node.ID] = summarizeNode(*node)
+				progressed, stop = true, true
+				return s.persistRun(run, node, "node.approval_required", renderedPrompt)
+			}
+			template, err := workflow.ParseTemplate(definition.Task, normalized.Document.Inputs, ancestorSet(normalized.Document, node.ID))
+			if err != nil {
+				return err
+			}
+			prompt, err := template.Render(normalized.Inputs, results)
+			if err != nil {
+				return err
+			}
+			if len(definition.RequiredSkills) > 0 {
+				prompt = "Required skills: " + strings.Join(definition.RequiredSkills, ", ") + "\n\n" + prompt
+			}
+			if len([]byte(prompt)) > workflow.MaxPromptBytes {
+				return fmt.Errorf("rendered prompt exceeds %d bytes", workflow.MaxPromptBytes)
+			}
+			number, now := node.CurrentAttempt+1, s.now().UTC()
+			hash := sha256.Sum256([]byte(prompt))
+			attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: run.ID, NodeID: node.ID, Number: number, Phase: NodePhaseRunning, LaunchState: LaunchPrepared,
+				Backend: s.backend.Name(), PromptHash: hex.EncodeToString(hash[:]), StartedAt: now, UpdatedAt: now}
+			if err := s.writeAttempt(attempt, true); err != nil {
+				return err
+			}
+			node.Phase, node.Reason, node.Conclusion, node.CurrentAttempt, node.UpdatedAt = NodePhaseRunning, "", "", number, now
+			run.Phase, run.Reason, run.Conclusion, run.ActiveNodeID, run.Summary, run.UpdatedAt = PhaseRunning, "", "", node.ID, "launching Agent", now
+			if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
+				return err
+			}
+			run.Nodes[node.ID] = summarizeNode(*node)
+			if err := s.persistRun(run, node, "node.running", "launching Agent attempt"); err != nil {
+				return err
+			}
+			tool, runtimeKind := definition.Tool, definition.Runtime
+			if tool == "" {
+				tool = normalized.Document.Defaults.Tool
+			}
+			if tool == "" {
+				tool = "codex"
+			}
+			if runtimeKind == "" {
+				runtimeKind = normalized.Document.Defaults.Runtime
+			}
+			if runtimeKind == "" {
+				runtimeKind = "local"
+			}
+			launch = &pendingLaunch{runID: run.ID, nodeID: node.ID, attempt: number,
+				launchSpec: backend.LaunchSpec{RunID: run.ID, Project: run.Project, Tool: tool, Runtime: runtimeKind, Prompt: prompt, StateDir: run.StateDir}}
+			progressed = true
+			return nil
+		}
+		conclusion, reason := ConclusionSucceeded, Reason("")
+		for _, node := range nodes {
+			if node.Conclusion == ConclusionFailed {
+				conclusion, reason = ConclusionFailed, ReasonUpstreamFailed
+				break
+			}
+			if node.Conclusion == ConclusionIndeterminate {
+				conclusion = ConclusionIndeterminate
+				break
+			}
+			if node.Conclusion == ConclusionRejected {
+				conclusion = ConclusionRejected
+			}
+		}
+		if conclusion == ConclusionRejected && hasEligibleRejectedBranch(normalized.Document, nodes) {
+			conclusion, reason = ConclusionSucceeded, ""
+		}
+		run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = PhaseCompleted, conclusion, reason, "", "workflow completed", s.now().UTC()
+		stop = true
+		return s.persistRun(run, nil, "run.completed", run.Summary)
+	})
+	if err != nil {
+		return false, true, err
+	}
+	if launch != nil {
+		continueScheduling, err := s.launchAgent(ctx, generation, *launch)
+		return progressed && continueScheduling, !continueScheduling, err
+	}
+	return progressed, stop, nil
+}
+
+func (s *Service) launchAgent(ctx context.Context, generation uint64, launch pendingLaunch) (bool, error) {
+	if err := s.beginBackendLaunch(launch, generation); err != nil {
+		return false, err
+	}
+	session, launchErr := s.backend.Launch(ctx, launch.launchSpec)
+	if hook := s.testHooks.afterLaunch; hook != nil {
+		hook()
+	}
+	if session != nil && session.ID != "" {
+		if err := s.persistLaunchedSession(launch, *session); err != nil {
+			return false, err
+		}
+	} else if err := s.markLaunchFinishedWithoutSession(launch); err != nil {
+		return false, err
+	}
+	if launchErr != nil {
+		if session != nil && session.ID != "" {
+			return false, s.waiting(launch.runID, launch.nodeID, launch.attempt, generation, ReasonCompletionMissing, "Agent session launched but post-launch binding update failed: "+launchErr.Error())
+		}
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		return true, s.finishIndeterminate(launch.runID, launch.nodeID, launch.attempt, generation, "backend launch outcome is unknown: "+launchErr.Error())
+	}
+	if session == nil || session.ID == "" {
+		return true, s.finishIndeterminate(launch.runID, launch.nodeID, launch.attempt, generation, "backend launch returned no session")
+	}
+	if ctx.Err() != nil {
+		return false, errControllerInactive
+	}
+	return s.waitAttempt(ctx, launch.runID, launch.nodeID, launch.attempt, generation, *session)
+}
+
+func (s *Service) beginBackendLaunch(launch pendingLaunch, generation uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	active := s.controllers[launch.runID]
+	if active == nil || active.generation != generation || active.stopping {
+		return errControllerInactive
+	}
+	run, _, err := s.loadRun(launch.runID)
+	if err != nil {
+		return err
+	}
+	if run.CancelRequested || run.Phase == PhaseCancelling || run.Phase == PhaseCompleted {
+		return errControllerInactive
+	}
+	var attempt AttemptSnapshot
+	if err := s.store.ReadAttempt(launch.runID, launch.nodeID, launch.attempt, &attempt); err != nil {
+		return err
+	}
+	attempt.LaunchState, attempt.UpdatedAt = LaunchDispatching, s.now().UTC()
+	return s.writeAttempt(attempt, false)
+}
+
+func (s *Service) markLaunchFinishedWithoutSession(launch pendingLaunch) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var attempt AttemptSnapshot
+	if err := s.store.ReadAttempt(launch.runID, launch.nodeID, launch.attempt, &attempt); err != nil {
+		return err
+	}
+	if attempt.Session != nil && attempt.Session.ID != "" {
+		return nil
+	}
+	attempt.LaunchState, attempt.UpdatedAt = LaunchFinishedWithoutSession, s.now().UTC()
+	return s.writeAttempt(attempt, false)
+}
+
+func (s *Service) persistLaunchedSession(launch pendingLaunch, session backend.Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var attempt AttemptSnapshot
+	if err := s.store.ReadAttempt(launch.runID, launch.nodeID, launch.attempt, &attempt); err != nil {
+		return err
+	}
+	if attempt.Session != nil && attempt.Session.ID != "" && attempt.Session.ID != session.ID {
+		return fmt.Errorf("attempt %d already owns session %q", attempt.Number, attempt.Session.ID)
+	}
+	attempt.LaunchState = LaunchSessionPersisted
+	attempt.Session = &SessionSnapshot{ID: session.ID, Metadata: session.Metadata}
+	attempt.TaskBindingID = session.Metadata["bindingId"]
+	attempt.LaunchMetadata = session.Metadata
+	attempt.UpdatedAt = s.now().UTC()
+	return s.writeAttempt(attempt, false)
+}
+
+func (s *Service) reconcileAttempt(ctx context.Context, runID, nodeID string, attemptNumber int, generation uint64) (bool, error) {
+	var attempt AttemptSnapshot
+	if err := s.store.ReadAttempt(runID, nodeID, attemptNumber, &attempt); err != nil {
+		return false, err
+	}
+	if attempt.Session == nil || attempt.Session.ID == "" {
+		return true, s.finishIndeterminate(runID, nodeID, attemptNumber, generation, "Attempt exists without a persisted session; refusing duplicate launch")
+	}
+	session := backend.Session{ID: attempt.Session.ID, Metadata: attempt.Session.Metadata}
+	if reconciler, ok := s.backend.(backend.Reconciler); ok {
+		observation, err := reconciler.Reconcile(ctx, session)
+		if err != nil {
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend reconciliation transport failed: "+err.Error())
+		}
+		if observation == nil {
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend reconciliation returned no observation")
+		}
+		switch observation.State {
+		case backend.ObservationTerminal:
+			return s.finishResult(runID, nodeID, attemptNumber, generation, observation.Result)
+		case backend.ObservationWaitingInput:
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonAgentWaitingInput, "Agent is waiting for input")
+		case backend.ObservationCompletionMissing:
+			return s.reconcileStartupIdle(ctx, runID, nodeID, attemptNumber, generation, session, reconciler)
+		case backend.ObservationExited, backend.ObservationLost:
+			return true, s.finishIndeterminate(runID, nodeID, attemptNumber, generation, "Agent session ended without a terminal TaskBinding")
+		case backend.ObservationError:
+			return s.finishResult(runID, nodeID, attemptNumber, generation, &backend.BackendResult{Status: "failed", Summary: "Agent session reported an error"})
+		case backend.ObservationActive:
+			return s.waitAttempt(ctx, runID, nodeID, attemptNumber, generation, session)
+		}
+	}
+	return s.waitAttempt(ctx, runID, nodeID, attemptNumber, generation, session)
+}
+
+func (s *Service) waitAttempt(ctx context.Context, runID, nodeID string, attemptNumber int, generation uint64, session backend.Session) (bool, error) {
+	result, err := s.backend.Wait(ctx, session)
+	if output, outputErr := s.backend.Output(context.Background(), session, 200); outputErr == nil {
+		if writeErr := s.store.WriteNodeOutput(runID, nodeID, attemptNumber, output); writeErr != nil {
+			return false, writeErr
+		}
+	}
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	if err != nil {
+		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend wait transport failed: "+err.Error())
+	}
+	if result != nil && (strings.EqualFold(result.Status, "completion_missing") || strings.EqualFold(result.Status, "idle")) {
+		if reconciler, ok := s.backend.(backend.Reconciler); ok {
+			return s.reconcileStartupIdle(ctx, runID, nodeID, attemptNumber, generation, session, reconciler)
+		}
+	}
+	return s.finishResult(runID, nodeID, attemptNumber, generation, result)
+}
+
+func (s *Service) reconcileStartupIdle(ctx context.Context, runID, nodeID string, attemptNumber int, generation uint64, session backend.Session, reconciler backend.Reconciler) (bool, error) {
+	for check := 0; check < startupIdleReconcileChecks; check++ {
+		if err := s.waitStartupIdleReconcile(ctx); err != nil {
+			return false, err
+		}
+		observation, err := reconciler.Reconcile(ctx, session)
+		if err != nil {
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend startup-idle reconciliation failed: "+err.Error())
+		}
+		if observation == nil {
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend startup-idle reconciliation returned no observation")
+		}
+		switch observation.State {
+		case backend.ObservationTerminal:
+			return s.finishResult(runID, nodeID, attemptNumber, generation, observation.Result)
+		case backend.ObservationActive:
+			return s.waitAttempt(ctx, runID, nodeID, attemptNumber, generation, session)
+		case backend.ObservationWaitingInput:
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonAgentWaitingInput, "Agent is waiting for input")
+		case backend.ObservationCompletionMissing:
+			continue
+		case backend.ObservationExited, backend.ObservationLost:
+			return true, s.finishIndeterminate(runID, nodeID, attemptNumber, generation, "Agent session ended without a terminal TaskBinding")
+		case backend.ObservationError:
+			return s.finishResult(runID, nodeID, attemptNumber, generation, &backend.BackendResult{Status: "failed", Summary: "Agent session reported an error"})
+		default:
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend startup-idle reconciliation returned unsupported state "+string(observation.State))
+		}
+	}
+	return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Agent remained idle without a terminal TaskBinding after bounded startup reconciliation")
+}
+
+func (s *Service) waitStartupIdleReconcile(ctx context.Context) error {
+	if hook := s.testHooks.idleReconcileDelay; hook != nil {
+		return hook(ctx)
+	}
+	timer := time.NewTimer(startupIdleReconcileDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generation uint64, result *backend.BackendResult) (bool, error) {
+	if result == nil {
+		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend returned no result")
+	}
+	normalized := workflow.Result{Summary: result.Summary, Artifacts: result.Artifacts, Warnings: result.Warnings, Checks: result.Checks,
+		Usage: workflow.Usage{InputTokensEstimated: result.Usage.InputTokensEstimated, OutputTokensEstimated: result.Usage.OutputTokensEstimated}}
+	switch strings.ToLower(result.Status) {
+	case "succeeded", "completed":
+		if err := workflow.ValidateResult(normalized); err != nil {
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonInvalidResult, err.Error())
+		}
+		err := s.controllerMutation(runID, generation, "result.succeeded", func(run *WorkflowSnapshot, nodes []NodeSnapshot) error {
+			node, err := findNode(nodes, nodeID)
+			if err != nil {
+				return err
+			}
+			var attempt AttemptSnapshot
+			if err := s.store.ReadAttempt(runID, nodeID, attemptNumber, &attempt); err != nil {
+				return err
+			}
+			now := s.now().UTC()
+			attempt.Phase, attempt.Conclusion, attempt.BindingConsumed, attempt.UpdatedAt, attempt.CompletedAt = NodePhaseCompleted, ConclusionSucceeded, true, now, &now
+			node.Phase, node.Conclusion, node.Reason, node.Result, node.UpdatedAt = NodePhaseCompleted, ConclusionSucceeded, "", &normalized, now
+			if err := s.store.WriteResult(runID, nodeID, attemptNumber, normalized); err != nil {
+				return err
+			}
+			if err := s.writeAttempt(attempt, false); err != nil {
+				return err
+			}
+			if err := s.store.WriteNode(runID, nodeID, node); err != nil {
+				return err
+			}
+			run.Nodes[nodeID], run.ActiveNodeID, run.Phase, run.Reason, run.Summary, run.UpdatedAt = summarizeNode(*node), "", PhaseRunning, "", normalized.Summary, now
+			return s.persistRun(run, node, "node.completed", normalized.Summary)
+		})
+		return err == nil, err
+	case "failed", "error":
+		err := s.controllerMutation(runID, generation, "result.failed", func(run *WorkflowSnapshot, nodes []NodeSnapshot) error {
+			node, err := findNode(nodes, nodeID)
+			if err != nil {
+				return err
+			}
+			var attempt AttemptSnapshot
+			if err := s.store.ReadAttempt(runID, nodeID, attemptNumber, &attempt); err != nil {
+				return err
+			}
+			now := s.now().UTC()
+			attempt.Phase, attempt.Conclusion, attempt.BindingConsumed, attempt.UpdatedAt, attempt.CompletedAt = NodePhaseCompleted, ConclusionFailed, true, now, &now
+			node.Phase, node.Conclusion, node.Result, node.UpdatedAt = NodePhaseCompleted, ConclusionFailed, &normalized, now
+			if err := s.store.WriteResult(runID, nodeID, attemptNumber, normalized); err != nil {
+				return err
+			}
+			if err := s.writeAttempt(attempt, false); err != nil {
+				return err
+			}
+			if err := s.store.WriteNode(runID, nodeID, node); err != nil {
+				return err
+			}
+			run.Nodes[nodeID], run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = summarizeNode(*node), PhaseCompleted, ConclusionFailed, ReasonUpstreamFailed, "", result.Summary, now
+			if err := s.skipUnstarted(run, ReasonUpstreamFailed); err != nil {
+				return err
+			}
+			return s.persistRun(run, node, "run.completed", run.Summary)
+		})
+		return false, err
+	case "waiting_input", "blocked", "waitinginput":
+		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonAgentWaitingInput, result.Summary)
+	case "completion_missing", "idle":
+		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, result.Summary)
+	case "invalid_result":
+		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonInvalidResult, result.Summary)
+	case "indeterminate", "exited", "lost":
+		return true, s.finishIndeterminate(runID, nodeID, attemptNumber, generation, result.Summary)
+	default:
+		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "unrecognized Backend result status "+result.Status)
+	}
+}
+
+func (s *Service) waiting(runID, nodeID string, attemptNumber int, generation uint64, reason Reason, message string) error {
+	return s.controllerMutation(runID, generation, "node.waiting", func(run *WorkflowSnapshot, nodes []NodeSnapshot) error {
+		node, err := findNode(nodes, nodeID)
+		if err != nil {
+			return err
+		}
+		var attempt AttemptSnapshot
+		if err := s.store.ReadAttempt(runID, nodeID, attemptNumber, &attempt); err != nil {
+			return err
+		}
+		now := s.now().UTC()
+		attempt.Phase, attempt.Reason, attempt.UpdatedAt = NodePhaseWaiting, reason, now
+		node.Phase, node.Reason, node.UpdatedAt = NodePhaseWaiting, reason, now
+		run.Phase, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = PhaseWaiting, reason, node.ID, message, now
+		if err := s.writeAttempt(attempt, false); err != nil {
+			return err
+		}
+		if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
+			return err
+		}
+		run.Nodes[node.ID] = summarizeNode(*node)
+		return s.persistRun(run, node, "node.waiting", message)
+	})
+}
+
+func (s *Service) finishIndeterminate(runID, nodeID string, attemptNumber int, generation uint64, message string) error {
+	return s.controllerMutation(runID, generation, "result.indeterminate", func(run *WorkflowSnapshot, nodes []NodeSnapshot) error {
+		node, err := findNode(nodes, nodeID)
+		if err != nil {
+			return err
+		}
+		var attempt AttemptSnapshot
+		if err := s.store.ReadAttempt(runID, nodeID, attemptNumber, &attempt); err != nil {
+			return err
+		}
+		now := s.now().UTC()
+		attempt.Phase, attempt.Conclusion, attempt.UpdatedAt, attempt.CompletedAt = NodePhaseCompleted, ConclusionIndeterminate, now, &now
+		node.Phase, node.Conclusion, node.Reason, node.UpdatedAt = NodePhaseCompleted, ConclusionIndeterminate, "", now
+		run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = PhaseCompleted, ConclusionIndeterminate, "", "", message, now
+		if err := s.writeAttempt(attempt, false); err != nil {
+			return err
+		}
+		if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
+			return err
+		}
+		run.Nodes[node.ID] = summarizeNode(*node)
+		if err := s.skipUnstarted(run, ReasonUpstreamFailed); err != nil {
+			return err
+		}
+		return s.persistRun(run, node, "run.completed", message)
+	})
+}
+
+func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error {
+	if action.NodeID == "" {
+		return errors.New("resume action nodeId is required")
+	}
+	var node NodeSnapshot
+	if err := s.store.ReadNode(run.ID, action.NodeID, &node); err != nil {
+		return err
+	}
+	switch action.Type {
+	case "approve", "reject":
+		decision := strings.TrimSuffix(action.Type, "e")
+		if action.Type == "approve" {
+			decision = "approved"
+		} else {
+			decision = "rejected"
+		}
+		if node.Result != nil && node.Result.Decision != "" {
+			if node.Result.Decision == decision && node.Result.Reason == action.Reason {
+				if run.Phase == PhaseCompleted {
+					return nil
+				}
+				now := s.now().UTC()
+				run.Nodes[node.ID], run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = summarizeNode(node), PhaseRunning, "", "", "", "approval "+decision, now
+				return s.persistRun(run, &node, "node.approval_decided", run.Summary)
+			}
+			return fmt.Errorf("approval node %q already has conflicting decision %q", node.ID, node.Result.Decision)
+		}
+		if node.Type != "approval" || node.Phase != NodePhaseWaiting || node.Reason != ReasonApprovalRequired {
+			return fmt.Errorf("node %q is not the current waiting approval", node.ID)
+		}
+		result := &workflow.Result{Decision: decision, Reason: action.Reason}
+		now := s.now().UTC()
+		node.Phase, node.Result, node.Reason, node.UpdatedAt = NodePhaseCompleted, result, "", now
+		if decision == "approved" {
+			node.Conclusion = ConclusionSucceeded
+		} else {
+			node.Conclusion = ConclusionRejected
+		}
+		if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
+			return err
+		}
+		run.Nodes[node.ID], run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = summarizeNode(node), PhaseRunning, "", "", "", "approval "+decision, now
+		return s.persistRun(run, &node, "node.approval_decided", run.Summary)
+	case "retry":
+		allowed := node.Phase == NodePhaseWaiting && (node.Reason == ReasonAgentWaitingInput || node.Reason == ReasonCompletionMissing || node.Reason == ReasonInvalidResult)
+		allowed = allowed || (node.Phase == NodePhaseCompleted && (node.Conclusion == ConclusionFailed || node.Conclusion == ConclusionIndeterminate))
+		if !allowed || node.CurrentAttempt < 1 {
+			return fmt.Errorf("node %q is not in a retryable state", node.ID)
+		}
+		if node.Conclusion == ConclusionIndeterminate && !action.AcknowledgeDuplicateRisk {
+			return fmt.Errorf("retrying indeterminate node %q requires acknowledgeDuplicateRisk", node.ID)
+		}
+		now := s.now().UTC()
+		node.Phase, node.Conclusion, node.Reason, node.Result, node.UpdatedAt = NodePhaseReady, "", "", nil, now
+		if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
+			return err
+		}
+		run.Nodes[node.ID] = summarizeNode(node)
+		if err := s.resetDownstream(run, node.ID); err != nil {
+			return err
+		}
+		run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.CancelRequested, run.UpdatedAt = PhaseRunning, "", "", "", "explicit retry requested", false, now
+		return s.persistRun(run, &node, "node.retry_requested", run.Summary)
+	default:
+		return fmt.Errorf("unknown resume action %q", action.Type)
+	}
+}
+
+func validateResumeAction(action ResumeAction) error {
+	if action.NodeID == "" {
+		return errors.New("resume action nodeId is required")
+	}
+	switch action.Type {
+	case "approve":
+		if action.Reason != "" || action.AcknowledgeDuplicateRisk {
+			return errors.New("approve action does not accept reason or acknowledgeDuplicateRisk")
+		}
+	case "reject":
+		if action.AcknowledgeDuplicateRisk {
+			return errors.New("reject action does not accept acknowledgeDuplicateRisk")
+		}
+	case "retry":
+		if action.Reason != "" {
+			return errors.New("retry action does not accept reason")
+		}
+	default:
+		return fmt.Errorf("unknown resume action %q", action.Type)
+	}
+	return nil
+}
+
+func (s *Service) resetDownstream(run *WorkflowSnapshot, target string) error {
+	var normalized workflow.Normalized
+	if err := s.store.ReadWorkflow(run.ID, &normalized); err != nil {
+		return err
+	}
+	descendants := map[string]bool{target: true}
+	for _, id := range normalized.TopologicalOrder {
+		for _, dependency := range normalized.Document.Nodes[id].DependsOn {
+			if descendants[dependency] {
+				descendants[id] = true
+			}
+		}
+	}
+	for id := range descendants {
+		if id == target {
+			continue
+		}
+		var node NodeSnapshot
+		if err := s.store.ReadNode(run.ID, id, &node); err != nil {
+			return err
+		}
+		if node.Phase == NodePhaseSkipped {
+			node.Phase, node.Reason, node.Conclusion, node.Result, node.UpdatedAt = NodePhasePending, "", "", nil, s.now().UTC()
+			if err := s.store.WriteNode(run.ID, id, node); err != nil {
+				return err
+			}
+			run.Nodes[id] = summarizeNode(node)
+		}
+	}
+	return nil
+}
+
+func (s *Service) skipUnstarted(run *WorkflowSnapshot, reason Reason) error {
+	for _, id := range run.TopologicalOrder {
+		var node NodeSnapshot
+		if err := s.store.ReadNode(run.ID, id, &node); err != nil {
+			return err
+		}
+		if node.Phase == NodePhasePending || node.Phase == NodePhaseReady || (node.Phase == NodePhaseWaiting && node.Type == "approval") {
+			node.Phase, node.Reason, node.UpdatedAt = NodePhaseSkipped, reason, s.now().UTC()
+			if err := s.store.WriteNode(run.ID, id, node); err != nil {
+				return err
+			}
+			run.Nodes[id] = summarizeNode(node)
+		}
+	}
+	return nil
+}
+
+func (s *Service) resetEventSequence(runID string) (uint64, error) {
+	return resetEventSequence(s.store, runID)
+}
+
+func resetEventSequence(state *store.Store, runID string) (uint64, error) {
+	var sequence uint64
+	err := state.ReadEvents(runID, func(raw json.RawMessage) error {
+		var event struct {
+			Sequence uint64 `json:"sequence"`
+		}
+		if err := json.Unmarshal(raw, &event); err != nil {
+			return err
+		}
+		if event.Sequence <= sequence {
+			return fmt.Errorf("event sequence is not strictly increasing")
+		}
+		sequence = event.Sequence
+		return nil
+	})
+	return sequence, err
+}
+
+func (s *Service) persistRun(run *WorkflowSnapshot, node *NodeSnapshot, eventType, message string) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+	if err := ValidateWorkflowSnapshot(*run); err != nil {
+		return err
+	}
+	if err := s.store.WriteSnapshot(run.ID, run); err != nil {
+		return err
+	}
+	sequence, err := s.resetEventSequence(run.ID)
+	if err != nil {
+		return err
+	}
+	event := WorkflowEvent{ProtocolVersion: protocolVersion, RunID: run.ID, Sequence: sequence + 1, Type: eventType, Phase: run.Phase,
+		Conclusion: run.Conclusion, Reason: run.Reason, Message: message, Timestamp: s.now().UTC()}
+	if node != nil {
+		event.NodeID, event.NodePhase = node.ID, node.Phase
+	}
+	if err := s.store.AppendEvent(run.ID, event); err != nil {
 		return err
 	}
 	s.sinkMu.RLock()
@@ -443,59 +1508,136 @@ func (s *Service) recordLocked(rt *activeRun, eventType, message string) error {
 	return nil
 }
 
-func (s *Service) fail(rt *activeRun, err error) {
-	_, _ = s.transitionIfActive(rt, RunFailed, NodeFailed, "run.failed", err.Error(), RunCreated, RunDispatching, RunRunning)
-}
-
-func (s *Service) stopped(rt *activeRun) bool {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	return !activeLocked(rt)
-}
-
-func (s *Service) lookup(runID string) (*activeRun, error) {
-	s.mu.RLock()
-	rt := s.runs[runID]
-	s.mu.RUnlock()
-	if rt == nil {
-		return nil, fmt.Errorf("run %q not found", runID)
+func (s *Service) writeAttempt(attempt AttemptSnapshot, create bool) error {
+	if err := ValidateAttemptSnapshot(attempt); err != nil {
+		return err
 	}
-	return rt, nil
-}
-
-func (s *Service) snapshot(rt *activeRun) RunSnapshot {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	return rt.snapshot
-}
-
-func requestID(rt *activeRun) string {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	return rt.snapshot.ID
-}
-
-func normalizedStatus(status string) (RunStatus, NodeStatus) {
-	switch strings.ToLower(status) {
-	case "succeeded", "completed":
-		return RunSucceeded, NodeSucceeded
-	case "blocked", "waitinginput":
-		return RunBlocked, NodeBlocked
-	case "indeterminate", "idle", "exited":
-		return RunIndeterminate, NodeIndeterminate
-	case "paused":
-		return RunPaused, NodePaused
-	case "cancelled", "canceled":
-		return RunCancelled, NodeCancelled
-	default:
-		return RunFailed, NodeFailed
+	if create {
+		return s.store.WriteAttempt(attempt.RunID, attempt.NodeID, attempt.Number, attempt)
 	}
+	return s.store.UpdateAttempt(attempt.RunID, attempt.NodeID, attempt.Number, attempt)
+}
+
+func (s *Service) loadRun(runID string) (WorkflowSnapshot, []NodeSnapshot, error) {
+	return s.loadRunFrom(s.store, runID)
+}
+
+func (s *Service) loadRunFrom(state *store.Store, runID string) (WorkflowSnapshot, []NodeSnapshot, error) {
+	var run WorkflowSnapshot
+	if err := state.ReadSnapshot(runID, &run); err != nil {
+		return run, nil, err
+	}
+	if err := ValidateWorkflowSnapshot(run); err != nil {
+		return run, nil, fmt.Errorf("invalid run snapshot: %w", err)
+	}
+	if run.StateSchemaVersion == 0 {
+		run.StateSchemaVersion = 1
+	}
+	nodes := make([]NodeSnapshot, 0, len(run.TopologicalOrder))
+	for _, id := range run.TopologicalOrder {
+		var node NodeSnapshot
+		if err := state.ReadNode(runID, id, &node); err != nil {
+			return run, nil, err
+		}
+		if err := ValidateNodeSnapshot(node); err != nil {
+			return run, nil, fmt.Errorf("invalid node %q: %w", id, err)
+		}
+		if node.StateSchemaVersion == 0 {
+			node.StateSchemaVersion = 1
+		}
+		nodes = append(nodes, node)
+	}
+	return run, nodes, nil
+}
+
+func (s *Service) pauseControllerOnError(runID string, generation uint64, cause error) {
+	err := s.controllerMutation(runID, generation, "controller.error", func(run *WorkflowSnapshot, _ []NodeSnapshot) error {
+		run.Phase, run.Reason, run.Summary, run.UpdatedAt = PhaseWaiting, ReasonCompletionMissing, cause.Error(), s.now().UTC()
+		return s.persistRun(run, nil, "run.waiting", cause.Error())
+	})
+	if err == nil || errors.Is(err, errControllerInactive) {
+		return
+	}
+	s.mu.Lock()
+	if active := s.controllers[runID]; active != nil && active.generation == generation {
+		active.err = errors.Join(cause, err)
+	}
+	s.mu.Unlock()
+}
+
+func summarizeNode(node NodeSnapshot) NodeSummary {
+	return NodeSummary{ID: node.ID, Type: node.Type, Phase: node.Phase, Conclusion: node.Conclusion, Reason: node.Reason, CurrentAttempt: node.CurrentAttempt}
+}
+
+func findNode(nodes []NodeSnapshot, nodeID string) (*NodeSnapshot, error) {
+	for index := range nodes {
+		if nodes[index].ID == nodeID {
+			return &nodes[index], nil
+		}
+	}
+	return nil, fmt.Errorf("node %q is missing from run snapshot", nodeID)
+}
+func findActiveNode(nodes []NodeSnapshot) *NodeSnapshot {
+	for index := range nodes {
+		if nodes[index].Phase == NodePhaseRunning || (nodes[index].Phase == NodePhaseWaiting && nodes[index].Type == "agent") {
+			return &nodes[index]
+		}
+	}
+	return nil
+}
+
+func ancestorSet(doc workflow.Document, nodeID string) map[string]bool {
+	result := map[string]bool{}
+	var visit func(string)
+	visit = func(id string) {
+		for _, dependency := range doc.Nodes[id].DependsOn {
+			if !result[dependency] {
+				result[dependency] = true
+				visit(dependency)
+			}
+		}
+	}
+	visit(nodeID)
+	return result
+}
+
+func hasEligibleRejectedBranch(doc workflow.Document, nodes []NodeSnapshot) bool {
+	state := map[string]NodeSnapshot{}
+	for _, node := range nodes {
+		state[node.ID] = node
+	}
+	for id, definition := range doc.Nodes {
+		if definition.When != nil && mentionsRejected(*definition.When) {
+			node := state[id]
+			if node.Reason != ReasonConditionFalse {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func mentionsRejected(condition workflow.Condition) bool {
+	if condition.Node != "" && condition.Field == "result.decision" && fmt.Sprint(condition.Equals) == "rejected" {
+		return true
+	}
+	for _, child := range condition.All {
+		if mentionsRejected(child) {
+			return true
+		}
+	}
+	for _, child := range condition.Any {
+		if mentionsRejected(child) {
+			return true
+		}
+	}
+	return condition.Not != nil && mentionsRejected(*condition.Not)
 }
 
 func newRunID() (string, error) {
-	bytes := make([]byte, 12)
-	if _, err := rand.Read(bytes); err != nil {
+	value := make([]byte, 12)
+	if _, err := rand.Read(value); err != nil {
 		return "", fmt.Errorf("generate run id: %w", err)
 	}
-	return "run-" + hex.EncodeToString(bytes), nil
+	return "run-" + hex.EncodeToString(value), nil
 }

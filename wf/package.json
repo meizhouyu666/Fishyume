@@ -1,18 +1,32 @@
 {
-  "name": "@wf/cli",
-  "version": "0.1.0",
-  "private": true,
+  "name": "fishyume",
+  "version": "0.2.1-alpha.1",
   "type": "module",
   "engines": {
     "node": ">=24"
   },
   "bin": {
+    "fishyume": "dist/cli.js",
     "wf": "dist/cli.js"
   },
+  "description": "Fishyume local-first recoverable workflow runner",
+  "license": "Apache-2.0",
+  "files": ["dist", "README.md", "LICENSE"],
+  "repository": {
+    "type": "git",
+    "directory": "wf"
+  },
+  "optionalDependencies": {
+    "fishyume-engine-linux-x64": "0.2.1-alpha.1",
+    "fishyume-engine-win32-x64": "0.2.1-alpha.1"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test --import tsx src/**/*.test.ts src/**/*.test.tsx"
+    "test": "node --test --import tsx src/**/*.test.ts src/**/*.test.tsx",
+    "pack:dry-run": "npm pack --dry-run",
+    "pack:audit": "node scripts/audit-pack.mjs --dry-run",
+    "pack:audit:real": "node scripts/audit-pack.mjs --real"
   },
   "dependencies": {
     "clipanion": "^4.0.0-rc.4",

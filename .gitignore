@@ -3,6 +3,8 @@ wf/dist/
 wf/coverage/
 wf-engine/wf-engine
 wf-engine/wf-engine.exe
+wf/artifacts/
+wf/packages/*/bin/
 coverage/
 .coverage/
 .wf/

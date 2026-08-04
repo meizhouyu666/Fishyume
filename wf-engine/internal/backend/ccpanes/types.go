@@ -19,6 +19,7 @@ type taskBinding struct {
 type launchResult struct {
 	LaunchID  string
 	SessionID string
+	Metadata  map[string]string
 }
 
 func rawObject(value any) json.RawMessage {

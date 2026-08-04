@@ -1,0 +1,141 @@
+name: Fishyume CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+          cache-dependency-path: wf/package-lock.json
+      - name: Go checks
+        working-directory: wf-engine
+        run: go test ./... && go vet ./... && go build ./cmd/wf-engine
+      - name: Linux race check
+        if: runner.os == 'Linux'
+        working-directory: wf-engine
+        run: go test -race ./...
+      - name: TypeScript checks
+        working-directory: wf
+        run: npm ci && npm run typecheck && npm test && npm run build && npm run pack:audit && npm run pack:audit:real
+      - name: Diff check
+        run: git diff --check
+
+  artifacts:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+      - name: Build Windows and Linux Engine artifacts
+        shell: pwsh
+        run: |
+          ./wf/scripts/build-engine-artifacts.ps1 -Target windows-amd64
+          ./wf/scripts/build-engine-artifacts.ps1 -Target linux-amd64
+      - name: Verify checksums
+        shell: pwsh
+        run: |
+          ./wf/scripts/verify-engine-artifacts.ps1
+          Get-ChildItem ./wf/artifacts -Recurse -Filter SHA256SUMS | ForEach-Object {
+            if (-not (Get-Content -Raw $_.FullName).Trim()) { throw "empty checksum file: $($_.FullName)" }
+          }
+
+  linux-platform-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+          cache-dependency-path: wf/package-lock.json
+      - name: Build CLI and Linux Engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix wf ci --ignore-scripts
+          npm --prefix wf run build
+          mkdir -p wf/packages/fishyume-engine-linux-x64/bin "$RUNNER_TEMP/fishyume-packs"
+          (cd wf-engine && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o ../wf/packages/fishyume-engine-linux-x64/bin/fishyume-engine ./cmd/wf-engine)
+          chmod 0644 wf/packages/fishyume-engine-linux-x64/bin/fishyume-engine
+          (cd wf && npm pack --pack-destination "$RUNNER_TEMP/fishyume-packs")
+          (cd wf/packages/fishyume-engine-linux-x64 && npm pack --pack-destination "$RUNNER_TEMP/fishyume-packs")
+      - name: Install and verify Linux packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_root="$RUNNER_TEMP/fishyume-install"
+          engine_tgz="$RUNNER_TEMP/fishyume-packs/fishyume-engine-linux-x64-0.2.1-alpha.1.tgz"
+          npm install --prefix "$install_root" \
+            "$RUNNER_TEMP/fishyume-packs/fishyume-0.2.1-alpha.1.tgz" \
+            "$engine_tgz" --ignore-scripts
+          engine="$install_root/node_modules/fishyume-engine-linux-x64/bin/fishyume-engine"
+          test -x "$engine"
+          mode="$(stat -c '%a' "$engine")"
+          [[ "$mode" =~ ^7[0-7][0-7]$ ]]
+          tar -tvf "$engine_tgz" | grep -Eq '^-rwxr-xr-x .*package/bin/fishyume-engine$'
+          set +e
+          doctor_output="$("$install_root/node_modules/.bin/fishyume" doctor 2>&1)"
+          set -e
+          echo "$doctor_output"
+          grep -q 'ok engine 0.2.1-alpha.1 started' <<<"$doctor_output"
+          grep -q 'ok protocol 2 compatible' <<<"$doctor_output"
+
+  windows-platform-install:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+          cache-dependency-path: wf/package-lock.json
+      - name: Build and pack Windows packages
+        shell: pwsh
+        run: |
+          npm --prefix wf ci --ignore-scripts
+          npm --prefix wf run build
+          ./wf/scripts/build-engine-artifacts.ps1 -Target windows-amd64
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP/fishyume-packs" | Out-Null
+          Push-Location wf
+          npm pack --pack-destination "$env:RUNNER_TEMP/fishyume-packs"
+          Pop-Location
+          Push-Location wf/packages/fishyume-engine-win32-x64
+          npm pack --pack-destination "$env:RUNNER_TEMP/fishyume-packs"
+          Pop-Location
+      - name: Install and verify Windows packages
+        shell: pwsh
+        run: |
+          $installRoot = "$env:RUNNER_TEMP/fishyume-install"
+          npm install --prefix $installRoot `
+            "$env:RUNNER_TEMP/fishyume-packs/fishyume-0.2.1-alpha.1.tgz" `
+            "$env:RUNNER_TEMP/fishyume-packs/fishyume-engine-win32-x64-0.2.1-alpha.1.tgz" `
+            --ignore-scripts
+          $engine = Join-Path $installRoot 'node_modules/fishyume-engine-win32-x64/bin/fishyume-engine.exe'
+          if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) { throw "missing Windows Engine: $engine" }
+          $doctorOutput = & (Join-Path $installRoot 'node_modules/.bin/fishyume.cmd') doctor 2>&1 | Out-String
+          $global:LASTEXITCODE = 0
+          Write-Output $doctorOutput
+          if ($doctorOutput -notmatch 'ok engine 0.2.1-alpha.1 started') { throw 'installed Windows Engine did not start' }
+          if ($doctorOutput -notmatch 'ok protocol 2 compatible') { throw 'installed Windows Engine protocol check failed' }
+
+# The registered-project live smoke is intentionally manual and never runs in CI.

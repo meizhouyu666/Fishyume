@@ -32,8 +32,11 @@ func TestCCPanesCtlFixture(t *testing.T) {
 	}
 	scenario := os.Getenv("WF_CTL_SCENARIO")
 	command := strings.Join(args, " ")
-	if scenario == "command-failure" && strings.Contains(command, " launch ") {
+	if scenario == "command-failure" && strings.Contains(command, "call launch_task") {
 		os.Exit(7)
+	}
+	if scenario == "update-failure" && strings.Contains(command, "call update_task_binding") {
+		os.Exit(8)
 	}
 	if scenario == "malformed" && strings.Contains(command, "wait_for_session") {
 		fmt.Print("not-json")
@@ -46,8 +49,8 @@ func TestCCPanesCtlFixture(t *testing.T) {
 		fmt.Print(`{"projects":[{"projectPath":"C:\\fixture-project"}]}`)
 	case strings.Contains(command, "create_task_binding"):
 		fmt.Print(`{"content":[{"type":"text","text":"{\"id\":\"binding-1\"}"}],"isError":false}`)
-	case strings.Contains(command, " launch "):
-		fmt.Print(`{"launchId":"launch-1","sessionId":"session-1"}`)
+	case strings.Contains(command, "call launch_task"):
+		fmt.Print(`{"launchId":"launch-1","sessionId":"session-1","resumeId":"resume-1","paneId":"pane-1"}`)
 	case strings.Contains(command, "update_task_binding"):
 		fmt.Print(`{"ok":true}`)
 	case strings.Contains(command, "wait_for_session"):
@@ -73,17 +76,37 @@ func TestCCPanesCtlFixture(t *testing.T) {
 		fmt.Printf(`{"satisfied":%t,"finalStatus":%q,"sessionId":"session-1"}`, satisfied, state)
 	case strings.Contains(command, "query_task_bindings"):
 		status, summary, exitCode := "completed", "fixture complete", "0"
+		metadata := `{"artifacts":["artifact.txt"],"checks":["fixture check"],"usage":{"inputTokensEstimated":3,"outputTokensEstimated":4}}`
 		if scenario == "failed-binding" {
 			status, summary, exitCode = "failed", "fixture failed", "2"
 		}
 		if scenario == "waiting-input" || scenario == "idle" {
 			status, summary, exitCode = "running", "", "null"
 		}
-		fmt.Printf(`{"items":[{"id":"binding-1","status":%q,"exitCode":%s,"completionSummary":%q,"metadata":{"artifacts":["artifact.txt"],"checks":["fixture check"],"usage":{"inputTokensEstimated":3,"outputTokensEstimated":4}}}]}`, status, exitCode, summary)
+		if scenario == "malformed-binding" {
+			metadata = `{"artifacts":[7]}`
+		}
+		fmt.Printf(`{"items":[{"id":"binding-1","status":%q,"exitCode":%s,"completionSummary":%q,"metadata":%s}]}`, status, exitCode, summary, metadata)
 	case strings.Contains(command, "sessions read"):
 		fmt.Print(`{"output":"fixture output"}`)
+	case strings.Contains(command, "call kill_session"):
+		switch scenario {
+		case "kill-error-envelope":
+			fmt.Print(`{"content":[{"type":"text","text":"kill denied"}],"isError":true}`)
+		case "kill-unsuccessful":
+			fmt.Print(`{"success":false,"sessionId":"session-own"}`)
+		case "kill-session-mismatch":
+			fmt.Print(`{"success":true,"sessionId":"session-other"}`)
+		case "kill-missing-success":
+			fmt.Print(`{"sessionId":"session-own"}`)
+		case "kill-invalid-session-id":
+			fmt.Print(`{"success":true,"sessionId":7}`)
+		default:
+			fmt.Print(`{"success":true}`)
+		}
 	case strings.Contains(command, "sessions kill"):
-		fmt.Print(`{"killed":true}`)
+		fmt.Fprint(os.Stderr, "legacy sessions kill must not be used")
+		os.Exit(9)
 	default:
 		fmt.Print(`{"ok":true}`)
 	}
@@ -97,8 +120,59 @@ func fixtureBackend(t *testing.T, scenario string) (*Backend, string) {
 	t.Setenv("WF_CTL_SCENARIO", scenario)
 	t.Setenv("WF_CTL_LOG", logPath)
 	t.Setenv("WF_CTL_COUNTER", filepath.Join(t.TempDir(), "wait-counter"))
+	t.Setenv(ProfileIDEnv, "fishyume-profile")
 	runner := ExecRunner{PrefixArgs: []string{"-test.run=TestCCPanesCtlFixture", "--"}}
 	return NewWithClient(NewClientWithRunner(os.Args[0], runner)), logPath
+}
+
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	value, existed := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if existed {
+			_ = os.Setenv(key, value)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	})
+}
+
+func TestProfileConfigurationPrecedenceAndCompatibility(t *testing.T) {
+	t.Run("fishyume-precedes-legacy", func(t *testing.T) {
+		t.Setenv(ProfileIDEnv, "fishyume-profile")
+		t.Setenv(LegacyProfileIDEnv, "legacy-profile")
+		profileID, err := ResolveProfileID()
+		if err != nil || profileID != "fishyume-profile" {
+			t.Fatalf("profileID=%q err=%v", profileID, err)
+		}
+	})
+	t.Run("legacy-alias", func(t *testing.T) {
+		unsetEnv(t, ProfileIDEnv)
+		t.Setenv(LegacyProfileIDEnv, "legacy-profile")
+		profileID, err := ResolveProfileID()
+		if err != nil || profileID != "legacy-profile" {
+			t.Fatalf("profileID=%q err=%v", profileID, err)
+		}
+	})
+	t.Run("missing-is-actionable", func(t *testing.T) {
+		unsetEnv(t, ProfileIDEnv)
+		unsetEnv(t, LegacyProfileIDEnv)
+		_, err := ResolveProfileID()
+		if err == nil || !strings.Contains(err.Error(), ProfileIDEnv) || !strings.Contains(err.Error(), "create one in CC-Panes") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	t.Run("invalid-fishyume-does-not-fall-back", func(t *testing.T) {
+		t.Setenv(ProfileIDEnv, " ")
+		t.Setenv(LegacyProfileIDEnv, "legacy-profile")
+		_, err := ResolveProfileID()
+		if err == nil || !strings.Contains(err.Error(), ProfileIDEnv) {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 }
 
 func TestDoctorAndProjectRegistration(t *testing.T) {
@@ -117,8 +191,9 @@ func TestDoctorAndProjectRegistration(t *testing.T) {
 func TestBackendStateMappingsWithExecutableFixture(t *testing.T) {
 	tests := []struct{ scenario, want string }{
 		{"success", "succeeded"}, {"failed-binding", "failed"},
-		{"waiting-input", "blocked"}, {"idle", "indeterminate"},
+		{"waiting-input", "waiting_input"}, {"idle", "completion_missing"},
 		{"active-then-idle", "succeeded"},
+		{"malformed-binding", "invalid_result"},
 	}
 	for _, test := range tests {
 		t.Run(test.scenario, func(t *testing.T) {
@@ -141,6 +216,25 @@ func TestBackendStateMappingsWithExecutableFixture(t *testing.T) {
 				calls, _ := os.ReadFile(logPath)
 				if !strings.Contains(string(calls), "binding-1 is mandatory") || !strings.Contains(string(calls), "Do not modify workflow-engine plan") {
 					t.Fatalf("completion contract missing from launch: %s", calls)
+				}
+				launchCall := string(calls)
+				for _, field := range []string{
+					`call` + "\t" + `launch_task`,
+					`"projectPath":"C:\\fixture-project"`,
+					`"cliTool":"codex"`,
+					`"runtimeKind":"local"`,
+					`"title":"Fishyume run-1"`,
+					`"profileId":"fishyume-profile"`,
+				} {
+					if !strings.Contains(launchCall, field) {
+						t.Fatalf("launch_task payload omitted %s: %s", field, launchCall)
+					}
+				}
+				if strings.Contains(launchCall, "\tlaunch\t") {
+					t.Fatalf("legacy launch surface was used: %s", launchCall)
+				}
+				if session.Metadata["resumeId"] != "resume-1" || session.Metadata["paneId"] != "pane-1" {
+					t.Fatalf("opaque launch metadata was not preserved: %+v", session.Metadata)
 				}
 			}
 			calls, _ := os.ReadFile(logPath)
@@ -210,7 +304,7 @@ func TestMalformedJSONAndCommandFailure(t *testing.T) {
 	}
 	b, _ = fixtureBackend(t, "command-failure")
 	_, err := b.Launch(context.Background(), backend.LaunchSpec{RunID: "run-1", Project: `C:\fixture-project`, Tool: "codex", Runtime: "local", Prompt: "secret prompt"})
-	if err == nil || !strings.Contains(err.Error(), "exit code 7") {
+	if err == nil || !strings.Contains(err.Error(), "exit code 7") || !strings.Contains(err.Error(), ProfileIDEnv) || !strings.Contains(err.Error(), "non-interactive profile") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.Contains(err.Error(), "secret prompt") {
@@ -224,8 +318,53 @@ func TestCancelKillsOnlySession(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls, _ := os.ReadFile(logPath)
-	if !strings.Contains(string(calls), "sessions\tkill\tsession-own") {
-		t.Fatalf("kill command missing: %s", calls)
+	callLog := string(calls)
+	if !strings.Contains(callLog, "call\tkill_session\t--json\t{\"sessionId\":\"session-own\"}") {
+		t.Fatalf("kill_session call or strict payload missing: %s", calls)
+	}
+	if strings.Contains(callLog, "sessions\tkill") {
+		t.Fatalf("legacy sessions kill surface was used: %s", calls)
+	}
+}
+
+func TestCancelRequiresTruthfulKillSessionConfirmation(t *testing.T) {
+	tests := []struct {
+		scenario string
+		want     string
+	}{
+		{scenario: "kill-error-envelope", want: "MCP call returned an error envelope"},
+		{scenario: "kill-unsuccessful", want: "success=false"},
+		{scenario: "kill-session-mismatch", want: "did not match requested session"},
+		{scenario: "kill-missing-success", want: "boolean success field"},
+		{scenario: "kill-invalid-session-id", want: "invalid sessionId"},
+	}
+	for _, test := range tests {
+		t.Run(test.scenario, func(t *testing.T) {
+			b, logPath := fixtureBackend(t, test.scenario)
+			err := b.Cancel(context.Background(), backend.Session{ID: "session-own"})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want substring %q", err, test.want)
+			}
+			calls, _ := os.ReadFile(logPath)
+			callLog := string(calls)
+			if !strings.Contains(callLog, "call\tkill_session\t--json\t{\"sessionId\":\"session-own\"}") {
+				t.Fatalf("kill_session call or strict payload missing: %s", calls)
+			}
+			if strings.Contains(callLog, "sessions\tkill") {
+				t.Fatalf("legacy sessions kill surface was used: %s", calls)
+			}
+		})
+	}
+}
+
+func TestLaunchReturnsOwnedSessionWhenPostLaunchBindingUpdateFails(t *testing.T) {
+	b, _ := fixtureBackend(t, "update-failure")
+	session, err := b.Launch(context.Background(), backend.LaunchSpec{RunID: "run-1", Project: `C:\fixture-project`, Tool: "codex", Runtime: "local", Prompt: "work"})
+	if err == nil {
+		t.Fatal("expected update failure")
+	}
+	if session == nil || session.ID != "session-1" || session.Metadata["bindingId"] != "binding-1" {
+		t.Fatalf("session=%+v err=%v", session, err)
 	}
 }
 

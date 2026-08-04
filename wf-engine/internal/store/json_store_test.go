@@ -69,3 +69,19 @@ func TestStateRootOverrideAndDurableFiles(t *testing.T) {
 		t.Fatalf("event count = %d, want 2", count)
 	}
 }
+
+func TestStateRootFishyumePrecedenceAndLegacyFallback(t *testing.T) {
+	fishyume := filepath.Join(t.TempDir(), "fishyume")
+	legacy := filepath.Join(t.TempDir(), "wf")
+	t.Setenv(StateDirEnv, fishyume)
+	t.Setenv(LegacyStateDirEnv, legacy)
+	resolved, err := StateRoot()
+	if err != nil || resolved != fishyume {
+		t.Fatalf("fishyume override=%q err=%v", resolved, err)
+	}
+	t.Setenv(StateDirEnv, "")
+	resolved, err = StateRoot()
+	if err != nil || resolved != legacy {
+		t.Fatalf("legacy fallback=%q err=%v", resolved, err)
+	}
+}

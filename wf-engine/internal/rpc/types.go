@@ -2,7 +2,7 @@ package rpc
 
 import "encoding/json"
 
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
 type Request struct {
 	JSONRPC         string          `json:"jsonrpc"`

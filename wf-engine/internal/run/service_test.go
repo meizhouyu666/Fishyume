@@ -3,534 +3,1450 @@ package run
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/store"
+	"wf.local/wf-engine/internal/workflow"
 )
 
-type blockingBackend struct{ cancelCalls atomic.Int32 }
-
-func (*blockingBackend) Name() string                 { return "ccpanes" }
-func (*blockingBackend) Doctor(context.Context) error { return nil }
-func (*blockingBackend) Launch(context.Context, backend.LaunchSpec) (*backend.Session, error) {
-	return &backend.Session{ID: "own-session"}, nil
+type fakeWorkflowBackend struct {
+	mu              sync.Mutex
+	launches        int
+	prompts         []string
+	waitResults     []backend.BackendResult
+	waitBlock       bool
+	observations    map[string][]backend.Observation
+	cancelFailures  int
+	cancelAttempts  int
+	successfulKills int
+	waitCalls       int
+	reconcileCalls  int
+	cancelEntered   chan struct{}
+	cancelRelease   chan struct{}
+	waitReturn      chan backend.BackendResult
+	waitReturned    chan struct{}
 }
 
-type ownershipBackend struct {
-	mu                sync.Mutex
-	cancelAttempts    []string
-	successfulKills   []string
-	cancelFailures    int
-	cancelEntered     chan struct{}
-	cancelEnteredOnce sync.Once
-	cancelRelease     chan struct{}
-	launchEntered     chan struct{}
-	launchEnteredOnce sync.Once
-	launchRelease     chan struct{}
-	waitCalls         int
+func (*fakeWorkflowBackend) Name() string                 { return "fake" }
+func (*fakeWorkflowBackend) Doctor(context.Context) error { return nil }
+func (b *fakeWorkflowBackend) Launch(_ context.Context, spec backend.LaunchSpec) (*backend.Session, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.launches++
+	b.prompts = append(b.prompts, spec.Prompt)
+	id := fmt.Sprintf("session-%d", b.launches)
+	return &backend.Session{ID: id, Metadata: map[string]string{"bindingId": "binding-" + id, "project": spec.Project}}, nil
 }
-
-func (*ownershipBackend) Name() string                 { return "ccpanes" }
-func (*ownershipBackend) Doctor(context.Context) error { return nil }
-func (b *ownershipBackend) Launch(_ context.Context, spec backend.LaunchSpec) (*backend.Session, error) {
-	if b.launchEntered != nil {
-		b.launchEnteredOnce.Do(func() { close(b.launchEntered) })
-	}
-	if b.launchRelease != nil {
-		<-b.launchRelease
-	}
-	return &backend.Session{ID: "session-" + spec.RunID}, nil
-}
-func (b *ownershipBackend) Wait(ctx context.Context, _ backend.Session) (*backend.BackendResult, error) {
+func (b *fakeWorkflowBackend) Wait(ctx context.Context, _ backend.Session) (*backend.BackendResult, error) {
 	b.mu.Lock()
 	b.waitCalls++
-	b.mu.Unlock()
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-func (*ownershipBackend) Output(context.Context, backend.Session, int) (string, error) {
-	return "", nil
-}
-func (b *ownershipBackend) Cancel(_ context.Context, session backend.Session) error {
-	b.mu.Lock()
-	b.cancelAttempts = append(b.cancelAttempts, session.ID)
-	shouldFail := b.cancelFailures > 0
-	if shouldFail {
-		b.cancelFailures--
+	block := b.waitBlock
+	waitReturn, waitReturned := b.waitReturn, b.waitReturned
+	if len(b.waitResults) > 0 {
+		result := b.waitResults[0]
+		b.waitResults = b.waitResults[1:]
+		b.mu.Unlock()
+		return &result, nil
 	}
-	entered := b.cancelEntered
-	release := b.cancelRelease
+	b.mu.Unlock()
+	if block {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case result := <-waitReturn:
+			if waitReturned != nil {
+				select {
+				case <-waitReturned:
+				default:
+					close(waitReturned)
+				}
+			}
+			return &result, nil
+		}
+	}
+	return &backend.BackendResult{Status: "completion_missing", Summary: "missing"}, nil
+}
+
+func instantCancelPoll(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+func (*fakeWorkflowBackend) Output(context.Context, backend.Session, int) (string, error) {
+	return "recent output", nil
+}
+func (b *fakeWorkflowBackend) Cancel(_ context.Context, _ backend.Session) error {
+	b.mu.Lock()
+	b.cancelAttempts++
+	entered, release := b.cancelEntered, b.cancelRelease
+	if b.cancelFailures > 0 {
+		b.cancelFailures--
+		b.mu.Unlock()
+		return fmt.Errorf("fixture kill failed")
+	}
 	b.mu.Unlock()
 	if entered != nil {
-		b.cancelEnteredOnce.Do(func() { close(entered) })
+		select {
+		case <-entered:
+		default:
+			close(entered)
+		}
 	}
 	if release != nil {
 		<-release
 	}
-	if shouldFail {
-		return fmt.Errorf("fixture kill failed")
-	}
 	b.mu.Lock()
-	b.successfulKills = append(b.successfulKills, session.ID)
+	b.successfulKills++
 	b.mu.Unlock()
 	return nil
 }
-
-func (b *ownershipBackend) cancelledSessions() []string {
+func (b *fakeWorkflowBackend) Reconcile(_ context.Context, session backend.Session) (*backend.Observation, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return append([]string(nil), b.successfulKills...)
+	b.reconcileCalls++
+	queue := b.observations[session.ID]
+	if len(queue) == 0 {
+		return &backend.Observation{State: backend.ObservationCompletionMissing}, nil
+	}
+	result := queue[0]
+	b.observations[session.ID] = queue[1:]
+	return &result, nil
 }
 
-func (b *ownershipBackend) attemptedSessions() []string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return append([]string(nil), b.cancelAttempts...)
-}
-
-type deterministicGate struct {
-	entered chan struct{}
-	release chan struct{}
-}
-
-type killWaitBackend struct {
-	waitEntered chan struct{}
-	waitRelease chan struct{}
-	killEntered chan struct{}
-	killRelease chan struct{}
-	cancelCalls atomic.Int32
-}
-
-func (*killWaitBackend) Name() string                 { return "ccpanes" }
-func (*killWaitBackend) Doctor(context.Context) error { return nil }
-func (*killWaitBackend) Launch(_ context.Context, spec backend.LaunchSpec) (*backend.Session, error) {
-	return &backend.Session{ID: "session-" + spec.RunID}, nil
-}
-func (b *killWaitBackend) Wait(context.Context, backend.Session) (*backend.BackendResult, error) {
-	close(b.waitEntered)
-	<-b.waitRelease
-	return nil, fmt.Errorf("session wait ended after kill began")
-}
-func (*killWaitBackend) Output(context.Context, backend.Session, int) (string, error) {
-	return "", nil
-}
-func (b *killWaitBackend) Cancel(context.Context, backend.Session) error {
-	b.cancelCalls.Add(1)
-	close(b.killEntered)
-	close(b.waitRelease)
-	<-b.killRelease
-	return nil
-}
-
-func newDeterministicGate() *deterministicGate {
-	return &deterministicGate{entered: make(chan struct{}), release: make(chan struct{})}
-}
-
-func (g *deterministicGate) wait() {
-	close(g.entered)
-	<-g.release
-}
-
-func receive(t *testing.T, channel <-chan struct{}, label string) {
+func waitForRun(t *testing.T, service *Service, runID string, predicate func(WorkflowSnapshot) bool) WorkflowSnapshot {
 	t.Helper()
-	select {
-	case <-channel:
-	case <-time.After(2 * time.Second):
-		t.Fatalf("timed out waiting for %s", label)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		snapshot, err := service.Get(runID)
+		if err == nil && predicate(snapshot) {
+			return snapshot
+		}
+		time.Sleep(time.Millisecond)
+	}
+	snapshot, _ := service.Get(runID)
+	t.Fatalf("run did not reach expected state: %+v", snapshot)
+	return WorkflowSnapshot{}
+}
+
+func workflowFixture() string {
+	return `apiVersion: wf/v1
+name: integration
+inputs:
+  goal: {required: true}
+defaults: {tool: codex, runtime: local}
+execution: {maxConcurrency: 1}
+nodes:
+  plan:
+    type: agent
+    task: "Plan {{ inputs.goal }}"
+  approve:
+    type: approval
+    dependsOn: [plan]
+    prompt: "Approve {{ nodes.plan.result.summary }}"
+  implement:
+    type: agent
+    dependsOn: [approve]
+    when: {node: approve, field: result.decision, equals: approved}
+    task: "Implement {{ nodes.plan.result.summary }}"
+    requiredSkills: [go-testing]
+  reject_note:
+    type: agent
+    dependsOn: [approve]
+    when: {node: approve, field: result.decision, equals: rejected}
+    task: "Record rejection {{ nodes.approve.result.reason }}"
+`
+}
+
+func TestWorkflowApprovalResumeContextAndConditionalSkip(t *testing.T) {
+	b := &fakeWorkflowBackend{waitResults: []backend.BackendResult{
+		{Status: "succeeded", Summary: "safe plan", Artifacts: []string{"plan.md"}},
+		{Status: "succeeded", Summary: "implemented", Checks: []string{"go test ./..."}},
+	}, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	first := NewService(b, state)
+	started, err := first.StartWorkflow(context.Background(), StartWorkflowRequest{Project: "project", Filename: "workflow.yaml", Content: workflowFixture(), Inputs: map[string]any{"goal": "M2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.StateSchemaVersion != 1 || started.ProtocolVersion != 2 {
+		t.Fatalf("state schema and protocol must be independent: %+v", started)
+	}
+	var normalized workflow.Normalized
+	if err := state.ReadWorkflow(started.ID, &normalized); err != nil || normalized.Document.APIVersion != workflow.APIVersion {
+		t.Fatalf("normalized workflow schema=%q err=%v", normalized.Document.APIVersion, err)
+	}
+	waiting := waitForRun(t, first, started.ID, func(run WorkflowSnapshot) bool {
+		return run.Phase == PhaseWaiting && run.Reason == ReasonApprovalRequired
+	})
+	if waiting.ActiveNodeID != "approve" {
+		t.Fatalf("active approval=%q", waiting.ActiveNodeID)
+	}
+	if waiting.Summary != "Approve safe plan" {
+		t.Fatalf("approval prompt was not rendered: %q", waiting.Summary)
+	}
+	second := NewService(b, state)
+	if _, err := second.Resume(context.Background(), ResumeRequest{RunID: started.ID, Action: &ResumeAction{Type: "approve", NodeID: "approve"}}); err != nil {
+		t.Fatal(err)
+	}
+	final := waitForRun(t, second, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	if final.Conclusion != ConclusionSucceeded {
+		t.Fatalf("final=%+v", final)
+	}
+	view, err := second.Status(started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := map[string]NodeSnapshot{}
+	for _, node := range view.Nodes {
+		states[node.ID] = node
+	}
+	if states["reject_note"].Phase != NodePhaseSkipped || states["reject_note"].Reason != ReasonConditionFalse {
+		t.Fatalf("reject node=%+v", states["reject_note"])
+	}
+	b.mu.Lock()
+	prompts := append([]string(nil), b.prompts...)
+	launches := b.launches
+	b.mu.Unlock()
+	if launches != 2 {
+		t.Fatalf("launches=%d", launches)
+	}
+	if !strings.Contains(prompts[1], "Required skills: go-testing") || !strings.Contains(prompts[1], "safe plan") {
+		t.Fatalf("downstream prompt=%q", prompts[1])
+	}
+	if strings.Contains(prompts[1], "recent output") || strings.Contains(prompts[1], "plan.md") {
+		t.Fatalf("prompt leaked unreferenced context=%q", prompts[1])
 	}
 }
 
-func TestControlStateWinsBeforeDispatchTransition(t *testing.T) {
-	for _, control := range []string{"detach", "cancel"} {
-		t.Run(control, func(t *testing.T) {
-			b := &ownershipBackend{}
-			gate := newDeterministicGate()
-			done := make(chan struct{})
-			service := NewService(b, store.New(t.TempDir()))
-			service.hooks.beforeDispatch = gate.wait
-			service.hooks.afterExecute = func() { close(done) }
-			started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "t"})
+func TestRejectionWithoutEligibleBranchConcludesRejected(t *testing.T) {
+	doc := `apiVersion: wf/v1
+name: rejection
+execution: {maxConcurrency: 1}
+nodes:
+  approve: {type: approval, prompt: approve}
+  only_approved:
+    type: agent
+    dependsOn: [approve]
+    when: {node: approve, field: result.decision, equals: approved}
+    task: work
+`
+	b := &fakeWorkflowBackend{observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	first := NewService(b, state)
+	started, err := first.StartWorkflow(context.Background(), StartWorkflowRequest{Project: "p", Content: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, first, started.ID, func(run WorkflowSnapshot) bool { return run.Reason == ReasonApprovalRequired })
+	second := NewService(b, state)
+	if _, err := second.Resume(context.Background(), ResumeRequest{RunID: started.ID, Action: &ResumeAction{Type: "reject", NodeID: "approve", Reason: "no"}}); err != nil {
+		t.Fatal(err)
+	}
+	final := waitForRun(t, second, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	if final.Conclusion != ConclusionRejected {
+		t.Fatalf("final=%+v", final)
+	}
+}
+
+func TestCrashResumeReconcilesWithoutDuplicateLaunch(t *testing.T) {
+	b := &fakeWorkflowBackend{waitBlock: true, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	first := NewService(b, state)
+	started, err := first.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, first, started.ID, func(run WorkflowSnapshot) bool {
+		view, _ := first.Status(run.ID)
+		return run.Phase == PhaseRunning && view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+	})
+	if _, err := first.Detach(started.ID); err != nil {
+		t.Fatal(err)
+	}
+	b.mu.Lock()
+	b.waitBlock = false
+	b.observations["session-1"] = []backend.Observation{{State: backend.ObservationTerminal, Result: &backend.BackendResult{Status: "succeeded", Summary: "reconciled"}}}
+	b.mu.Unlock()
+	second := NewService(b, state)
+	if _, err := second.Resume(context.Background(), ResumeRequest{RunID: started.ID}); err != nil {
+		t.Fatal(err)
+	}
+	final := waitForRun(t, second, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	if final.Conclusion != ConclusionSucceeded {
+		t.Fatalf("final=%+v", final)
+	}
+	b.mu.Lock()
+	launches := b.launches
+	b.mu.Unlock()
+	if launches != 1 {
+		t.Fatalf("resume duplicated launch: %d", launches)
+	}
+}
+
+func TestResumeReconciliationClassifiesDelayedMissingAndExited(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		observations   []backend.Observation
+		wantPhase      Phase
+		wantConclusion Conclusion
+		wantReason     Reason
+	}{
+		{"delayed-binding", []backend.Observation{{State: backend.ObservationCompletionMissing}, {State: backend.ObservationTerminal, Result: &backend.BackendResult{Status: "succeeded", Summary: "late result"}}}, PhaseCompleted, ConclusionSucceeded, ""},
+		{"persistent-idle", []backend.Observation{{State: backend.ObservationCompletionMissing}, {State: backend.ObservationCompletionMissing}, {State: backend.ObservationCompletionMissing}}, PhaseWaiting, "", ReasonCompletionMissing},
+		{"waiting-input", []backend.Observation{{State: backend.ObservationWaitingInput}}, PhaseWaiting, "", ReasonAgentWaitingInput},
+		{"exited", []backend.Observation{{State: backend.ObservationExited}}, PhaseCompleted, ConclusionIndeterminate, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			b := &fakeWorkflowBackend{waitBlock: true, observations: map[string][]backend.Observation{}}
+			state := store.New(t.TempDir())
+			first := NewService(b, state)
+			started, err := first.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			receive(t, gate.entered, "before-dispatch gate")
-			if control == "detach" {
-				if _, err := service.Detach(started.ID); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				if _, err := service.Cancel(context.Background(), started.ID); err != nil {
-					t.Fatal(err)
-				}
-			}
-			close(gate.release)
-			receive(t, done, "execute completion")
-			final, err := service.Get(started.ID)
-			if err != nil {
+			waitForRun(t, first, started.ID, func(run WorkflowSnapshot) bool {
+				view, _ := first.Status(run.ID)
+				return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+			})
+			if _, err := first.Detach(started.ID); err != nil {
 				t.Fatal(err)
 			}
-			want := RunPaused
-			if control == "cancel" {
-				want = RunCancelled
+			b.mu.Lock()
+			b.waitBlock = false
+			b.observations["session-1"] = append([]backend.Observation(nil), test.observations...)
+			b.mu.Unlock()
+			second := NewService(b, state)
+			second.testHooks.idleReconcileDelay = func(context.Context) error { return nil }
+			if _, err := second.Resume(context.Background(), ResumeRequest{RunID: started.ID}); err != nil {
+				t.Fatal(err)
 			}
-			if final.Status != want {
-				t.Fatalf("final status = %s, want %s", final.Status, want)
+			final := waitForRun(t, second, started.ID, func(run WorkflowSnapshot) bool {
+				return run.Phase == test.wantPhase && (test.wantPhase != PhaseWaiting || run.Reason == test.wantReason)
+			})
+			if final.Conclusion != test.wantConclusion || final.Reason != test.wantReason {
+				t.Fatalf("final=%+v", final)
 			}
-			if kills := b.cancelledSessions(); len(kills) != 0 {
-				t.Fatalf("pre-dispatch %s killed sessions: %v", control, kills)
+			b.mu.Lock()
+			launches := b.launches
+			b.mu.Unlock()
+			if launches != 1 {
+				t.Fatalf("launches=%d", launches)
 			}
 		})
 	}
 }
 
-func TestControlStateWinsAfterLaunchBeforeRunningTransition(t *testing.T) {
-	for _, control := range []string{"detach", "cancel"} {
-		t.Run(control, func(t *testing.T) {
-			b := &ownershipBackend{}
-			gate := newDeterministicGate()
-			done := make(chan struct{})
-			service := NewService(b, store.New(t.TempDir()))
-			service.hooks.beforeRunning = gate.wait
-			service.hooks.afterExecute = func() { close(done) }
-			started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "t"})
+func TestStartupIdleReconciliationDoesNotPrematurelyCompleteMissing(t *testing.T) {
+	tests := []struct {
+		name             string
+		waitResults      []backend.BackendResult
+		observations     []backend.Observation
+		wantPhase        Phase
+		wantConclusion   Conclusion
+		wantReason       Reason
+		wantWaitCalls    int
+		wantReconciles   int
+		wantBindingTaken bool
+	}{
+		{
+			name: "active-startup-continues-normal-wait",
+			waitResults: []backend.BackendResult{
+				{Status: "completion_missing", Summary: "startup idle"},
+				{Status: "succeeded", Summary: "completed after startup"},
+			},
+			observations:     []backend.Observation{{State: backend.ObservationActive}},
+			wantPhase:        PhaseCompleted,
+			wantConclusion:   ConclusionSucceeded,
+			wantWaitCalls:    2,
+			wantReconciles:   1,
+			wantBindingTaken: true,
+		},
+		{
+			name:         "late-terminal-binding-wins",
+			waitResults:  []backend.BackendResult{{Status: "completion_missing", Summary: "startup idle"}},
+			observations: []backend.Observation{{State: backend.ObservationTerminal, Result: &backend.BackendResult{Status: "succeeded", Summary: "binding completed"}}},
+			wantPhase:    PhaseCompleted, wantConclusion: ConclusionSucceeded, wantWaitCalls: 1,
+			wantReconciles: 1, wantBindingTaken: true,
+		},
+		{
+			name:         "sustained-idle-becomes-completion-missing",
+			waitResults:  []backend.BackendResult{{Status: "completion_missing", Summary: "startup idle"}},
+			observations: []backend.Observation{{State: backend.ObservationCompletionMissing}, {State: backend.ObservationCompletionMissing}},
+			wantPhase:    PhaseWaiting, wantReason: ReasonCompletionMissing, wantWaitCalls: 1,
+			wantReconciles: startupIdleReconcileChecks,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			b := &fakeWorkflowBackend{waitResults: test.waitResults, observations: map[string][]backend.Observation{"session-1": test.observations}}
+			state := store.New(t.TempDir())
+			service := NewService(b, state)
+			service.testHooks.idleReconcileDelay = func(context.Context) error { return nil }
+			started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			receive(t, gate.entered, "before-running gate")
-			if control == "detach" {
-				if _, err := service.Detach(started.ID); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				if _, err := service.Cancel(context.Background(), started.ID); err != nil {
-					t.Fatal(err)
-				}
-				if _, err := service.Cancel(context.Background(), started.ID); err != nil {
-					t.Fatal(err)
-				}
+			final := waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool {
+				return run.Phase == test.wantPhase && (test.wantPhase != PhaseWaiting || run.Reason == test.wantReason)
+			})
+			if final.Conclusion != test.wantConclusion || final.Reason != test.wantReason {
+				t.Fatalf("final=%+v", final)
 			}
-			close(gate.release)
-			receive(t, done, "execute completion")
-			final, err := service.Get(started.ID)
-			if err != nil {
+			var attempt AttemptSnapshot
+			if err := state.ReadAttempt(started.ID, "agent-1", 1, &attempt); err != nil {
 				t.Fatal(err)
 			}
-			want := RunPaused
-			if control == "cancel" {
-				want = RunCancelled
+			if attempt.BindingConsumed != test.wantBindingTaken {
+				t.Fatalf("attempt=%+v want bindingConsumed=%t", attempt, test.wantBindingTaken)
 			}
-			if final.Status != want {
-				t.Fatalf("final status = %s, want %s", final.Status, want)
-			}
-			kills := b.cancelledSessions()
-			if control == "detach" {
-				if len(kills) != 0 {
-					t.Fatalf("detach killed sessions: %v", kills)
-				}
-			} else {
-				wantSession := fmt.Sprintf("session-%s", started.ID)
-				if len(kills) != 1 || kills[0] != wantSession {
-					t.Fatalf("cancelled sessions = %v, want [%s]", kills, wantSession)
-				}
+			b.mu.Lock()
+			launches, waitCalls, reconciles := b.launches, b.waitCalls, b.reconcileCalls
+			b.mu.Unlock()
+			if launches != 1 || waitCalls != test.wantWaitCalls || reconciles != test.wantReconciles {
+				t.Fatalf("launches=%d waitCalls=%d reconciles=%d", launches, waitCalls, reconciles)
 			}
 		})
 	}
 }
 
-func TestCancelKillFailureRemainsTruthfulAndRetryable(t *testing.T) {
-	b := &ownershipBackend{cancelFailures: 1}
-	gate := newDeterministicGate()
-	done := make(chan struct{})
-	service := NewService(b, store.New(t.TempDir()))
-	service.hooks.beforeRunning = gate.wait
-	service.hooks.afterExecute = func() { close(done) }
-	started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "t"})
-	if err != nil {
-		t.Fatal(err)
+func TestStartupIdleReconciliationProductionBound(t *testing.T) {
+	grace := time.Duration(startupIdleReconcileChecks) * startupIdleReconcileDelay
+	if grace < 5*time.Second || grace > 15*time.Second {
+		t.Fatalf("startup idle grace=%s, want 5s..15s", grace)
 	}
-	receive(t, gate.entered, "before-running gate")
-	failedSnapshot, err := service.Cancel(context.Background(), started.ID)
-	if err == nil {
-		t.Fatal("expected first kill to fail")
+	if grace != 10*time.Second {
+		t.Fatalf("startup idle grace=%s, want 10s", grace)
 	}
-	if failedSnapshot.Status == RunCancelled {
-		t.Fatalf("failed kill produced cancelled snapshot: %+v", failedSnapshot)
-	}
-	if kills := b.cancelledSessions(); len(kills) != 0 {
-		t.Fatalf("failed kill recorded success: %v", kills)
-	}
-	retried, err := service.Cancel(context.Background(), started.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if retried.Status != RunCancelled {
-		t.Fatalf("retry status = %s, want cancelled", retried.Status)
-	}
-	if _, err := service.Cancel(context.Background(), started.ID); err != nil {
-		t.Fatal(err)
-	}
-	wantSession := "session-" + started.ID
-	if attempts := b.attemptedSessions(); len(attempts) != 2 || attempts[0] != wantSession || attempts[1] != wantSession {
-		t.Fatalf("kill attempts = %v, want two retries for %s", attempts, wantSession)
-	}
-	if kills := b.cancelledSessions(); len(kills) != 1 || kills[0] != wantSession {
-		t.Fatalf("successful kills = %v, want [%s]", kills, wantSession)
-	}
-	close(gate.release)
-	receive(t, done, "execute completion")
-	final, _ := service.Get(started.ID)
-	if final.Status != RunCancelled {
-		t.Fatalf("execute overwrote retry cancellation: %s", final.Status)
+	if startupIdleReconcileChecks < 2 {
+		t.Fatalf("startup idle reconcile checks=%d, want repeated observations", startupIdleReconcileChecks)
 	}
 }
 
-func TestConcurrentCancelSharesSingleSuccessfulKill(t *testing.T) {
-	b := &ownershipBackend{cancelEntered: make(chan struct{}), cancelRelease: make(chan struct{})}
-	gate := newDeterministicGate()
-	done := make(chan struct{})
-	waiting := make(chan struct{})
-	var waitOnce sync.Once
-	service := NewService(b, store.New(t.TempDir()))
-	service.hooks.beforeRunning = gate.wait
-	service.hooks.afterExecute = func() { close(done) }
-	service.hooks.onCancelWait = func() { waitOnce.Do(func() { close(waiting) }) }
-	started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "t"})
+func TestStartupIdleReconciliationDelayHonorsCancellation(t *testing.T) {
+	service := NewService(&fakeWorkflowBackend{}, store.New(t.TempDir()))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := service.waitStartupIdleReconcile(ctx); err != context.Canceled {
+		t.Fatalf("waitStartupIdleReconcile error=%v, want context.Canceled", err)
+	}
+}
+
+func TestAttemptWithoutPersistedSessionBecomesIndeterminateWithoutLaunch(t *testing.T) {
+	b := &fakeWorkflowBackend{observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	service := NewService(b, state)
+	service.testHooks.idleReconcileDelay = func(context.Context) error { return nil }
+	started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	receive(t, gate.entered, "before-running gate")
-	type cancelResult struct {
-		snapshot RunSnapshot
-		err      error
+	waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted || run.Phase == PhaseWaiting })
+	// The normal fixture launches quickly; rewrite a paused active Attempt to emulate a crash in the launch/persist gap.
+	// A separate run is assembled from its durable snapshots so resume must reconcile instead of relaunching.
+	var attempt AttemptSnapshot
+	if err := state.ReadAttempt(started.ID, "agent-1", 1, &attempt); err != nil {
+		t.Fatal(err)
 	}
-	first := make(chan cancelResult, 1)
-	second := make(chan cancelResult, 1)
-	go func() {
-		snapshot, cancelErr := service.Cancel(context.Background(), started.ID)
-		first <- cancelResult{snapshot: snapshot, err: cancelErr}
-	}()
-	receive(t, b.cancelEntered, "first backend kill")
-	go func() {
-		snapshot, cancelErr := service.Cancel(context.Background(), started.ID)
-		second <- cancelResult{snapshot: snapshot, err: cancelErr}
-	}()
-	receive(t, waiting, "second cancel waiting on in-flight kill")
-	close(b.cancelRelease)
-	for index, resultChannel := range []<-chan cancelResult{first, second} {
-		result := <-resultChannel
-		if result.err != nil || result.snapshot.Status != RunCancelled {
-			t.Fatalf("cancel result %d = %+v, err=%v", index, result.snapshot, result.err)
+	attempt.Session = nil
+	attempt.Phase = NodePhaseRunning
+	attempt.Conclusion = ""
+	if err := state.UpdateAttempt(started.ID, "agent-1", 1, attempt); err != nil {
+		t.Fatal(err)
+	}
+	var node NodeSnapshot
+	_ = state.ReadNode(started.ID, "agent-1", &node)
+	node.Phase, node.Conclusion = NodePhaseRunning, ""
+	_ = state.WriteNode(started.ID, "agent-1", node)
+	run, _ := service.Get(started.ID)
+	run.Phase, run.Conclusion, run.ActiveNodeID = PhasePaused, "", "agent-1"
+	run.Nodes["agent-1"] = summarizeNode(node)
+	_ = state.WriteSnapshot(started.ID, run)
+	b.mu.Lock()
+	before := b.launches
+	b.mu.Unlock()
+	resumer := NewService(b, state)
+	if _, err := resumer.Resume(context.Background(), ResumeRequest{RunID: started.ID}); err != nil {
+		t.Fatal(err)
+	}
+	final := waitForRun(t, resumer, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	if final.Conclusion != ConclusionIndeterminate {
+		t.Fatalf("final=%+v", final)
+	}
+	b.mu.Lock()
+	after := b.launches
+	b.mu.Unlock()
+	if after != before {
+		t.Fatalf("resume relaunched attempt: before=%d after=%d", before, after)
+	}
+}
+
+func TestExplicitRetryPreservesAttemptHistory(t *testing.T) {
+	b := &fakeWorkflowBackend{waitResults: []backend.BackendResult{{Status: "invalid_result", Summary: "bad"}, {Status: "succeeded", Summary: "fixed"}}, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	first := NewService(b, state)
+	started, err := first.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, first, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseWaiting && run.Reason == ReasonInvalidResult })
+	second := NewService(b, state)
+	if _, err := second.Resume(context.Background(), ResumeRequest{RunID: started.ID, Action: &ResumeAction{Type: "retry", NodeID: "agent-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	final := waitForRun(t, second, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	if final.Conclusion != ConclusionSucceeded {
+		t.Fatalf("final=%+v", final)
+	}
+	attempts, err := state.ListAttempts(started.ID, "agent-1")
+	if err != nil || fmt.Sprint(attempts) != "[1 2]" {
+		t.Fatalf("attempts=%v err=%v", attempts, err)
+	}
+}
+
+func TestIndeterminateRetryRequiresAcknowledgement(t *testing.T) {
+	b := &fakeWorkflowBackend{waitResults: []backend.BackendResult{{Status: "indeterminate", Summary: "lost"}}, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	first := NewService(b, state)
+	started, err := first.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, first, started.ID, func(run WorkflowSnapshot) bool { return run.Conclusion == ConclusionIndeterminate })
+	second := NewService(b, state)
+	_, err = second.Resume(context.Background(), ResumeRequest{RunID: started.ID, Action: &ResumeAction{Type: "retry", NodeID: "agent-1"}})
+	if err == nil || !strings.Contains(err.Error(), "acknowledgeDuplicateRisk") {
+		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestCancelFailureRetryAndConcurrentIdempotence(t *testing.T) {
+	b := &fakeWorkflowBackend{waitBlock: true, cancelFailures: 1, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	service := NewService(b, state)
+	var eventsMu sync.Mutex
+	var events []WorkflowEvent
+	service.SetEventSink(func(event WorkflowEvent) { eventsMu.Lock(); events = append(events, event); eventsMu.Unlock() })
+	started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool {
+		view, _ := service.Status(run.ID)
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+	})
+	failed, err := service.Cancel(context.Background(), started.ID)
+	if err == nil || failed.Phase != PhaseWaiting || failed.Reason != ReasonCancelFailed || !failed.CancelRequested {
+		t.Fatalf("failed cancel=%+v err=%v", failed, err)
+	}
+	type result struct {
+		run WorkflowSnapshot
+		err error
+	}
+	outputs := make(chan result, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			value, cancelErr := service.Cancel(context.Background(), started.ID)
+			outputs <- result{value, cancelErr}
+		}()
+	}
+	for i := 0; i < 2; i++ {
+		output := <-outputs
+		if output.err != nil || output.run.Conclusion != ConclusionCancelled {
+			t.Fatalf("cancel=%+v err=%v", output.run, output.err)
 		}
 	}
-	close(gate.release)
-	receive(t, done, "execute completion")
-	if attempts := b.attemptedSessions(); len(attempts) != 1 {
-		t.Fatalf("backend kill attempts = %v, want exactly one", attempts)
+	b.mu.Lock()
+	attempts, kills := b.cancelAttempts, b.successfulKills
+	b.mu.Unlock()
+	if attempts != 2 || kills != 1 {
+		t.Fatalf("cancel attempts=%d successful=%d", attempts, kills)
 	}
-	if kills := b.cancelledSessions(); len(kills) != 1 {
-		t.Fatalf("successful kills = %v, want exactly one", kills)
+	eventsMu.Lock()
+	captured := append([]WorkflowEvent(nil), events...)
+	eventsMu.Unlock()
+	var terminal []WorkflowEvent
+	for _, event := range captured {
+		if event.Conclusion == ConclusionFailed {
+			t.Fatalf("cancel sequence emitted failed: %+v", captured)
+		}
+		if event.Phase == PhaseCompleted {
+			terminal = append(terminal, event)
+		}
 	}
-}
-
-func TestLateSessionKillFailureCanBeRetried(t *testing.T) {
-	b := &ownershipBackend{
-		cancelFailures: 1,
-		launchEntered:  make(chan struct{}),
-		launchRelease:  make(chan struct{}),
-	}
-	done := make(chan struct{})
-	waiting := make(chan struct{})
-	var waitOnce sync.Once
-	service := NewService(b, store.New(t.TempDir()))
-	service.hooks.afterExecute = func() { close(done) }
-	service.hooks.onCancelWait = func() { waitOnce.Do(func() { close(waiting) }) }
-	started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "t"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	receive(t, b.launchEntered, "launch entry")
-	first := make(chan error, 1)
-	go func() {
-		_, cancelErr := service.Cancel(context.Background(), started.ID)
-		first <- cancelErr
-	}()
-	receive(t, waiting, "cancel waiting for late session")
-	close(b.launchRelease)
-	if err := <-first; err == nil {
-		t.Fatal("expected late-session kill failure")
-	}
-	receive(t, done, "execute completion")
-	afterFailure, _ := service.Get(started.ID)
-	if afterFailure.Status == RunCancelled {
-		t.Fatalf("late kill failure claimed cancellation: %+v", afterFailure)
-	}
-	retried, err := service.Cancel(context.Background(), started.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if retried.Status != RunCancelled {
-		t.Fatalf("retry status = %s, want cancelled", retried.Status)
-	}
-	wantSession := "session-" + started.ID
-	if attempts := b.attemptedSessions(); len(attempts) != 2 {
-		t.Fatalf("late-session attempts = %v, want two", attempts)
-	}
-	if kills := b.cancelledSessions(); len(kills) != 1 || kills[0] != wantSession {
-		t.Fatalf("late-session successful kills = %v, want [%s]", kills, wantSession)
+	if len(terminal) != 1 || terminal[0].Conclusion != ConclusionCancelled || terminal[0].Type != "run.cancelled" {
+		t.Fatalf("terminal cancel events=%+v; all=%+v", terminal, captured)
 	}
 }
 
-func TestKillInFlightSuppressesWaitFailureEvent(t *testing.T) {
-	b := &killWaitBackend{
-		waitEntered: make(chan struct{}), waitRelease: make(chan struct{}),
-		killEntered: make(chan struct{}), killRelease: make(chan struct{}),
+func TestCrossProcessCancelCoordinatesWithLeaseOwner(t *testing.T) {
+	b := &fakeWorkflowBackend{waitBlock: true, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	owner := NewService(b, state)
+	owner.testHooks.cancelRequestDelay = instantCancelPoll
+	started, err := owner.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	executeDone := make(chan struct{})
-	service := NewService(b, store.New(t.TempDir()))
-	service.hooks.afterExecute = func() { close(executeDone) }
-	var eventsMu sync.Mutex
-	var events []RunEvent
-	service.SetEventSink(func(event RunEvent) {
-		eventsMu.Lock()
-		events = append(events, event)
-		eventsMu.Unlock()
+	waitForRun(t, owner, started.ID, func(run WorkflowSnapshot) bool {
+		view, _ := owner.Status(run.ID)
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
 	})
-	started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "t"})
+	requester := NewService(b, state)
+	requester.testHooks.cancelRequestDelay = instantCancelPoll
+	cancelled, err := requester.Cancel(context.Background(), started.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	receive(t, b.waitEntered, "backend wait entry")
+	if cancelled.Phase != PhaseCompleted || cancelled.Conclusion != ConclusionCancelled || cancelled.Reason != ReasonUserRequested || !cancelled.CancelRequested {
+		t.Fatalf("cancelled=%+v", cancelled)
+	}
+	if _, err := os.Stat(state.CancelRequestPath(started.ID)); !os.IsNotExist(err) {
+		t.Fatalf("cancel request was not cleaned up: %v", err)
+	}
+	b.mu.Lock()
+	kills := b.cancelAttempts
+	b.mu.Unlock()
+	if kills != 1 {
+		t.Fatalf("backend kills=%d, want 1", kills)
+	}
+}
+
+func TestCrossProcessCancelIntentPreventsFailedTerminalWhileKillInFlight(t *testing.T) {
+	b := &fakeWorkflowBackend{
+		waitBlock: true, observations: map[string][]backend.Observation{},
+		cancelEntered: make(chan struct{}), cancelRelease: make(chan struct{}),
+		waitReturn: make(chan backend.BackendResult, 1), waitReturned: make(chan struct{}),
+	}
+	state := store.New(t.TempDir())
+	owner := NewService(b, state)
+	owner.testHooks.cancelRequestDelay = instantCancelPoll
+	var eventsMu sync.Mutex
+	var events []WorkflowEvent
+	owner.SetEventSink(func(event WorkflowEvent) { eventsMu.Lock(); events = append(events, event); eventsMu.Unlock() })
+	started, err := owner.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, owner, started.ID, func(run WorkflowSnapshot) bool {
+		view, _ := owner.Status(run.ID)
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+	})
+	requester := NewService(b, state)
+	requester.testHooks.cancelRequestDelay = instantCancelPoll
+	result := make(chan error, 1)
+	go func() { _, cancelErr := requester.Cancel(context.Background(), started.ID); result <- cancelErr }()
+	<-b.cancelEntered
+	inFlight, err := requester.Get(started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inFlight.CancelRequested || inFlight.Phase != PhaseCancelling || inFlight.Conclusion != "" {
+		t.Fatalf("cancellation intent was not durable before kill: %+v", inFlight)
+	}
+	b.waitReturn <- backend.BackendResult{Status: "failed", Summary: "session ended while kill was in flight"}
+	<-b.waitReturned
+	eventsMu.Lock()
+	for _, event := range events {
+		if event.Phase == PhaseCompleted || event.Conclusion == ConclusionFailed {
+			eventsMu.Unlock()
+			t.Fatalf("premature terminal event during kill: %+v", events)
+		}
+	}
+	eventsMu.Unlock()
+	close(b.cancelRelease)
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	final := waitForRun(t, requester, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	if final.Conclusion != ConclusionCancelled {
+		t.Fatalf("final=%+v", final)
+	}
+	eventsMu.Lock()
+	defer eventsMu.Unlock()
+	terminal := 0
+	for _, event := range events {
+		if event.Phase == PhaseCompleted {
+			terminal++
+			if event.Type != "run.cancelled" || event.Conclusion != ConclusionCancelled {
+				t.Fatalf("unexpected terminal event: %+v", event)
+			}
+		}
+		if event.Conclusion == ConclusionFailed {
+			t.Fatalf("failed event during cancellation: %+v", events)
+		}
+	}
+	if terminal != 1 {
+		t.Fatalf("terminal events=%d; all=%+v", terminal, events)
+	}
+}
+
+func TestCrossProcessCancelFailureIsTruthfulAndRetryable(t *testing.T) {
+	b := &fakeWorkflowBackend{waitBlock: true, cancelFailures: 1, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	owner := NewService(b, state)
+	owner.testHooks.cancelRequestDelay = instantCancelPoll
+	started, err := owner.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, owner, started.ID, func(run WorkflowSnapshot) bool {
+		view, _ := owner.Status(run.ID)
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+	})
+	requester := NewService(b, state)
+	requester.testHooks.cancelRequestDelay = instantCancelPoll
+	failed, err := requester.Cancel(context.Background(), started.ID)
+	if err == nil || failed.Phase != PhaseWaiting || failed.Reason != ReasonCancelFailed || !failed.CancelRequested || failed.Conclusion != "" {
+		t.Fatalf("failed=%+v err=%v", failed, err)
+	}
+	if waitErr := owner.WaitControllers(context.Background()); waitErr != nil {
+		t.Fatal(waitErr)
+	}
+	retry := NewService(b, state)
+	retry.testHooks.cancelRequestDelay = instantCancelPoll
+	cancelled, err := retry.Cancel(context.Background(), started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Conclusion != ConclusionCancelled || cancelled.Reason != ReasonUserRequested {
+		t.Fatalf("cancelled=%+v", cancelled)
+	}
+	b.mu.Lock()
+	kills := b.cancelAttempts
+	b.mu.Unlock()
+	if kills != 2 {
+		t.Fatalf("backend kills=%d, want failed attempt plus one retry", kills)
+	}
+}
+
+func TestCrossProcessCancelWaitsForSessionPersistence(t *testing.T) {
+	b := &fakeWorkflowBackend{waitBlock: true, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	owner := NewService(b, state)
+	owner.testHooks.cancelRequestDelay = instantCancelPoll
+	launchReturned, releaseLaunch := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	owner.testHooks.afterLaunch = func() { once.Do(func() { close(launchReturned); <-releaseLaunch }) }
+	started, err := owner.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-launchReturned
+	requester := NewService(b, state)
+	requester.testHooks.cancelRequestDelay = instantCancelPoll
+	result := make(chan error, 1)
+	go func() { _, cancelErr := requester.Cancel(context.Background(), started.ID); result <- cancelErr }()
+	for {
+		request, requestErr := state.ReadCancellationRequest(started.ID)
+		if requestErr == nil && request.ID != "" {
+			break
+		}
+		runtime.Gosched()
+	}
+	close(releaseLaunch)
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	final, err := requester.Get(started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.Conclusion != ConclusionCancelled {
+		t.Fatalf("final=%+v", final)
+	}
+	b.mu.Lock()
+	kills := b.cancelAttempts
+	b.mu.Unlock()
+	if kills != 1 {
+		t.Fatalf("backend kills=%d, want 1 after session persistence", kills)
+	}
+}
+
+func TestCrossProcessCancelBeforeLaunchDispatchDoesNotLaunchOrKill(t *testing.T) {
+	b := &fakeWorkflowBackend{waitBlock: true, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	owner := NewService(b, state)
+	owner.testHooks.cancelRequestDelay = instantCancelPoll
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	owner.testHooks.beforeControllerMutation = func(point string) {
+		if point == "agent.prelaunch" {
+			once.Do(func() { close(entered); <-release })
+		}
+	}
+	started, err := owner.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	requester := NewService(b, state)
+	requester.testHooks.cancelRequestDelay = instantCancelPoll
 	type cancelResult struct {
-		snapshot RunSnapshot
-		err      error
+		run WorkflowSnapshot
+		err error
 	}
 	result := make(chan cancelResult, 1)
 	go func() {
-		snapshot, cancelErr := service.Cancel(context.Background(), started.ID)
-		result <- cancelResult{snapshot: snapshot, err: cancelErr}
+		run, cancelErr := requester.Cancel(context.Background(), started.ID)
+		result <- cancelResult{run: run, err: cancelErr}
 	}()
-	receive(t, b.killEntered, "backend kill entry")
-	receive(t, executeDone, "execute exit while kill is in flight")
-	eventsMu.Lock()
-	beforeKillEvents := append([]RunEvent(nil), events...)
-	eventsMu.Unlock()
-	for _, event := range beforeKillEvents {
-		if event.Status.Terminal() {
-			t.Fatalf("execute emitted terminal event while kill was in flight: %+v", beforeKillEvents)
-		}
+	output := <-result
+	close(release)
+	if output.err != nil {
+		t.Fatal(output.err)
 	}
-	beforeKillCompletion, err := service.Get(started.ID)
+	if output.run.Conclusion != ConclusionCancelled {
+		t.Fatalf("cancelled=%+v", output.run)
+	}
+	b.mu.Lock()
+	launches, kills := b.launches, b.cancelAttempts
+	b.mu.Unlock()
+	if launches != 0 || kills != 0 {
+		t.Fatalf("launches=%d kills=%d, want neither before dispatch", launches, kills)
+	}
+	view, err := requester.Status(started.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if beforeKillCompletion.Status != RunRunning {
-		t.Fatalf("kill in-flight snapshot = %s, want running until kill succeeds", beforeKillCompletion.Status)
+	if len(view.Nodes) != 1 || view.Nodes[0].Phase != NodePhaseSkipped || view.Nodes[0].Reason != ReasonWorkflowCancelled {
+		t.Fatalf("nodes=%+v", view.Nodes)
 	}
-	close(b.killRelease)
-	cancelled := <-result
-	if cancelled.err != nil || cancelled.snapshot.Status != RunCancelled {
-		t.Fatalf("cancel result = %+v, err=%v", cancelled.snapshot, cancelled.err)
+}
+
+func TestConcurrentCrossProcessCancelIsIdempotent(t *testing.T) {
+	b := &fakeWorkflowBackend{waitBlock: true, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	owner := NewService(b, state)
+	owner.testHooks.cancelRequestDelay = instantCancelPoll
+	started, err := owner.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, owner, started.ID, func(run WorkflowSnapshot) bool {
+		view, _ := owner.Status(run.ID)
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+	})
+	services := []*Service{NewService(b, state), NewService(b, state)}
+	results := make(chan error, len(services))
+	for _, service := range services {
+		service.testHooks.cancelRequestDelay = instantCancelPoll
+		go func(service *Service) {
+			run, cancelErr := service.Cancel(context.Background(), started.ID)
+			if cancelErr == nil && run.Conclusion != ConclusionCancelled {
+				cancelErr = fmt.Errorf("unexpected cancellation result: %+v", run)
+			}
+			results <- cancelErr
+		}(service)
+	}
+	for range services {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	b.mu.Lock()
+	kills := b.cancelAttempts
+	b.mu.Unlock()
+	if kills != 1 {
+		t.Fatalf("backend kills=%d, want 1", kills)
+	}
+}
+
+func TestStaleCancelRequestIsRecoveredAfterOwnerExit(t *testing.T) {
+	b := &fakeWorkflowBackend{waitBlock: true, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	owner := NewService(b, state)
+	started, err := owner.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, owner, started.ID, func(run WorkflowSnapshot) bool {
+		view, _ := owner.Status(run.ID)
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+	})
+	if _, err := owner.Detach(started.ID); err != nil {
+		t.Fatal(err)
+	}
+	request, err := state.RequestCancellation(started.ID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery := NewService(b, state)
+	recovery.testHooks.cancelRequestDelay = instantCancelPoll
+	cancelled, err := recovery.Cancel(context.Background(), started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Conclusion != ConclusionCancelled {
+		t.Fatalf("cancelled=%+v", cancelled)
+	}
+	response, err := state.ReadCancellationResponse(started.ID, request.ID)
+	if err != nil || response.Status != store.CancelResponseCompleted {
+		t.Fatalf("response=%+v err=%v", response, err)
+	}
+	if _, err := os.Stat(state.CancelRequestPath(started.ID)); !os.IsNotExist(err) {
+		t.Fatalf("stale request was not cleaned up: %v", err)
+	}
+}
+
+func TestCancelWaitingApprovalSkipsApprovalWithoutBackendKill(t *testing.T) {
+	doc := `apiVersion: wf/v1
+name: cancel-approval
+execution: {maxConcurrency: 1}
+nodes:
+  approve: {type: approval, prompt: approve}
+  later: {type: agent, dependsOn: [approve], task: later}
+`
+	b := &fakeWorkflowBackend{observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	service := NewService(b, state)
+	started, err := service.StartWorkflow(context.Background(), StartWorkflowRequest{Project: "p", Content: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.Reason == ReasonApprovalRequired })
+	cancelled, err := service.Cancel(context.Background(), started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Conclusion != ConclusionCancelled {
+		t.Fatalf("cancelled=%+v", cancelled)
+	}
+	view, _ := service.Status(started.ID)
+	for _, node := range view.Nodes {
+		if node.Phase != NodePhaseSkipped || node.Reason != ReasonWorkflowCancelled {
+			t.Fatalf("node=%+v", node)
+		}
+	}
+	b.mu.Lock()
+	kills := b.cancelAttempts
+	b.mu.Unlock()
+	if kills != 0 {
+		t.Fatalf("approval cancellation killed backend %d times", kills)
+	}
+}
+
+func TestApprovalDecisionIsIdempotentAndConflicts(t *testing.T) {
+	doc := `apiVersion: wf/v1
+name: approval
+execution: {maxConcurrency: 1}
+nodes: {approve: {type: approval, prompt: approve}}
+`
+	b := &fakeWorkflowBackend{observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	first := NewService(b, state)
+	started, err := first.StartWorkflow(context.Background(), StartWorkflowRequest{Project: "p", Content: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, first, started.ID, func(run WorkflowSnapshot) bool { return run.Reason == ReasonApprovalRequired })
+	second := NewService(b, state)
+	action := ResumeAction{Type: "approve", NodeID: "approve"}
+	if _, err := second.Resume(context.Background(), ResumeRequest{RunID: started.ID, Action: &action}); err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, second, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	third := NewService(b, state)
+	if _, err := third.Resume(context.Background(), ResumeRequest{RunID: started.ID, Action: &action}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = third.Resume(context.Background(), ResumeRequest{RunID: started.ID, Action: &ResumeAction{Type: "reject", NodeID: "approve"}})
+	if err == nil || !strings.Contains(err.Error(), "conflicting") {
+		t.Fatalf("conflict error=%v", err)
+	}
+}
+
+func TestDetachWinsControllerPersistenceWindows(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		content string
+		point   string
+	}{
+		{name: "before-first-node-write", content: `apiVersion: wf/v1
+name: detach-agent
+execution: {maxConcurrency: 1}
+nodes: {agent: {type: agent, task: work}}
+`, point: "agent.prelaunch"},
+		{name: "approval-waiting", content: `apiVersion: wf/v1
+name: detach-approval
+execution: {maxConcurrency: 1}
+nodes: {approve: {type: approval, prompt: approve}}
+`, point: "approval.waiting"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			b := &fakeWorkflowBackend{observations: map[string][]backend.Observation{}}
+			state := store.New(t.TempDir())
+			service := NewService(b, state)
+			entered, release := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			service.testHooks.beforeControllerMutation = func(point string) {
+				if point == test.point {
+					once.Do(func() { close(entered); <-release })
+				}
+			}
+			started, err := service.StartWorkflow(context.Background(), StartWorkflowRequest{Project: "p", Content: test.content})
+			if err != nil {
+				t.Fatal(err)
+			}
+			<-entered
+			detached := make(chan error, 1)
+			go func() { _, detachErr := service.Detach(started.ID); detached <- detachErr }()
+			waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhasePaused })
+			close(release)
+			if err := <-detached; err != nil {
+				t.Fatal(err)
+			}
+			final, err := service.Get(started.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if final.Phase != PhasePaused || final.Reason != ReasonControllerDetach {
+				t.Fatalf("final=%+v", final)
+			}
+			b.mu.Lock()
+			launches := b.launches
+			b.mu.Unlock()
+			if launches != 0 {
+				t.Fatalf("launches=%d", launches)
+			}
+		})
+	}
+}
+
+func TestDetachAfterLaunchPersistsSessionAndResumeDoesNotRelaunch(t *testing.T) {
+	b := &fakeWorkflowBackend{waitBlock: true, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	service := NewService(b, state)
+	launchReturned, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	service.testHooks.afterLaunch = func() { once.Do(func() { close(launchReturned); <-release }) }
+	started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-launchReturned
+	detached := make(chan error, 1)
+	go func() { _, detachErr := service.Detach(started.ID); detached <- detachErr }()
+	waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhasePaused })
+	close(release)
+	if err := <-detached; err != nil {
+		t.Fatal(err)
+	}
+	view, err := service.Status(started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.ActiveAttempt == nil || view.ActiveAttempt.Session == nil || view.ActiveAttempt.Session.ID != "session-1" {
+		t.Fatalf("session metadata was not persisted after detach: %+v", view.ActiveAttempt)
+	}
+	b.mu.Lock()
+	b.waitBlock = false
+	b.observations["session-1"] = []backend.Observation{{State: backend.ObservationTerminal, Result: &backend.BackendResult{Status: "succeeded", Summary: "reconciled"}}}
+	b.mu.Unlock()
+	resumer := NewService(b, state)
+	if _, err := resumer.Resume(context.Background(), ResumeRequest{RunID: started.ID}); err != nil {
+		t.Fatal(err)
+	}
+	final := waitForRun(t, resumer, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	if final.Conclusion != ConclusionSucceeded {
+		t.Fatalf("final=%+v", final)
+	}
+	b.mu.Lock()
+	launches := b.launches
+	b.mu.Unlock()
+	if launches != 1 {
+		t.Fatalf("resume duplicated launch: %d", launches)
+	}
+}
+
+func TestDetachBeforeResultPersistenceLeavesPausedAndReconciles(t *testing.T) {
+	b := &fakeWorkflowBackend{waitResults: []backend.BackendResult{{Status: "succeeded", Summary: "first result"}}, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	service := NewService(b, state)
+	resultReady, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	service.testHooks.beforeControllerMutation = func(point string) {
+		if point == "result.succeeded" {
+			once.Do(func() { close(resultReady); <-release })
+		}
+	}
+	started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-resultReady
+	detached := make(chan error, 1)
+	go func() { _, detachErr := service.Detach(started.ID); detached <- detachErr }()
+	waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhasePaused })
+	close(release)
+	if err := <-detached; err != nil {
+		t.Fatal(err)
+	}
+	b.mu.Lock()
+	b.observations["session-1"] = []backend.Observation{{State: backend.ObservationTerminal, Result: &backend.BackendResult{Status: "succeeded", Summary: "reconciled result"}}}
+	b.mu.Unlock()
+	resumer := NewService(b, state)
+	if _, err := resumer.Resume(context.Background(), ResumeRequest{RunID: started.ID}); err != nil {
+		t.Fatal(err)
+	}
+	final := waitForRun(t, resumer, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	if final.Conclusion != ConclusionSucceeded {
+		t.Fatalf("final=%+v", final)
+	}
+	b.mu.Lock()
+	launches := b.launches
+	b.mu.Unlock()
+	if launches != 1 {
+		t.Fatalf("resume duplicated launch: %d", launches)
+	}
+}
+
+func failOnce(match func(operation, path string) bool) store.FaultInjector {
+	var mu sync.Mutex
+	failed := false
+	return func(operation, path string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if !failed && match(operation, path) {
+			failed = true
+			return fmt.Errorf("fixture store failure")
+		}
+		return nil
+	}
+}
+
+func isNodeSnapshotPath(path, nodeID string) bool {
+	return filepath.Base(path) == "node.json" && filepath.Base(filepath.Dir(path)) == nodeID
+}
+
+func TestNodeSnapshotFaultMatcherIsCrossPlatform(t *testing.T) {
+	for _, path := range []string{
+		filepath.Join("root", "runs", "run-1", "nodes", "agent-1", "node.json"),
+		"root/runs/run-1/nodes/agent-1/node.json",
+	} {
+		if !isNodeSnapshotPath(path, "agent-1") {
+			t.Fatalf("path %q did not match agent-1 node snapshot", path)
+		}
+	}
+	if isNodeSnapshotPath(filepath.Join("root", "nodes", "other", "node.json"), "agent-1") {
+		t.Fatal("matcher accepted another node's snapshot")
+	}
+}
+
+func TestPrelaunchPersistenceFailurePreventsBackendLaunch(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		match func(string, string) bool
+	}{
+		{"attempt", func(operation, path string) bool {
+			return operation == "write_json" && strings.Contains(path, "attempt.json")
+		}},
+		{"node", func(operation, path string) bool {
+			return operation == "write_json" && isNodeSnapshotPath(path, "agent-1")
+		}},
+		{"run", func(operation, path string) bool {
+			return operation == "write_json" && strings.HasSuffix(path, "run.json")
+		}},
+		{"event", func(operation, _ string) bool { return operation == "append_event" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			b := &fakeWorkflowBackend{observations: map[string][]backend.Observation{}}
+			state := store.New(t.TempDir())
+			service := NewService(b, state)
+			var once sync.Once
+			service.testHooks.beforeControllerMutation = func(point string) {
+				if point == "agent.prelaunch" {
+					once.Do(func() { state.SetFaultInjectorForTest(failOnce(test.match)) })
+				}
+			}
+			started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if err := service.WaitControllers(ctx); err != nil {
+				t.Fatal(err)
+			}
+			b.mu.Lock()
+			launches := b.launches
+			b.mu.Unlock()
+			if launches != 0 {
+				t.Fatalf("launches=%d", launches)
+			}
+			run, err := service.Get(started.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if run.Phase == PhaseCompleted && run.Conclusion == ConclusionSucceeded {
+				t.Fatalf("store failure produced success: %+v", run)
+			}
+		})
+	}
+}
+
+func TestSessionPersistenceFailurePreventsWait(t *testing.T) {
+	b := &fakeWorkflowBackend{observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	service := NewService(b, state)
+	service.testHooks.afterLaunch = func() {
+		state.SetFaultInjectorForTest(failOnce(func(operation, path string) bool {
+			return operation == "write_json" && strings.Contains(path, "attempt.json")
+		}))
+	}
+	started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := service.WaitControllers(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b.mu.Lock()
+	waits := b.waitCalls
+	b.mu.Unlock()
+	if waits != 0 {
+		t.Fatalf("backend Wait called %d times without durable session metadata", waits)
+	}
+	run, err := service.Get(started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Phase == PhaseCompleted && run.Conclusion == ConclusionSucceeded {
+		t.Fatalf("session persistence failure produced success: %+v", run)
+	}
+}
+
+func TestResultPersistenceFailureDoesNotEmitSucceeded(t *testing.T) {
+	b := &fakeWorkflowBackend{waitResults: []backend.BackendResult{{Status: "succeeded", Summary: "done"}}, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	service := NewService(b, state)
+	var eventsMu sync.Mutex
+	var events []WorkflowEvent
+	service.SetEventSink(func(event WorkflowEvent) { eventsMu.Lock(); events = append(events, event); eventsMu.Unlock() })
+	var once sync.Once
+	service.testHooks.beforeControllerMutation = func(point string) {
+		if point == "result.succeeded" {
+			once.Do(func() {
+				state.SetFaultInjectorForTest(failOnce(func(operation, path string) bool {
+					return operation == "write_json" && strings.Contains(path, "result.json")
+				}))
+			})
+		}
+	}
+	started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := service.WaitControllers(ctx); err != nil {
+		t.Fatal(err)
+	}
+	eventsMu.Lock()
+	captured := append([]WorkflowEvent(nil), events...)
+	eventsMu.Unlock()
+	for _, event := range captured {
+		if event.Conclusion == ConclusionSucceeded || event.Type == "node.completed" || event.Type == "run.completed" {
+			t.Fatalf("result store failure emitted success: %+v", captured)
+		}
+	}
+	run, err := service.Get(started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Phase == PhaseCompleted && run.Conclusion == ConclusionSucceeded {
+		t.Fatalf("result store failure persisted success: %+v", run)
+	}
+}
+
+func TestSkipPersistenceFailureDoesNotEmitFailedTerminal(t *testing.T) {
+	doc := `apiVersion: wf/v1
+name: skip-store-failure
+execution: {maxConcurrency: 1}
+nodes:
+  first: {type: agent, task: fail}
+  later: {type: agent, dependsOn: [first], task: later}
+`
+	b := &fakeWorkflowBackend{waitResults: []backend.BackendResult{{Status: "failed", Summary: "failed"}}, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	service := NewService(b, state)
+	var eventsMu sync.Mutex
+	var events []WorkflowEvent
+	service.SetEventSink(func(event WorkflowEvent) { eventsMu.Lock(); events = append(events, event); eventsMu.Unlock() })
+	var once sync.Once
+	service.testHooks.beforeControllerMutation = func(point string) {
+		if point == "result.failed" {
+			once.Do(func() {
+				state.SetFaultInjectorForTest(failOnce(func(operation, path string) bool {
+					return operation == "write_json" && isNodeSnapshotPath(path, "later")
+				}))
+			})
+		}
+	}
+	started, err := service.StartWorkflow(context.Background(), StartWorkflowRequest{Project: "p", Content: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := service.WaitControllers(ctx); err != nil {
+		t.Fatal(err)
+	}
+	eventsMu.Lock()
+	defer eventsMu.Unlock()
+	for _, event := range events {
+		if event.Phase == PhaseCompleted {
+			t.Fatalf("skip persistence failure emitted terminal event: %+v", events)
+		}
+	}
+	run, err := service.Get(started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Phase == PhaseCompleted {
+		t.Fatalf("skip persistence failure persisted terminal run: %+v", run)
+	}
+}
+
+func TestApprovalEventFailureIsRetryableWithoutConflictingDecision(t *testing.T) {
+	doc := `apiVersion: wf/v1
+name: approval-store-failure
+execution: {maxConcurrency: 1}
+nodes: {approve: {type: approval, prompt: approve}}
+`
+	b := &fakeWorkflowBackend{observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	first := NewService(b, state)
+	started, err := first.StartWorkflow(context.Background(), StartWorkflowRequest{Project: "p", Content: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, first, started.ID, func(run WorkflowSnapshot) bool { return run.Reason == ReasonApprovalRequired })
+	state.SetFaultInjectorForTest(failOnce(func(operation, _ string) bool { return operation == "append_event" }))
+	second := NewService(b, state)
+	action := &ResumeAction{Type: "approve", NodeID: "approve"}
+	if _, err := second.Resume(context.Background(), ResumeRequest{RunID: started.ID, Action: action}); err == nil {
+		t.Fatal("approval succeeded despite event persistence failure")
+	}
+	third := NewService(b, state)
+	if _, err := third.Resume(context.Background(), ResumeRequest{RunID: started.ID, Action: action}); err != nil {
+		t.Fatal(err)
+	}
+	final := waitForRun(t, third, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	if final.Conclusion != ConclusionSucceeded {
+		t.Fatalf("final=%+v", final)
+	}
+}
+
+func TestCancelRequestPersistenceFailureDoesNotKill(t *testing.T) {
+	b := &fakeWorkflowBackend{waitBlock: true, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	service := NewService(b, state)
+	started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool {
+		view, _ := service.Status(run.ID)
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+	})
+	state.SetFaultInjectorForTest(failOnce(func(operation, path string) bool {
+		return operation == "write_json" && strings.HasSuffix(path, "run.json")
+	}))
+	if _, err := service.Cancel(context.Background(), started.ID); err == nil {
+		t.Fatal("cancel succeeded despite cancel-request persistence failure")
+	}
+	b.mu.Lock()
+	attempts := b.cancelAttempts
+	b.mu.Unlock()
+	if attempts != 0 {
+		t.Fatalf("backend cancel called %d times before durable cancel request", attempts)
+	}
+}
+
+func TestCancelInFlightEmitsOnlyCancelledTerminal(t *testing.T) {
+	b := &fakeWorkflowBackend{waitBlock: true, observations: map[string][]backend.Observation{}, cancelEntered: make(chan struct{}), cancelRelease: make(chan struct{})}
+	state := store.New(t.TempDir())
+	service := NewService(b, state)
+	var eventsMu sync.Mutex
+	var events []WorkflowEvent
+	service.SetEventSink(func(event WorkflowEvent) { eventsMu.Lock(); events = append(events, event); eventsMu.Unlock() })
+	started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool {
+		view, _ := service.Status(run.ID)
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+	})
+	result := make(chan error, 1)
+	go func() { _, cancelErr := service.Cancel(context.Background(), started.ID); result <- cancelErr }()
+	<-b.cancelEntered
+	waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.CancelRequested && run.Phase == PhaseCancelling })
+	eventsMu.Lock()
+	for _, event := range events {
+		if event.Phase == PhaseCompleted || event.Conclusion == ConclusionFailed {
+			eventsMu.Unlock()
+			t.Fatalf("terminal event during cancel in-flight: %+v", events)
+		}
+	}
+	eventsMu.Unlock()
+	close(b.cancelRelease)
+	if err := <-result; err != nil {
+		t.Fatal(err)
 	}
 	final, err := service.Get(started.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if final.Status != RunCancelled || final.NodeStatus != NodeCancelled {
-		t.Fatalf("final snapshot = %+v, want cancelled", final)
+	if final.Conclusion != ConclusionCancelled {
+		t.Fatalf("final=%+v", final)
 	}
 	eventsMu.Lock()
-	finalEvents := append([]RunEvent(nil), events...)
-	eventsMu.Unlock()
-	var terminalEvents []RunEvent
-	for _, event := range finalEvents {
-		if event.Status.Terminal() {
-			terminalEvents = append(terminalEvents, event)
+	defer eventsMu.Unlock()
+	terminal := 0
+	for _, event := range events {
+		if event.Phase == PhaseCompleted {
+			terminal++
+			if event.Type != "run.cancelled" || event.Conclusion != ConclusionCancelled {
+				t.Fatalf("unexpected terminal event: %+v", event)
+			}
+		}
+		if event.Conclusion == ConclusionFailed {
+			t.Fatalf("failed event during cancellation: %+v", events)
 		}
 	}
-	if len(terminalEvents) != 1 || terminalEvents[0].Status != RunCancelled || terminalEvents[0].Type != "run.cancelled" {
-		t.Fatalf("terminal events = %+v, all events=%+v", terminalEvents, finalEvents)
-	}
-	if b.cancelCalls.Load() != 1 {
-		t.Fatalf("backend cancel calls = %d, want 1", b.cancelCalls.Load())
-	}
-}
-func (*blockingBackend) Wait(ctx context.Context, _ backend.Session) (*backend.BackendResult, error) {
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-func (*blockingBackend) Output(context.Context, backend.Session, int) (string, error) { return "", nil }
-func (b *blockingBackend) Cancel(context.Context, backend.Session) error {
-	b.cancelCalls.Add(1)
-	return nil
-}
-
-func waitRunning(t *testing.T, service *Service, runID string) {
-	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		snapshot, _ := service.Get(runID)
-		if snapshot.Status == RunRunning {
-			return
-		}
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatal("run did not reach running")
-}
-
-func TestDetachDoesNotCancelBackendSession(t *testing.T) {
-	b := &blockingBackend{}
-	service := NewService(b, store.New(t.TempDir()))
-	snapshot, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "t"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	waitRunning(t, service, snapshot.ID)
-	paused, err := service.Detach(snapshot.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if paused.Status != RunPaused || b.cancelCalls.Load() != 0 {
-		t.Fatalf("detach result=%s cancelCalls=%d", paused.Status, b.cancelCalls.Load())
+	if terminal != 1 {
+		t.Fatalf("terminal events=%d all=%+v", terminal, events)
 	}
 }
 
-func TestCancelInvokesBackendSessionKill(t *testing.T) {
-	b := &blockingBackend{}
-	service := NewService(b, store.New(t.TempDir()))
-	snapshot, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "t"})
-	if err != nil {
+func TestLegacyStatusIsReadOnly(t *testing.T) {
+	state := store.New(t.TempDir())
+	if err := state.InitRun("run-legacy"); err != nil {
 		t.Fatal(err)
 	}
-	waitRunning(t, service, snapshot.ID)
-	cancelled, err := service.Cancel(context.Background(), snapshot.ID)
-	if err != nil {
+	legacy := LegacySnapshot{ProtocolVersion: 1, ID: "run-legacy", Status: RunPaused, NodeStatus: NodePaused, Project: "p", StateDir: state.RunDir("run-legacy"), CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := state.WriteSnapshot("run-legacy", legacy); err != nil {
 		t.Fatal(err)
 	}
-	if cancelled.Status != RunCancelled || b.cancelCalls.Load() != 1 {
-		t.Fatalf("cancel result=%s cancelCalls=%d", cancelled.Status, b.cancelCalls.Load())
+	service := NewService(&fakeWorkflowBackend{}, state)
+	view, err := service.Status("run-legacy")
+	if err != nil || !view.Legacy || view.LegacyRun.Status != RunPaused {
+		t.Fatalf("view=%+v err=%v", view, err)
 	}
-}
-
-func TestCancelAfterDetachStillKillsOwnedSession(t *testing.T) {
-	b := &blockingBackend{}
-	service := NewService(b, store.New(t.TempDir()))
-	snapshot, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "t"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	waitRunning(t, service, snapshot.ID)
-	if _, err := service.Detach(snapshot.ID); err != nil {
-		t.Fatal(err)
-	}
-	cancelled, err := service.Cancel(context.Background(), snapshot.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cancelled.Status != RunCancelled || b.cancelCalls.Load() != 1 {
-		t.Fatalf("cancel result=%s cancelCalls=%d", cancelled.Status, b.cancelCalls.Load())
+	if _, err := service.Resume(context.Background(), ResumeRequest{RunID: "run-legacy"}); err == nil {
+		t.Fatal("legacy run resumed")
 	}
 }

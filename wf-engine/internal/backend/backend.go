@@ -30,6 +30,23 @@ type BackendResult struct {
 	Usage     Usage    `json:"usage"`
 }
 
+type ObservationState string
+
+const (
+	ObservationActive            ObservationState = "active"
+	ObservationWaitingInput      ObservationState = "waiting_input"
+	ObservationCompletionMissing ObservationState = "completion_missing"
+	ObservationExited            ObservationState = "exited"
+	ObservationLost              ObservationState = "lost"
+	ObservationError             ObservationState = "error"
+	ObservationTerminal          ObservationState = "terminal"
+)
+
+type Observation struct {
+	State  ObservationState
+	Result *BackendResult
+}
+
 type Backend interface {
 	Name() string
 	Doctor(context.Context) error
@@ -41,4 +58,10 @@ type Backend interface {
 
 type ProjectDoctor interface {
 	DoctorProject(context.Context, string) error
+}
+
+// Reconciler is optional. A Backend that implements it can inspect an existing
+// persisted Session without launching another Agent.
+type Reconciler interface {
+	Reconcile(context.Context, Session) (*Observation, error)
 }

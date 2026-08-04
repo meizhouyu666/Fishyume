@@ -1,95 +1,37 @@
-export const protocolVersion = 1 as const;
+export const protocolVersion = 2 as const;
 
 export type JsonRpcId = string | number;
+export interface RpcRequest<T = unknown> {jsonrpc: '2.0'; protocolVersion: 2; id: JsonRpcId; method: string; params?: T}
+export interface RpcError {code: number; message: string; data?: unknown}
+export interface RpcResponse<T = unknown> {jsonrpc: '2.0'; protocolVersion: 2; id: JsonRpcId | null; result?: T; error?: RpcError}
+export interface RpcNotification<T = unknown> {jsonrpc: '2.0'; protocolVersion: 2; method: 'run.event' | 'engine.log'; params: T}
 
-export interface RpcRequest<T = unknown> {
-  jsonrpc: '2.0';
-  protocolVersion: 1;
-  id: JsonRpcId;
-  method: string;
-  params?: T;
+export interface RunStartParams {project: string; tool?: 'codex' | 'claude' | 'opencode'; runtime?: 'local' | 'wsl' | 'ssh'; task: string}
+export interface WorkflowStartParams {project: string; filename: string; content: string; inputs?: Record<string, JsonScalar>}
+export interface RunStartResult {protocolVersion: 2; runId: string}
+export type JsonScalar = string | number | boolean;
+
+export type RunPhase = 'created' | 'running' | 'waiting' | 'paused' | 'cancelling' | 'completed';
+export type NodePhase = 'pending' | 'ready' | 'running' | 'waiting' | 'completed' | 'skipped';
+export type Conclusion = 'succeeded' | 'failed' | 'cancelled' | 'rejected' | 'indeterminate';
+export type Reason = 'approval_required' | 'agent_waiting_input' | 'completion_missing' | 'invalid_result' | 'cancel_failed' | 'condition_false' | 'upstream_failed' | 'workflow_cancelled' | 'controller_detached' | 'user_requested';
+
+export interface NodeSummary {id: string; type: 'agent' | 'approval'; phase: NodePhase; conclusion?: Conclusion; reason?: Reason; currentAttempt?: number}
+export interface WorkflowSnapshot {
+  protocolVersion: 2; stateSchemaVersion?: number; id: string; workflowName: string; project: string; backend: string;
+  phase: RunPhase; conclusion?: Conclusion; reason?: Reason; summary?: string;
+  inputs?: Record<string, JsonScalar>; topologicalOrder: string[]; nodes: Record<string, NodeSummary>;
+  activeNodeId?: string; cancelRequested: boolean; stateDir: string; createdAt: string; updatedAt: string;
 }
+export type RunSnapshot = WorkflowSnapshot;
 
-export interface RpcError {
-  code: number;
-  message: string;
-  data?: unknown;
-}
+export interface NodeResult {summary?: string; artifacts?: string[]; warnings?: string[]; checks?: string[]; usage?: {inputTokensEstimated?: number; outputTokensEstimated?: number}; decision?: 'approved' | 'rejected'; reason?: string}
+export interface NodeSnapshot extends NodeSummary {protocolVersion: 2; stateSchemaVersion?: number; runId: string; result?: NodeResult; createdAt: string; updatedAt: string}
+export interface AttemptSnapshot {protocolVersion: 2; stateSchemaVersion?: number; runId: string; nodeId: string; number: number; phase: NodePhase; conclusion?: Conclusion; reason?: Reason; backend: string; launchState?: 'prepared' | 'dispatching' | 'session_persisted' | 'finished_without_session'; session?: {id: string; metadata?: Record<string, string>}; taskBindingId?: string; launchMetadata?: Record<string, string>; promptHash: string; bindingConsumed: boolean; startedAt: string; updatedAt: string; completedAt?: string}
+export interface LegacySnapshot {protocolVersion: 1; id: string; status: string; nodeStatus: string; project: string; summary?: string; stateDir: string; createdAt: string; updatedAt: string}
+export interface RunStatusView {protocolVersion: 2; legacy: boolean; run?: WorkflowSnapshot; legacyRun?: LegacySnapshot; nodes?: NodeSnapshot[]; activeAttempt?: AttemptSnapshot}
 
-export interface RpcResponse<T = unknown> {
-  jsonrpc: '2.0';
-  protocolVersion: 1;
-  id: JsonRpcId | null;
-  result?: T;
-  error?: RpcError;
-}
+export interface RunEvent {protocolVersion: 2; runId: string; sequence: number; type: string; phase: RunPhase; conclusion?: Conclusion; reason?: Reason; nodeId?: string; nodePhase?: NodePhase; message?: string; timestamp: string}
 
-export interface RpcNotification<T = unknown> {
-  jsonrpc: '2.0';
-  protocolVersion: 1;
-  method: 'run.event' | 'engine.log';
-  params: T;
-}
-
-export interface RunStartParams {
-  project: string;
-  tool?: 'codex' | 'claude' | 'opencode';
-  runtime?: 'local' | 'wsl' | 'ssh';
-  task: string;
-}
-
-export interface RunStartResult {
-  protocolVersion: 1;
-  runId: string;
-}
-
-export type RunStatus =
-  | 'created'
-  | 'dispatching'
-  | 'running'
-  | 'succeeded'
-  | 'failed'
-  | 'blocked'
-  | 'indeterminate'
-  | 'paused'
-  | 'cancelled';
-
-export type NodeStatus = RunStatus;
-
-export interface RunSnapshot {
-  protocolVersion: 1;
-  id: string;
-  status: RunStatus;
-  nodeStatus: NodeStatus;
-  project: string;
-  tool: string;
-  runtime: string;
-  backend: string;
-  summary?: string;
-  stateDir: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface RunEvent {
-  protocolVersion: 1;
-  runId: string;
-  sequence: number;
-  type: string;
-  status: RunStatus;
-  nodeStatus: NodeStatus;
-  message?: string;
-  timestamp: string;
-}
-
-export interface EngineHello {
-  engineVersion: string;
-  protocolVersion: 1;
-  supportedMethods: string[];
-  supportedBackends: string[];
-  backendReady: boolean;
-  backendDiagnostic: string;
-  projectChecked: boolean;
-  projectReady: boolean;
-  projectDiagnostic?: string;
-}
+export interface ResumeAction {type: 'approve' | 'reject' | 'retry'; nodeId: string; reason?: string; acknowledgeDuplicateRisk?: boolean}
+export interface EngineHello {engineVersion: string; protocolVersion: 2; supportedMethods: string[]; supportedBackends: string[]; backendReady: boolean; backendDiagnostic: string; projectChecked: boolean; projectReady: boolean; projectDiagnostic?: string}

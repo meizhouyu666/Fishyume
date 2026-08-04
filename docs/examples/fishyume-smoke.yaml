@@ -1,0 +1,24 @@
+apiVersion: fishyume/v1
+name: fishyume-live-smoke
+defaults:
+  tool: codex
+  runtime: local
+execution:
+  maxConcurrency: 1
+nodes:
+  plan:
+    type: agent
+    task: "Return exactly: smoke plan completed."
+  approve:
+    type: approval
+    dependsOn: [plan]
+    prompt: "Approve the smoke plan?"
+  implement:
+    type: agent
+    dependsOn: [approve]
+    when:
+      node: approve
+      field: result.decision
+      equals: approved
+    task: "Return exactly: smoke implementation completed."
+    requiredSkills: []

@@ -6,9 +6,34 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
-const ControlPathEnv = "WF_CCPANES_CTL"
+const (
+	ControlPathEnv     = "WF_CCPANES_CTL"
+	ProfileIDEnv       = "FISHYUME_CCPANES_PROFILE_ID"
+	LegacyProfileIDEnv = "WF_CCPANES_PROFILE_ID"
+)
+
+func ResolveProfileID() (string, error) {
+	if configured, ok := os.LookupEnv(ProfileIDEnv); ok {
+		return validateProfileID(ProfileIDEnv, configured)
+	}
+	if configured, ok := os.LookupEnv(LegacyProfileIDEnv); ok {
+		return validateProfileID(LegacyProfileIDEnv, configured)
+	}
+	return "", fmt.Errorf("Fishyume requires a dedicated non-interactive CC-Panes launch profile; create one in CC-Panes and set %s to its exact profile ID", ProfileIDEnv)
+}
+
+func validateProfileID(name, value string) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("%s is invalid: set it to the exact non-empty CC-Panes profile ID", name)
+	}
+	if strings.TrimSpace(value) != value {
+		return "", fmt.Errorf("%s is invalid: the CC-Panes profile ID must not contain leading or trailing whitespace", name)
+	}
+	return value, nil
+}
 
 func Discover() (string, error) {
 	if configured := os.Getenv(ControlPathEnv); configured != "" {
