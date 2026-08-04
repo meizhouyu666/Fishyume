@@ -113,19 +113,54 @@ func TestOrderedV2NotificationsAndReadOnlyStatus(t *testing.T) {
 	}
 	close(gate)
 	deadline := time.Now().Add(2 * time.Second)
+	completed := false
 	for time.Now().Before(deadline) {
 		snapshot, _ := service.Get(runID)
 		if snapshot.Phase == run.PhaseCompleted {
+			completed = true
 			break
 		}
 		time.Sleep(time.Millisecond)
 	}
+	if !completed {
+		t.Fatalf("run did not complete: %s", output.String())
+	}
+	waitContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := service.WaitControllers(waitContext); err != nil {
+		t.Fatalf("controller did not stop: %v", err)
+	}
 	text := output.String()
-	created := strings.Index(text, `"type":"run.created"`)
-	running := strings.Index(text, `"type":"node.running"`)
-	completed := strings.LastIndex(text, `"phase":"completed"`)
-	if !(created >= 0 && running > created && completed > running) {
-		t.Fatalf("notifications out of order: %s", text)
+	eventTypes := make([]string, 0, 4)
+	var previousSequence uint64
+	for _, line := range strings.Split(strings.TrimSpace(text), "\n") {
+		var value struct {
+			Method string `json:"method"`
+			Params struct {
+				Sequence uint64 `json:"sequence"`
+				Type     string `json:"type"`
+			} `json:"params"`
+		}
+		if err := json.Unmarshal([]byte(line), &value); err != nil {
+			t.Fatalf("stdout contains non-protocol line %q", line)
+		}
+		if value.Method != "run.event" {
+			continue
+		}
+		if value.Params.Sequence <= previousSequence {
+			t.Fatalf("notification sequence is not increasing: %s", text)
+		}
+		previousSequence = value.Params.Sequence
+		eventTypes = append(eventTypes, value.Params.Type)
+	}
+	wantEvents := []string{"run.created", "node.running", "node.completed", "run.completed"}
+	if len(eventTypes) != len(wantEvents) {
+		t.Fatalf("notifications=%v, want %v: %s", eventTypes, wantEvents, text)
+	}
+	for index := range wantEvents {
+		if eventTypes[index] != wantEvents[index] {
+			t.Fatalf("notifications=%v, want %v: %s", eventTypes, wantEvents, text)
+		}
 	}
 	statusOutput := &safeBuffer{}
 	statusServer := NewServer(strings.NewReader(request(2, "run.status", map[string]any{"runId": runID})), statusOutput, service)
@@ -134,11 +169,6 @@ func TestOrderedV2NotificationsAndReadOnlyStatus(t *testing.T) {
 	}
 	if !strings.Contains(statusOutput.String(), `"conclusion":"succeeded"`) || !strings.Contains(statusOutput.String(), `"nodes"`) {
 		t.Fatalf("status=%s", statusOutput.String())
-	}
-	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
-		if !json.Valid([]byte(line)) {
-			t.Fatalf("stdout contains non-protocol line %q", line)
-		}
 	}
 }
 

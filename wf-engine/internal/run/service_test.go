@@ -138,6 +138,15 @@ func waitForRun(t *testing.T, service *Service, runID string, predicate func(Wor
 	return WorkflowSnapshot{}
 }
 
+func waitForControllers(t *testing.T, service *Service) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := service.WaitControllers(ctx); err != nil {
+		t.Fatalf("controllers did not stop: %v", err)
+	}
+}
+
 func workflowFixture() string {
 	return `apiVersion: wf/v1
 name: integration
@@ -253,6 +262,7 @@ nodes:
 		t.Fatal(err)
 	}
 	final := waitForRun(t, second, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	waitForControllers(t, second)
 	if final.Conclusion != ConclusionRejected {
 		t.Fatalf("final=%+v", final)
 	}
@@ -399,6 +409,7 @@ func TestStartupIdleReconciliationDoesNotPrematurelyCompleteMissing(t *testing.T
 			final := waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool {
 				return run.Phase == test.wantPhase && (test.wantPhase != PhaseWaiting || run.Reason == test.wantReason)
 			})
+			waitForControllers(t, service)
 			if final.Conclusion != test.wantConclusion || final.Reason != test.wantReason {
 				t.Fatalf("final=%+v", final)
 			}

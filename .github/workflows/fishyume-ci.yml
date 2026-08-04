@@ -7,6 +7,7 @@ on:
 jobs:
   verify:
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
@@ -15,6 +16,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
+          cache-dependency-path: wf-engine/go.sum
       - uses: actions/setup-node@v4
         with:
           node-version: '24.x'
@@ -40,6 +42,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
+          cache-dependency-path: wf-engine/go.sum
       - name: Build Windows and Linux Engine artifacts
         shell: pwsh
         run: |
@@ -60,6 +63,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
+          cache-dependency-path: wf-engine/go.sum
       - uses: actions/setup-node@v4
         with:
           node-version: '24.x'
@@ -89,7 +93,8 @@ jobs:
           test -x "$engine"
           mode="$(stat -c '%a' "$engine")"
           [[ "$mode" =~ ^7[0-7][0-7]$ ]]
-          tar -tvf "$engine_tgz" | grep -Eq '^-rwxr-xr-x .*package/bin/fishyume-engine$'
+          tar -tvf "$engine_tgz" > "$RUNNER_TEMP/fishyume-engine-files.txt"
+          grep -Eq '^-rwxr-xr-x .*package/bin/fishyume-engine$' "$RUNNER_TEMP/fishyume-engine-files.txt"
           set +e
           doctor_output="$("$install_root/node_modules/.bin/fishyume" doctor 2>&1)"
           set -e
@@ -104,6 +109,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.x'
+          cache-dependency-path: wf-engine/go.sum
       - uses: actions/setup-node@v4
         with:
           node-version: '24.x'
