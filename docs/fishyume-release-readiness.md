@@ -37,6 +37,13 @@ fishyume status <run-id> --json
 fishyume cancel <run-id>
 ```
 
+The repository's `.codex/config.toml` keeps a disabled loopback placeholder for
+the `ccpanes` MCP server with `default_tools_approval_mode = "approve"`.
+CC-Panes replaces the URL and enables that server for each managed session. This
+allows Fishyume's dedicated unattended workers to complete their engine-owned
+TaskBinding callbacks without a manual MCP approval, while direct Codex sessions
+outside CC-Panes do not try to connect to the placeholder endpoint.
+
 Verify the first Engine exits at approval, resume uses a separate Engine process, no existing Attempt is relaunched during reconcile, and all temporary Engine/Node processes exit. The first Ctrl+C detaches; it does not cancel the active Agent.
 
 The Windows Go race binary may terminate with loader status `0xc0000139`; keep that platform issue documented rather than treating it as a successful race gate. `go test -race ./...` remains a required Ubuntu CI gate.
