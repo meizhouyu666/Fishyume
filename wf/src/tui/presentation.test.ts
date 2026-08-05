@@ -93,6 +93,27 @@ test('Focus Detail folds locally while action detail overrides the folded node v
   assert.match(focused.detail?.title ?? '', /ACTION \/ integration-tests/);
 });
 
+test('Header colors only brand and exceptional status while essential text inherits terminal foreground', () => {
+  const fixture = canonicalFixture('concurrent');
+  const medium = buildRunTextPresentation(fixture.view, 120, 138_000, optionsFor(fixture));
+  const primary = medium.header[0]!; const identity = medium.header[1]!;
+  assert.deepEqual(primary.segments.filter(segment => segment.role).map(segment => [segment.text, segment.role]), [['FISHYUME', 'brand']]);
+  assert.ok(primary.segments.some(segment => !segment.role && segment.text.includes(fixture.view.run!.workflowName)));
+  assert.ok(primary.segments.some(segment => !segment.role && segment.text.includes('2m18s')));
+  assert.ok(primary.segments.some(segment => segment.text === 'RUNNING' && segment.role === undefined && segment.bold));
+  assert.equal(identity.segments.every(segment => segment.role === undefined), true);
+  assert.match(identity.text, /run run-concurrent-a91f/); assert.match(identity.text, /1\/5 settled/);
+
+  const approval = buildRunTextPresentation(canonicalFixture('approval').view, 120, 138_000, optionsFor(canonicalFixture('approval')));
+  assert.ok(approval.header[0]!.segments.some(segment => segment.text === 'APPROVAL' && segment.role === 'approval' && segment.bold));
+
+  const narrow = buildRunTextPresentation(fixture.view, 80, 138_000, optionsFor(fixture));
+  const narrowText = narrow.header.map(line => line.text).join('\n');
+  assert.equal((narrowText.match(/capacity 3/g) ?? []).length, 1);
+  assert.doesNotMatch(narrow.header[2]!.text, /capacity/);
+  assert.equal(narrow.header[2]!.segments.every(segment => segment.role === undefined), true);
+});
+
 test('color capability levels preserve semantic roles and mono removes color only', () => {
   assert.equal(detectColorMode({getColorDepth: () => 24}, {NO_COLOR: '1'}), 'mono');
   assert.equal(detectColorMode({getColorDepth: () => 24}, {FISHYUME_THEME: 'mono'}), 'mono');
@@ -100,6 +121,9 @@ test('color capability levels preserve semantic roles and mono removes color onl
   assert.equal(detectColorMode({getColorDepth: () => 8}, {}), 'ansi256');
   assert.equal(detectColorMode({getColorDepth: () => 4}, {}), 'ansi16');
   for (const mode of ['ansi16', 'ansi256', 'truecolor'] as ColorMode[]) assert.ok(colorFor('danger', mode));
+  assert.equal(colorFor('strong', 'truecolor'), undefined); assert.equal(colorFor('neutral', 'truecolor'), undefined);
+  assert.equal(colorFor('strong', 'ansi16'), undefined); assert.equal(colorFor('neutral', 'ansi256'), undefined);
+  assert.equal(colorFor('muted', 'truecolor'), 'gray'); assert.equal(colorFor('muted', 'ansi256'), 'gray');
   assert.equal(colorFor('danger', 'mono'), undefined);
   assert.equal(detectSymbolMode({TERM: 'dumb'}), 'ascii'); assert.equal(detectSymbolMode({FISHYUME_ASCII: '1'}), 'ascii'); assert.equal(detectSymbolMode({}), 'unicode');
 });

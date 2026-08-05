@@ -92,8 +92,8 @@ Header 保留完整大写状态；Workflow 行使用固定的符号与短标签�
 
 颜色兼容目标：
 
-- TrueColor：使用品牌化 RGB palette；
-- 256/16 色：降级到 ANSI 命名色；
+- TrueColor：仅品牌词、状态符号/短标签、危险与审批强调使用 RGB；Workflow、Run identity、elapsed、settled、Status Strip 和 Footer 继承终端默认前景；
+- 256/16 色：语义强调降级到 ANSI 命名色；`strong/neutral` 继续继承前景，`muted` 使用 ANSI gray，仅承载 Divider 与次要信息；
 - `NO_COLOR`、`NODE_DISABLE_COLORS`、`TERM=dumb` 或深度不足：mono；
 - 任一颜色档位都使用相同符号、标签、层级和命令提示。
 - `TERM=dumb` 或 `FISHYUME_ASCII=1`：使用 ASCII 状态、选择标记、Separator 和 Divider，业务文字不变。
@@ -124,7 +124,7 @@ Bridge types 与 RPC 合同本批无变化，因此无需 Go 合同迁移或新�
 - [x] 无颜色能力降级到 mono；`NO_COLOR` 不损失 TUI 结构。
 - [x] 非 TTY/CI 保持逐行 text reporter；`status --json` 保持单 JSON 对象。
 - [x] 关键状态与布局有文本渲染测试；现有 CLI、bridge、integration 测试不回退。
-- [x] `npm --prefix wf run typecheck`、`npm --prefix wf test`（42/42）、`npm --prefix wf run build` 最终门禁全部通过。
+- [x] `npm --prefix wf run typecheck`、`npm --prefix wf test`（43/43）、`npm --prefix wf run build` 最终门禁全部通过。
 - [x] 以清晰提交推送 `origin/main`。
 
 ## 7. 实现文件与维护规则

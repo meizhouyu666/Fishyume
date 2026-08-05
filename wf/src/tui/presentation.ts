@@ -27,10 +27,12 @@ export interface WorkflowRowPresentation {
   text: string;
 }
 
+export interface StyledTextSegment {text: string; role?: ColorRole; bold?: boolean}
+export interface HeaderLinePresentation {text: string; segments: StyledTextSegment[]}
 export interface DetailPresentation {title: string; role: ColorRole; lines: string[]}
 export interface RunTextPresentation {
   size: TerminalSize;
-  header: string[];
+  header: HeaderLinePresentation[];
   divider: string;
   workflow: WorkflowRowPresentation[];
   detail?: DetailPresentation;
@@ -78,21 +80,44 @@ export function dividerLine(width: number, symbolMode: SymbolMode, title?: strin
   return fitText(`${prefix}${fittedTitle} ${character.repeat(suffixWidth)}`, width);
 }
 
-export function headerLines(run: WorkflowSnapshot, width: number, elapsedMs: number, symbolMode: SymbolMode): string[] {
+function styledLine(text: string, highlights: readonly {start: number; length: number; role?: ColorRole; bold?: boolean}[] = []): HeaderLinePresentation {
+  const segments: StyledTextSegment[] = []; let cursor = 0;
+  for (const highlight of [...highlights].sort((left, right) => left.start - right.start)) {
+    if (highlight.start < cursor || highlight.start >= text.length || highlight.length <= 0) continue;
+    if (highlight.start > cursor) segments.push({text: text.slice(cursor, highlight.start)});
+    const end = Math.min(text.length, highlight.start + highlight.length);
+    segments.push({text: text.slice(highlight.start, end), role: highlight.role, bold: highlight.bold}); cursor = end;
+  }
+  if (cursor < text.length) segments.push({text: text.slice(cursor)});
+  if (!segments.length) segments.push({text});
+  return {text, segments};
+}
+
+export function headerLines(run: WorkflowSnapshot, width: number, elapsedMs: number, symbolMode: SymbolMode): HeaderLinePresentation[] {
   const size = terminalSize(width); const separator = separatorText(symbolMode);
-  const status = headerStatusText(statusForRun(run)); const settled = settledText(run);
+  const runStatus = statusForRun(run); const status = headerStatusText(runStatus); const semanticRole = designTokens.status[runStatus].role;
+  const statusRole = semanticRole === 'danger' || semanticRole === 'approval' ? semanticRole : undefined; const settled = settledText(run);
   const capacity = run.effectiveConcurrency ? `capacity ${run.effectiveConcurrency}` : undefined;
-  const identity = [`run ${run.id}`, run.backend, capacity].filter((value): value is string => Boolean(value)).join(separator);
-  if (size === 'narrow') return [
-    fitText(`${designTokens.emphasis.brand} / ${run.workflowName}`, width),
-    fitText([status, formatElapsed(elapsedMs), settled, capacity].filter((value): value is string => Boolean(value)).join(separator), width),
-    fitText(identity, width),
-  ];
+  const identity = [`run ${run.id}`, run.backend, ...(size === 'narrow' ? [] : [capacity])].filter((value): value is string => Boolean(value)).join(separator);
+  if (size === 'narrow') {
+    const brandLine = fitText(`${designTokens.emphasis.brand} / ${run.workflowName}`, width);
+    const statusLine = fitText([status, formatElapsed(elapsedMs), settled, capacity].filter((value): value is string => Boolean(value)).join(separator), width);
+    return [
+      styledLine(brandLine, [{start: 0, length: Math.min(designTokens.emphasis.brand.length, brandLine.length), role: 'brand', bold: true}]),
+      styledLine(statusLine, [{start: 0, length: Math.min(status.length, statusLine.length), role: statusRole, bold: true}]),
+      styledLine(fitText(identity, width)),
+    ];
+  }
+  const primary = joinColumns(`${designTokens.emphasis.brand} / ${run.workflowName}`, `${status}  ${formatElapsed(elapsedMs)}`, width);
+  const statusStart = primary.lastIndexOf(status);
   const result = [
-    joinColumns(`${designTokens.emphasis.brand} / ${run.workflowName}`, `${status}  ${formatElapsed(elapsedMs)}`, width),
-    joinColumns(identity, settled, width),
+    styledLine(primary, [
+      {start: 0, length: designTokens.emphasis.brand.length, role: 'brand', bold: true},
+      ...(statusStart >= 0 ? [{start: statusStart, length: status.length, role: statusRole, bold: true} as const] : []),
+    ]),
+    styledLine(joinColumns(identity, settled, width)),
   ];
-  if (size === 'wide') result.push(fitText(`state ${run.stateDir}`, width));
+  if (size === 'wide') result.push(styledLine(fitText(`state ${run.stateDir}`, width), [{start: 0, length: Math.min(width, `state ${run.stateDir}`.length), role: 'muted'}]));
   return result;
 }
 
@@ -251,7 +276,7 @@ export function buildRunTextPresentation(view: RunStatusView, width: number, ela
 }
 
 export function renderRunText(view: RunStatusView, width: number, elapsedMs: number, options: RunPresentationOptions = {}): string {
-  const presentation = buildRunTextPresentation(view, width, elapsedMs, options); const lines = [...presentation.header, presentation.divider];
+  const presentation = buildRunTextPresentation(view, width, elapsedMs, options); const lines = [...presentation.header.map(line => line.text), presentation.divider];
   lines.push(...presentation.workflow.map(row => row.text));
   if (presentation.detail) lines.push(dividerLine(width, options.symbolMode ?? 'unicode', presentation.detail.title), ...presentation.detail.lines, presentation.divider);
   if (presentation.statusStrip) lines.push(presentation.statusStrip);

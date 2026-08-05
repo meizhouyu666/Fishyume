@@ -37,10 +37,10 @@ export const designTokens = {
 } as const;
 
 const ansiPalette: Record<ColorRole, string | undefined> = {
-  brand: 'cyan', strong: 'white', muted: 'gray', running: 'cyan', waiting: 'yellow', approval: 'magenta', danger: 'red', success: 'green', neutral: 'gray',
+  brand: 'cyan', strong: undefined, muted: 'gray', running: 'cyan', waiting: 'yellow', approval: 'magenta', danger: 'red', success: 'green', neutral: undefined,
 };
 const trueColorPalette: Record<ColorRole, string | undefined> = {
-  brand: '#2dd4bf', strong: '#e2e8f0', muted: '#94a3b8', running: '#38bdf8', waiting: '#f59e0b', approval: '#d946ef', danger: '#fb7185', success: '#4ade80', neutral: '#cbd5e1',
+  brand: '#2dd4bf', strong: undefined, muted: 'gray', running: '#38bdf8', waiting: '#f59e0b', approval: '#d946ef', danger: '#fb7185', success: '#4ade80', neutral: undefined,
 };
 
 export function colorFor(role: ColorRole, mode: ColorMode): string | undefined {

@@ -86,15 +86,17 @@ Header 使用完整状态标签；Workflow 行使用紧凑符号和短标签，�
 
 ### 3.2 配色
 
-- `brand/active`：cyan/teal；
+- `brand/active`：cyan/teal，但 Header 只给品牌词 `FISHYUME` 着品牌色；Workflow 名、Run identity、elapsed、settled 与普通完整 Run 状态继承终端默认前景，危险/审批状态可局部强调；
 - `waiting/approval`：amber/magenta，但审批只使用一种主色；
 - `success`：green；
 - `danger`：red/rose；
-- `neutral/muted`：终端安全灰度，保证浅色背景仍可读。
+- `strong/neutral`：正文角色不硬编码前景色，继承终端主题；
+- `muted`：只用于 Divider、宽屏 state path 等次要信息，并使用终端 ANSI gray 映射，不使用浅色背景不安全的固定 RGB；
+- Status Strip 与 Context Footer 属于关键操作信息，继承默认前景，不以 muted 色作为唯一可读载体。
 
 主题策略：
 
-- 保留现有 TrueColor / ANSI256 / ANSI16 / mono 能力；
+- 保留现有 TrueColor / ANSI256 / ANSI16 / mono 能力；TrueColor 仅增强品牌、状态和危险/审批等局部语义；
 - 可增加 `FISHYUME_THEME=dark|light|auto|mono`，但不得要求用户配置才能获得可读输出；
 - `auto` 只能使用可靠提示（例如 `COLORFGBG`），无法判断时采用背景无关的安全 palette；
 - 不新增独立 CLI theme 命令或主题插件系统。
@@ -310,6 +312,7 @@ M3.3 必须为以下场景建立确定性 fixtures：
 - 纯 presentation model 已输出 Header、紧凑 Workflow rows、单一 Focus/Action Detail、Status Strip 和 Context Footer；Ink 层只负责语义颜色与层级映射。
 - 视觉选择覆盖全部 Workflow 节点；action 资格仍来自 Engine 当前状态，输入/确认继续按 `nodeId/kind/duplicateRisk` 固定。`live-console.tsx` 未修改，M3.2 controller ownership/detach 语义保持原样。
 - 六个 canonical `RunStatusView` fixtures 覆盖并发运行、等待审批、失败可重试、indeterminate duplicate-risk、cancelling 和 terminal；80/120/160 文本 gallery 位于 `fishyume-m3.3-canonical-gallery.txt`。
-- 自动化门禁：TypeScript typecheck 通过；42/42 tests 通过；build 通过；`git diff --check` 通过。没有新增 dependency，`package-lock.json` 无变化。
+- 自动化门禁：TypeScript typecheck 通过；43/43 tests 通过；build 通过；gallery 已重新生成；`git diff --check` 通过。没有新增 dependency，`package-lock.json` 无变化。
 - 未修改 Go Engine、RPC protocol、Bridge types、持久化 schema 或 Backend 契约，因此无需扩大到 Go 测试。
 - 当前执行环境的 PowerShell 输出被重定向，未安装 `winpty`/`node-pty`，WSL 有 `script` 但没有 Node.js；因此未伪造真实 Windows Terminal/PTY 通过。补充证据为 80-column Ink render smoke，以及确定性的 80/120/160 canonical gallery。
+- 浅色终端聚焦修复将 Header 改为分段渲染：`FISHYUME` 保留品牌色，普通完整 Run 状态仅加粗并继承前景，只有危险/审批状态允许局部着色；Workflow/Run identity/settled/elapsed、Status Strip 与 Footer 均使用默认前景。80-column Header 的 capacity 已去重，并由纯 presentation 角色断言保护。

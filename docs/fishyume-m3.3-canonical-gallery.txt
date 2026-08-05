@@ -5,7 +5,7 @@ Color capability is verified separately by tests; this file intentionally contai
 ======================== concurrent / 80 columns ========================
 FISHYUME / release-workflow / 并行验证
 RUNNING · 2m18s · 1/5 settled · capacity 3
-run run-concurrent-a91f · direct · capacity 3
+run run-concurrent-a91f · direct
 ────────────────────────────────────────────────────────────────────────────────
   ✓ done    plan · a1
 › ● run     实现-operator-console · a2 · direct
@@ -55,7 +55,7 @@ attempt 2 · direct · handle persisted · execution pid:4821
 ======================== approval / 80 columns ========================
 FISHYUME / production-release
 APPROVAL · 2m18s · 1/3 settled · capacity 3
-run run-approval-b72c · direct · capacity 3
+run run-approval-b72c · direct
 ────────────────────────────────────────────────────────────────────────────────
   ✓ done    plan · a1
 › ◆ approve security-review · approval_required · Approve produc…
@@ -102,7 +102,7 @@ result · Deployment awaits a human decision.
 ======================== retryable / 80 columns ========================
 FISHYUME / release-validation
 WAITING · 2m18s · 2/3 settled · capacity 3
-run run-retry-c83d · direct · capacity 3
+run run-retry-c83d · direct
 ────────────────────────────────────────────────────────────────────────────────
   ✓ done    build · a1
 › ! fail    integration-tests · a2 · invalid_result · Expected jun…
@@ -158,7 +158,7 @@ artifacts · E:/团队/logs/integration-attempt-2.txt
 ======================== indeterminate / 80 columns ========================
 FISHYUME / artifact-release
 WAITING · 2m18s · 2/3 settled · capacity 3
-run run-unknown-d94e · direct · capacity 3
+run run-unknown-d94e · direct
 ────────────────────────────────────────────────────────────────────────────────
   ✓ done    prepare · a1
 › ? unknown publish-artifact · a3 · completion_missing · Backend …
@@ -199,7 +199,7 @@ Enter confirm  Esc discard
 ======================== cancelling / 80 columns ========================
 FISHYUME / cancel-workflow
 CANCELLING · 2m18s · 1/4 settled · capacity 3
-run run-stopping-e15f · direct · capacity 3
+run run-stopping-e15f · direct
 ────────────────────────────────────────────────────────────────────────────────
   ✓ done    prepare · a1
   ● run     stop-local-worker · a2 · direct · Cancellation request…
@@ -249,7 +249,7 @@ diagnostic · cancel_failed · Remote session still reports active.
 ======================== terminal / 80 columns ========================
 FISHYUME / release-workflow
 FAILED · 2m18s · 4/4 settled · capacity 3
-run run-terminal-f260 · direct · capacity 3
+run run-terminal-f260 · direct
 ────────────────────────────────────────────────────────────────────────────────
   ✓ done    plan · a1
 › ! fail    verify · a2 · Two checks failed.
