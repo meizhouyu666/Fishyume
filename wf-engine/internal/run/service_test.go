@@ -129,6 +129,9 @@ func waitForRun(t *testing.T, service *Service, runID string, predicate func(Wor
 	for time.Now().Before(deadline) {
 		snapshot, err := service.Get(runID)
 		if err == nil && predicate(snapshot) {
+			if snapshot.Phase == PhaseCompleted {
+				waitForControllers(t, service)
+			}
 			return snapshot
 		}
 		time.Sleep(time.Millisecond)
@@ -262,7 +265,6 @@ nodes:
 		t.Fatal(err)
 	}
 	final := waitForRun(t, second, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
-	waitForControllers(t, second)
 	if final.Conclusion != ConclusionRejected {
 		t.Fatalf("final=%+v", final)
 	}
@@ -462,6 +464,7 @@ func TestAttemptWithoutPersistedSessionBecomesIndeterminateWithoutLaunch(t *test
 		t.Fatal(err)
 	}
 	waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted || run.Phase == PhaseWaiting })
+	waitForControllers(t, service)
 	// The normal fixture launches quickly; rewrite a paused active Attempt to emulate a crash in the launch/persist gap.
 	// A separate run is assembled from its durable snapshots so resume must reconcile instead of relaunching.
 	var attempt AttemptSnapshot
