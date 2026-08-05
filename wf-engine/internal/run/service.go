@@ -21,7 +21,7 @@ import (
 const protocolVersion = 2
 
 // State schema versioning is independent from the JSON-RPC protocol version.
-const stateSchemaVersion = 1
+const stateSchemaVersion = 2
 
 const (
 	startupIdleReconcileChecks = 20
@@ -70,12 +70,22 @@ type DoctorReport struct {
 }
 
 type StatusView struct {
-	ProtocolVersion int               `json:"protocolVersion"`
-	Legacy          bool              `json:"legacy"`
-	Run             *WorkflowSnapshot `json:"run,omitempty"`
-	LegacyRun       *LegacySnapshot   `json:"legacyRun,omitempty"`
-	Nodes           []NodeSnapshot    `json:"nodes,omitempty"`
-	ActiveAttempt   *AttemptSnapshot  `json:"activeAttempt,omitempty"`
+	ProtocolVersion  int               `json:"protocolVersion"`
+	Legacy           bool              `json:"legacy"`
+	Run              *WorkflowSnapshot `json:"run,omitempty"`
+	LegacyRun        *LegacySnapshot   `json:"legacyRun,omitempty"`
+	Nodes            []NodeSnapshot    `json:"nodes,omitempty"`
+	ActiveAttempt    *AttemptSnapshot  `json:"activeAttempt,omitempty"`
+	ActiveNodes      []NodeSummary     `json:"activeNodes,omitempty"`
+	ActiveAttempts   []AttemptSnapshot `json:"activeAttempts,omitempty"`
+	WaitingApprovals []NodeSummary     `json:"waitingApprovals,omitempty"`
+	Diagnostics      []NodeDiagnostic  `json:"diagnostics,omitempty"`
+}
+
+type NodeDiagnostic struct {
+	NodeID  string `json:"nodeId"`
+	Reason  Reason `json:"reason,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 type EventSink func(WorkflowEvent)
@@ -426,6 +436,8 @@ func (s *Service) Status(runID string) (StatusView, error) {
 	if s.store == nil {
 		return StatusView{}, errors.New("workflow state directory is unavailable")
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	state := s.store
 	kind, err := state.DetectSnapshot(runID)
 	if err != nil && os.IsNotExist(err) {
@@ -452,10 +464,12 @@ func (s *Service) Status(runID string) (StatusView, error) {
 	if err != nil {
 		return StatusView{}, err
 	}
+	legacyActiveNodeID := run.ActiveNodeID
 	view := StatusView{ProtocolVersion: protocolVersion, Run: &run, Nodes: nodes}
-	if run.ActiveNodeID != "" {
-		for _, node := range nodes {
-			if node.ID == run.ActiveNodeID && node.CurrentAttempt > 0 {
+	for _, node := range nodes {
+		if node.Phase == NodePhaseRunning || node.Phase == NodePhaseWaiting {
+			view.ActiveNodes = append(view.ActiveNodes, summarizeNode(node))
+			if node.Type == "agent" && node.CurrentAttempt > 0 {
 				var attempt AttemptSnapshot
 				if err := state.ReadAttempt(runID, node.ID, node.CurrentAttempt, &attempt); err != nil {
 					return StatusView{}, err
@@ -463,10 +477,42 @@ func (s *Service) Status(runID string) (StatusView, error) {
 				if attempt.StateSchemaVersion == 0 {
 					attempt.StateSchemaVersion = 1
 				}
-				view.ActiveAttempt = &attempt
-				break
+				if err := validateActiveAttempt(run, node, attempt); err != nil {
+					return StatusView{}, err
+				}
+				view.ActiveAttempts = append(view.ActiveAttempts, attempt)
 			}
 		}
+		if node.Phase == NodePhaseWaiting && node.Type == "approval" {
+			view.WaitingApprovals = append(view.WaitingApprovals, summarizeNode(node))
+		}
+		if node.Reason != "" || node.Diagnostic != "" {
+			view.Diagnostics = append(view.Diagnostics, NodeDiagnostic{NodeID: node.ID, Reason: node.Reason, Message: node.Diagnostic})
+		}
+	}
+	if len(view.ActiveAttempts) == 1 {
+		view.ActiveAttempt = &view.ActiveAttempts[0]
+	}
+	if view.ActiveAttempt == nil && run.StateSchemaVersion <= 1 && legacyActiveNodeID != "" {
+		for _, node := range nodes {
+			if node.ID != legacyActiveNodeID || node.CurrentAttempt < 1 {
+				continue
+			}
+			var attempt AttemptSnapshot
+			if err := state.ReadAttempt(runID, node.ID, node.CurrentAttempt, &attempt); err != nil {
+				return StatusView{}, err
+			}
+			if attempt.StateSchemaVersion == 0 {
+				attempt.StateSchemaVersion = 1
+			}
+			view.ActiveAttempt = &attempt
+			break
+		}
+	}
+	if len(view.ActiveNodes) == 1 {
+		run.ActiveNodeID = view.ActiveNodes[0].ID
+	} else {
+		run.ActiveNodeID = ""
 	}
 	return view, nil
 }
@@ -1403,10 +1449,10 @@ func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generati
 			if err := s.store.WriteResult(runID, nodeID, attemptNumber, normalized); err != nil {
 				return err
 			}
-			if err := s.writeAttempt(attempt, false); err != nil {
+			if err := s.store.WriteNode(runID, nodeID, node); err != nil {
 				return err
 			}
-			if err := s.store.WriteNode(runID, nodeID, node); err != nil {
+			if err := s.writeAttempt(attempt, false); err != nil {
 				return err
 			}
 			run.Nodes[nodeID], run.ActiveNodeID, run.Phase, run.Reason, run.Summary, run.UpdatedAt = summarizeNode(*node), "", PhaseRunning, "", normalized.Summary, now
@@ -1429,10 +1475,10 @@ func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generati
 			if err := s.store.WriteResult(runID, nodeID, attemptNumber, normalized); err != nil {
 				return err
 			}
-			if err := s.writeAttempt(attempt, false); err != nil {
+			if err := s.store.WriteNode(runID, nodeID, node); err != nil {
 				return err
 			}
-			if err := s.store.WriteNode(runID, nodeID, node); err != nil {
+			if err := s.writeAttempt(attempt, false); err != nil {
 				return err
 			}
 			run.Nodes[nodeID], run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = summarizeNode(*node), PhaseCompleted, ConclusionFailed, ReasonUpstreamFailed, "", result.Summary, now
@@ -1469,10 +1515,10 @@ func (s *Service) waiting(runID, nodeID string, attemptNumber int, generation ui
 		attempt.Phase, attempt.Reason, attempt.UpdatedAt = NodePhaseWaiting, reason, now
 		node.Phase, node.Reason, node.UpdatedAt = NodePhaseWaiting, reason, now
 		run.Phase, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = PhaseWaiting, reason, node.ID, message, now
-		if err := s.writeAttempt(attempt, false); err != nil {
+		if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
 			return err
 		}
-		if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
+		if err := s.writeAttempt(attempt, false); err != nil {
 			return err
 		}
 		run.Nodes[node.ID] = summarizeNode(*node)
@@ -1758,7 +1804,23 @@ func (s *Service) pauseControllerOnError(runID string, generation uint64, cause 
 }
 
 func summarizeNode(node NodeSnapshot) NodeSummary {
-	return NodeSummary{ID: node.ID, Type: node.Type, Phase: node.Phase, Conclusion: node.Conclusion, Reason: node.Reason, CurrentAttempt: node.CurrentAttempt}
+	return NodeSummary{ID: node.ID, Type: node.Type, Phase: node.Phase, Conclusion: node.Conclusion, Reason: node.Reason, Diagnostic: node.Diagnostic, CurrentAttempt: node.CurrentAttempt}
+}
+
+func validateActiveAttempt(run WorkflowSnapshot, node NodeSnapshot, attempt AttemptSnapshot) error {
+	if err := ValidateAttemptSnapshot(attempt); err != nil {
+		return fmt.Errorf("invalid active Attempt for node %q: %w", node.ID, err)
+	}
+	if attempt.RunID != run.ID || attempt.NodeID != node.ID || attempt.Number != node.CurrentAttempt {
+		return fmt.Errorf("active Attempt identity does not match run %q node %q attempt %d", run.ID, node.ID, node.CurrentAttempt)
+	}
+	if attempt.Backend != run.Backend {
+		return fmt.Errorf("active Attempt Backend %q does not match run Backend %q", attempt.Backend, run.Backend)
+	}
+	if attempt.Phase == NodePhaseCompleted || node.Phase == NodePhaseCompleted || node.Phase == NodePhaseSkipped {
+		return fmt.Errorf("active node %q and Attempt phases are inconsistent", node.ID)
+	}
+	return nil
 }
 
 func findNode(nodes []NodeSnapshot, nodeID string) (*NodeSnapshot, error) {

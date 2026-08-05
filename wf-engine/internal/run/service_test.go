@@ -228,6 +228,54 @@ nodes:
 `
 }
 
+func TestStatusDerivesMultipleActiveNodesAndAttempts(t *testing.T) {
+	state := store.New(t.TempDir())
+	runID := "run-parallel-status"
+	if err := state.InitWorkflowRun(runID); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
+	snapshot := WorkflowSnapshot{
+		ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, ID: runID,
+		WorkflowName: "parallel", Project: "p", Backend: "fake", Phase: PhaseRunning,
+		TopologicalOrder: []string{"a", "b"}, Nodes: map[string]NodeSummary{}, StateDir: state.RunDir(runID),
+		CreatedAt: now, UpdatedAt: now,
+	}
+	for _, nodeID := range snapshot.TopologicalOrder {
+		node := NodeSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: runID, ID: nodeID, Type: "agent", Phase: NodePhaseRunning, CurrentAttempt: 1, CreatedAt: now, UpdatedAt: now}
+		if err := state.WriteNode(runID, nodeID, node); err != nil {
+			t.Fatal(err)
+		}
+		snapshot.Nodes[nodeID] = summarizeNode(node)
+		attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: runID, NodeID: nodeID, Number: 1, Phase: NodePhaseRunning, Backend: "fake", LaunchState: LaunchHandlePersisted, Execution: &backend.ExecutionHandle{Backend: "fake", SchemaVersion: 1, ID: "handle-" + nodeID, Data: json.RawMessage(`{}`)}, PromptHash: "hash", StartedAt: now, UpdatedAt: now}
+		if err := state.WriteAttempt(runID, nodeID, 1, attempt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.WriteSnapshot(runID, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(&fakeWorkflowBackend{}, state)
+	view, err := service.Status(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.ActiveNodes) != 2 || len(view.ActiveAttempts) != 2 || view.ActiveAttempt != nil || view.Run.ActiveNodeID != "" {
+		t.Fatalf("parallel status=%+v", view)
+	}
+	var malformed AttemptSnapshot
+	if err := state.ReadAttempt(runID, "b", 1, &malformed); err != nil {
+		t.Fatal(err)
+	}
+	malformed.Backend = "other"
+	if err := state.UpdateAttempt(runID, "b", 1, malformed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Status(runID); err == nil || !strings.Contains(err.Error(), "invalid active Attempt") {
+		t.Fatalf("malformed active Attempt error=%v", err)
+	}
+}
+
 func TestWorkflowApprovalResumeContextAndConditionalSkip(t *testing.T) {
 	b := &fakeWorkflowBackend{waitResults: []backend.BackendResult{
 		{Status: "succeeded", Summary: "safe plan", Artifacts: []string{"plan.md"}},
@@ -239,7 +287,7 @@ func TestWorkflowApprovalResumeContextAndConditionalSkip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if started.StateSchemaVersion != 1 || started.ProtocolVersion != 2 {
+	if started.StateSchemaVersion != 2 || started.ProtocolVersion != 2 {
 		t.Fatalf("state schema and protocol must be independent: %+v", started)
 	}
 	var normalized workflow.Normalized

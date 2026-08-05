@@ -82,6 +82,7 @@ type NodeSummary struct {
 	Phase          NodePhase  `json:"phase"`
 	Conclusion     Conclusion `json:"conclusion,omitempty"`
 	Reason         Reason     `json:"reason,omitempty"`
+	Diagnostic     string     `json:"diagnostic,omitempty"`
 	CurrentAttempt int        `json:"currentAttempt,omitempty"`
 }
 
@@ -94,6 +95,7 @@ type NodeSnapshot struct {
 	Phase              NodePhase        `json:"phase"`
 	Conclusion         Conclusion       `json:"conclusion,omitempty"`
 	Reason             Reason           `json:"reason,omitempty"`
+	Diagnostic         string           `json:"diagnostic,omitempty"`
 	Result             *workflow.Result `json:"result,omitempty"`
 	CurrentAttempt     int              `json:"currentAttempt,omitempty"`
 	CreatedAt          time.Time        `json:"createdAt"`

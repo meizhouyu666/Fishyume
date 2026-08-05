@@ -16,7 +16,7 @@ export type NodePhase = 'pending' | 'ready' | 'running' | 'waiting' | 'completed
 export type Conclusion = 'succeeded' | 'failed' | 'cancelled' | 'rejected' | 'indeterminate';
 export type Reason = 'approval_required' | 'agent_waiting_input' | 'completion_missing' | 'invalid_result' | 'cancel_failed' | 'condition_false' | 'upstream_failed' | 'workflow_cancelled' | 'controller_detached' | 'user_requested';
 
-export interface NodeSummary {id: string; type: 'agent' | 'approval'; phase: NodePhase; conclusion?: Conclusion; reason?: Reason; currentAttempt?: number}
+export interface NodeSummary {id: string; type: 'agent' | 'approval'; phase: NodePhase; conclusion?: Conclusion; reason?: Reason; diagnostic?: string; currentAttempt?: number}
 export interface WorkflowSnapshot {
   protocolVersion: 2; stateSchemaVersion?: number; id: string; workflowName: string; project: string; backend: string;
   phase: RunPhase; conclusion?: Conclusion; reason?: Reason; summary?: string;
@@ -36,7 +36,12 @@ export interface AttemptSnapshot {
   promptHash: string; startedAt: string; updatedAt: string; completedAt?: string;
 }
 export interface LegacySnapshot {protocolVersion: 1; id: string; status: string; nodeStatus: string; project: string; summary?: string; stateDir: string; createdAt: string; updatedAt: string}
-export interface RunStatusView {protocolVersion: 2; legacy: boolean; run?: WorkflowSnapshot; legacyRun?: LegacySnapshot; nodes?: NodeSnapshot[]; activeAttempt?: AttemptSnapshot}
+export interface NodeDiagnostic {nodeId: string; reason?: Reason; message?: string}
+export interface RunStatusView {
+  protocolVersion: 2; legacy: boolean; run?: WorkflowSnapshot; legacyRun?: LegacySnapshot; nodes?: NodeSnapshot[];
+  activeAttempt?: AttemptSnapshot; activeNodes?: NodeSummary[]; activeAttempts?: AttemptSnapshot[];
+  waitingApprovals?: NodeSummary[]; diagnostics?: NodeDiagnostic[];
+}
 
 export interface RunEvent {protocolVersion: 2; runId: string; sequence: number; type: string; phase: RunPhase; conclusion?: Conclusion; reason?: Reason; nodeId?: string; nodePhase?: NodePhase; message?: string; timestamp: string}
 

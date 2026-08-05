@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type {AttemptSnapshot, NodeSnapshot} from './types.js';
+import type {AttemptSnapshot, NodeSnapshot, RunStatusView} from './types.js';
 
 test('node and attempt snapshots accept generic handles and missing legacy state schema versions', () => {
   const legacyNode: NodeSnapshot = {
@@ -26,4 +26,13 @@ test('node and attempt snapshots accept generic handles and missing legacy state
   assert.equal(legacyAttempt.launchState, 'session_persisted');
   assert.equal(currentAttempt.launchState, 'handle_persisted');
   assert.equal(currentAttempt.execution?.backend, 'ccpanes');
+
+  const parallel: RunStatusView = {
+    protocolVersion: 2, legacy: false,
+    activeNodes: [legacyNode, {...legacyNode, id: 'review'}],
+    activeAttempts: [currentAttempt],
+    waitingApprovals: [],
+    diagnostics: [{nodeId: 'plan', reason: 'agent_waiting_input', message: 'needs input'}],
+  };
+  assert.equal(parallel.activeNodes?.length, 2);
 });
