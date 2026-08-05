@@ -10,5 +10,6 @@ coverage/
 .wf/
 wf-state/
 .ccpanes/
+.codex/guards/
 *.test
 *.out

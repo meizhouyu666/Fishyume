@@ -128,3 +128,38 @@ func TestM211SnapshotFixturesRemainReadable(t *testing.T) {
 		}
 	}
 }
+
+func TestM212BaselineSnapshotFixturesRemainReadable(t *testing.T) {
+	type fixture struct {
+		Name    string
+		Run     WorkflowSnapshot
+		Node    NodeSnapshot
+		Attempt *AttemptSnapshot
+	}
+	data, err := os.ReadFile(filepath.Join("testdata", "m2.1.2-snapshots.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures []fixture
+	if err := json.Unmarshal(data, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixtures) != 8 {
+		t.Fatalf("fixture count=%d, want 8", len(fixtures))
+	}
+	for _, item := range fixtures {
+		t.Run(item.Name, func(t *testing.T) {
+			if err := ValidateWorkflowSnapshot(item.Run); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if err := ValidateNodeSnapshot(item.Node); err != nil {
+				t.Fatalf("node: %v", err)
+			}
+			if item.Attempt != nil {
+				if err := ValidateAttemptSnapshot(*item.Attempt); err != nil {
+					t.Fatalf("attempt: %v", err)
+				}
+			}
+		})
+	}
+}
