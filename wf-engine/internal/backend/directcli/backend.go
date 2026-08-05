@@ -377,6 +377,7 @@ func (b *Backend) Cancel(ctx context.Context, handle backend.ExecutionHandle) (*
 	}
 	refs := []processRef{data.Supervisor, data.Child}
 	active := make([]processRef, 0, len(refs))
+	mismatchedPID := 0
 	for _, ref := range refs {
 		status, err := inspectProcessRef(ref)
 		if err != nil {
@@ -386,10 +387,15 @@ func (b *Backend) Cancel(ctx context.Context, handle backend.ExecutionHandle) (*
 		case processMatched:
 			active = append(active, ref)
 		case processMismatched:
-			return &backend.CancelResult{State: backend.CancelNotConfirmed, Diagnostic: fmt.Sprintf("PID %d no longer matches the Direct execution identity", ref.PID)}, nil
+			if mismatchedPID == 0 {
+				mismatchedPID = ref.PID
+			}
 		}
 	}
 	if len(active) == 0 {
+		if mismatchedPID != 0 {
+			return &backend.CancelResult{State: backend.CancelNotConfirmed, Diagnostic: fmt.Sprintf("PID %d no longer matches the Direct execution identity", mismatchedPID)}, nil
+		}
 		return &backend.CancelResult{State: backend.CancelConfirmed, Diagnostic: "Direct execution is already stopped"}, nil
 	}
 	root := active[0]
@@ -409,6 +415,9 @@ func (b *Backend) Cancel(ctx context.Context, handle backend.ExecutionHandle) (*
 			}
 		}
 		if !remaining {
+			if mismatchedPID != 0 {
+				return &backend.CancelResult{State: backend.CancelNotConfirmed, Diagnostic: fmt.Sprintf("stopped matching Direct processes, but PID %d no longer matches the execution identity", mismatchedPID)}, nil
+			}
 			return &backend.CancelResult{State: backend.CancelConfirmed}, nil
 		}
 		if time.Now().After(deadline) {

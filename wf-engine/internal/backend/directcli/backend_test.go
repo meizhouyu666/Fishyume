@@ -89,9 +89,7 @@ func (b *scenarioBackend) Start(ctx context.Context, spec backend.AgentExecution
 	original := *handle
 	original.Data = append(json.RawMessage(nil), handle.Data...)
 	b.t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, _ = b.delegate.Cancel(cleanupCtx, original)
+		cleanupExecution(b.t, b.delegate, original)
 	})
 	if b.scenario == contracttest.ScenarioLost || b.scenario == contracttest.ScenarioCancelNotConfirmed {
 		var data handleData
@@ -156,11 +154,29 @@ func startScenario(t *testing.T, candidate *Backend, spec backend.AgentExecution
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, _ = candidate.Cancel(ctx, *handle)
+		cleanupExecution(t, candidate, *handle)
 	})
 	return *handle
+}
+
+func cleanupExecution(t *testing.T, candidate backend.AgentBackend, handle backend.ExecutionHandle) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var lastResult *backend.CancelResult
+	var lastErr error
+	for {
+		lastResult, lastErr = candidate.Cancel(ctx, handle)
+		if lastErr == nil && lastResult != nil && lastResult.State == backend.CancelConfirmed {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Errorf("Direct fixture cleanup was not confirmed: result=%+v err=%v", lastResult, lastErr)
+			return
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }
 
 func awaitObservation(t *testing.T, candidate *Backend, handle backend.ExecutionHandle, accept func(*backend.ExecutionObservation) bool) *backend.ExecutionObservation {
@@ -254,6 +270,39 @@ func TestDirectBackendUsesExitCodeOnlyForConfirmedFailure(t *testing.T) {
 	}
 }
 
+func TestDirectCancelStopsMatchedSupervisorWhenChildIdentityMismatches(t *testing.T) {
+	candidate, spec := newFixtureBackend(t)
+	handle := startScenario(t, candidate, spec, "active")
+	data, _, err := candidate.decodeHandle(handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data.Child.Fingerprint += "-mismatch"
+	changed := handle
+	changed.Data, err = json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := candidate.Cancel(context.Background(), changed)
+	if err != nil || result == nil || result.State != backend.CancelNotConfirmed {
+		t.Fatalf("cancel result=%+v err=%v", result, err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		status, inspectErr := inspectProcessRef(data.Supervisor)
+		if inspectErr != nil {
+			t.Fatal(inspectErr)
+		}
+		if status != processMatched {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("matched Direct supervisor remained active")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func TestDirectBackendRecoversWithANewInstance(t *testing.T) {
 	candidate, spec := newFixtureBackend(t)
 	handle := startScenario(t, candidate, spec, "active")
@@ -324,9 +373,7 @@ func TestDirectBackendDoesNotPersistFullPromptInHandleOrControlArtifacts(t *test
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_, _ = candidate.Cancel(ctx, *handle)
+		cleanupExecution(t, candidate, *handle)
 	})
 	if strings.Contains(string(handle.Data), secret) {
 		t.Fatal("ExecutionHandle persisted the full prompt")
