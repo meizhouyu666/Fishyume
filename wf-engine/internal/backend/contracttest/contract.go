@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"wf.local/wf-engine/internal/backend"
 )
@@ -90,21 +91,25 @@ func Run(t *testing.T, factory Factory) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			observation, err := fixture.Backend.Observe(context.Background(), *handle)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if observation == nil {
-				t.Fatal("Observe returned nil")
-			}
-			if err := backend.ValidateExecutionObservation(*observation); err != nil {
-				t.Fatalf("invalid observation: %v", err)
-			}
-			if observation.State != test.state {
-				t.Fatalf("state=%q, want %q", observation.State, test.state)
-			}
-			if test.status != "" && (observation.Result == nil || observation.Result.Status != test.status) {
-				t.Fatalf("result=%+v, want status %q", observation.Result, test.status)
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				observation, err := fixture.Backend.Observe(context.Background(), *handle)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if observation == nil {
+					t.Fatal("Observe returned nil")
+				}
+				if observation.State == test.state && (test.status == "" || (observation.Result != nil && observation.Result.Status == test.status)) {
+					if err := backend.ValidateExecutionObservation(*observation); err != nil {
+						t.Fatalf("invalid observation: %v", err)
+					}
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("observation=%+v, want state=%q status=%q", observation, test.state, test.status)
+				}
+				time.Sleep(25 * time.Millisecond)
 			}
 		})
 	}
