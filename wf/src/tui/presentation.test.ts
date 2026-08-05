@@ -1,48 +1,111 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type {NodeSummary, RunStatusView, WorkflowSnapshot} from '../bridge/types.js';
-import {detectColorMode, statusBadgeText, statusForNode, type SemanticStatus} from './design-tokens.js';
+import {canonicalFixture, canonicalVisualFixtures} from './fixtures.js';
+import {actionableNodes, initialConsoleInteractionState, type ConsoleInteractionState} from './interaction.js';
 import {assertWidth, displayWidth, fitText, terminalSize} from './layout.js';
-import {renderRunText} from './presentation.js';
+import {buildRunTextPresentation, renderRunText, type RunPresentationOptions} from './presentation.js';
+import {
+  colorFor,
+  detectColorMode,
+  detectSymbolMode,
+  headerStatusText,
+  rowStatusText,
+  statusForNode,
+  type ColorMode,
+  type SemanticStatus,
+} from './design-tokens.js';
 
-const createdAt = '2026-08-06T00:00:00Z';
-const nodes: Record<string, NodeSummary> = {
-  plan: {id: 'plan', type: 'agent', phase: 'running', currentAttempt: 1},
-  research: {id: 'research-with-a-long-readable-node-name', type: 'agent', phase: 'running', currentAttempt: 2},
-  approve: {id: 'approve', type: 'approval', phase: 'waiting', reason: 'approval_required', diagnostic: 'Approve the implementation plan before continuing.'},
-  implement: {id: 'implement', type: 'agent', phase: 'pending'},
-  verify: {id: 'verify', type: 'agent', phase: 'skipped', reason: 'upstream_failed'},
-};
-const run: WorkflowSnapshot = {protocolVersion: 2, id: 'run-0123456789', workflowName: 'parallel-productization', project: 'E:/very/long/project/path', backend: 'direct', phase: 'running', effectiveConcurrency: 2, topologicalOrder: Object.keys(nodes), nodes, cancelRequested: false, stateDir: 'E:/state/fishyume/run-0123456789', createdAt, updatedAt: createdAt};
-const view: RunStatusView = {protocolVersion: 2, legacy: false, run, activeAttempts: [
-  {protocolVersion: 2, runId: run.id, nodeId: 'plan', number: 1, phase: 'running', backend: 'direct', launchState: 'handle_persisted', execution: {backend: 'direct', schemaVersion: 1, id: 'pid:12345'}, promptHash: 'a', startedAt: createdAt, updatedAt: createdAt},
-  {protocolVersion: 2, runId: run.id, nodeId: 'research-with-a-long-readable-node-name', number: 2, phase: 'running', backend: 'direct', launchState: 'handle_persisted', execution: {backend: 'direct', schemaVersion: 1, id: 'pid:67890'}, promptHash: 'b', startedAt: createdAt, updatedAt: createdAt},
-], waitingApprovals: [nodes.approve], diagnostics: [{nodeId: 'approve', reason: 'approval_required', message: 'Approve the implementation plan before continuing.'}]};
+function interactionFor(fixture: (typeof canonicalVisualFixtures)[number]): ConsoleInteractionState {
+  if (fixture.interaction) return fixture.interaction;
+  const index = fixture.view.run?.topologicalOrder.indexOf(fixture.selectedNodeId) ?? 0;
+  return {...initialConsoleInteractionState, selectedIndex: Math.max(0, index), selectedNodeId: fixture.selectedNodeId};
+}
 
-test('status tokens encode meaning without relying on color', () => {
-  const fixtures: Array<[NodeSummary, SemanticStatus, string]> = [
-    [{id: 'run', type: 'agent', phase: 'running'}, 'running', '>>'], [{id: 'wait', type: 'agent', phase: 'waiting'}, 'waiting', '..'],
-    [{id: 'approval', type: 'approval', phase: 'waiting'}, 'approval', '??'], [{id: 'failed', type: 'agent', phase: 'completed', conclusion: 'failed'}, 'failed', '!!'],
-    [{id: 'unknown', type: 'agent', phase: 'completed', conclusion: 'indeterminate'}, 'indeterminate', '!?'], [{id: 'cancelled', type: 'agent', phase: 'completed', conclusion: 'cancelled'}, 'cancelled', '[]'],
-    [{id: 'ok', type: 'agent', phase: 'completed', conclusion: 'succeeded'}, 'succeeded', 'OK'], [{id: 'skip', type: 'agent', phase: 'skipped'}, 'skipped', '--'],
+function optionsFor(fixture: (typeof canonicalVisualFixtures)[number], symbolMode: 'unicode' | 'ascii' = 'unicode'): RunPresentationOptions {
+  return {
+    selectedNodeId: fixture.selectedNodeId,
+    detailExpanded: true,
+    symbolMode,
+    interactive: true,
+    action: {interaction: interactionFor(fixture), actionable: actionableNodes(fixture.view), pending: false},
+  };
+}
+
+test('compact status syntax carries symbol, short label, and complete Header meaning', () => {
+  const fixtures: Array<[Parameters<typeof statusForNode>[0], SemanticStatus, string, string]> = [
+    [{id: 'run', type: 'agent', phase: 'running'}, 'running', '● run', 'RUNNING'],
+    [{id: 'wait', type: 'agent', phase: 'waiting'}, 'waiting', '◌ wait', 'WAITING'],
+    [{id: 'approval', type: 'approval', phase: 'waiting'}, 'approval', '◆ approve', 'APPROVAL'],
+    [{id: 'ok', type: 'agent', phase: 'completed', conclusion: 'succeeded'}, 'succeeded', '✓ done', 'SUCCEEDED'],
+    [{id: 'failed', type: 'agent', phase: 'completed', conclusion: 'failed'}, 'failed', '! fail', 'FAILED'],
+    [{id: 'unknown', type: 'agent', phase: 'completed', conclusion: 'indeterminate'}, 'indeterminate', '? unknown', 'INDETERMINATE'],
+    [{id: 'cancelled', type: 'agent', phase: 'completed', conclusion: 'cancelled'}, 'cancelled', '× cancel', 'CANCELLED'],
+    [{id: 'skip', type: 'agent', phase: 'skipped'}, 'skipped', '· skip', 'SKIPPED'],
   ];
-  for (const [node, status, symbol] of fixtures) {assert.equal(statusForNode(node), status); assert.match(statusBadgeText(status), new RegExp(symbol.replace(/[\[\]?*!]/g, '\\$&')))}
+  for (const [node, status, row, header] of fixtures) {
+    assert.equal(statusForNode(node), status); assert.match(rowStatusText(status, 'unicode'), new RegExp(row.replace(/[?]/g, '\\?'))); assert.equal(headerStatusText(status), header);
+  }
+  assert.match(rowStatusText('running', 'ascii'), /^> run/); assert.match(rowStatusText('succeeded', 'ascii'), /^\+ done/);
 });
 
-test('run presentation remains bounded and informative at 80, 120, and 160 columns', () => {
-  for (const width of [80, 120, 160]) {
-    const text = renderRunText(view, width, 65_000); const lines = text.split('\n');
-    assert.equal(assertWidth(lines, width), true, `${width}: ${lines.find(line => displayWidth(line) > width)}`);
-    assert.match(text, /ACTIVE ATTEMPTS \(2\)/); assert.match(text, /APPROVALS \(1\)/); assert.match(text, /DIAGNOSTICS \(1\)/); assert.match(text, /2 active/); assert.match(text, /capacity 2/);
+test('all six canonical scenes remain bounded at 80, 120, and 160 columns in Unicode and ASCII', () => {
+  for (const fixture of canonicalVisualFixtures) {
+    for (const width of [80, 120, 160]) {
+      for (const symbolMode of ['unicode', 'ascii'] as const) {
+        const text = renderRunText(fixture.view, width, 138_000, optionsFor(fixture, symbolMode)); const lines = text.split('\n');
+        assert.equal(assertWidth(lines, width), true, `${fixture.id}/${width}/${symbolMode}: ${lines.find(line => displayWidth(line) > width)}`);
+        assert.match(text, /FISHYUME \/ /); assert.match(text, /settled/); assert.match(text, new RegExp(fixture.selectedNodeId.slice(0, 8)));
+        assert.doesNotMatch(text, /ACTIVE ATTEMPTS|APPROVALS \(|DIAGNOSTICS \(|:: WORKFLOW/, 'repeated panel sections must stay removed');
+      }
+    }
   }
   assert.equal(terminalSize(80), 'narrow'); assert.equal(terminalSize(120), 'medium'); assert.equal(terminalSize(160), 'wide');
 });
 
-test('narrow rows wrap diagnostics instead of overflowing or hiding status', () => {
-  const text = renderRunText(view, 80, 1000); assert.match(text, /\[\?\? APPROVAL/); assert.match(text, /approval_required/); assert.match(text, /approve: fishyume resume/); assert.equal(assertWidth(text.split('\n'), 80), true);
+test('canonical scenes expose their defining operator evidence', () => {
+  const concurrent = renderRunText(canonicalFixture('concurrent').view, 120, 138_000, optionsFor(canonicalFixture('concurrent')));
+  assert.match(concurrent, /a2.*direct/); assert.match(concurrent, /a1.*ccpanes/); assert.match(concurrent, /2 active/);
+
+  const approval = renderRunText(canonicalFixture('approval').view, 120, 138_000, optionsFor(canonicalFixture('approval')));
+  assert.match(approval, /Approve production deployment/); assert.match(approval, /a approve/); assert.match(approval, /r reject/); assert.doesNotMatch(approval, /R retry/);
+
+  const retryable = renderRunText(canonicalFixture('retryable').view, 120, 138_000, optionsFor(canonicalFixture('retryable')));
+  assert.match(retryable, /Expected junit\.xml/); assert.match(retryable, /R retry/); assert.match(retryable, /artifacts/);
+
+  const indeterminate = renderRunText(canonicalFixture('indeterminate').view, 120, 138_000, optionsFor(canonicalFixture('indeterminate')));
+  assert.match(indeterminate, /ACTION \/ publish-artifact.*duplicate-risk/); assert.match(indeterminate, /repeat external effects/); assert.match(indeterminate, /Enter confirm.*Esc discard/);
+
+  const cancelling = renderRunText(canonicalFixture('cancelling').view, 120, 138_000, optionsFor(canonicalFixture('cancelling')));
+  assert.match(cancelling, /CANCELLING/); assert.match(cancelling, /session:remote-9/); assert.doesNotMatch(cancelling, /c cancel/); assert.doesNotMatch(cancelling, /CANCELLED/);
+
+  const terminal = renderRunText(canonicalFixture('terminal').view, 120, 138_000, optionsFor(canonicalFixture('terminal')));
+  for (const label of ['done', 'fail', 'cancel', 'reject']) assert.match(terminal, new RegExp(label));
+  assert.match(terminal, /summary.*Release stopped/); assert.match(terminal, /next.*fishyume status/); assert.match(terminal, /q exit/); assert.doesNotMatch(terminal, /c cancel|a approve|R retry/);
 });
 
-test('monochrome detection and unicode truncation degrade predictably', () => {
-  assert.equal(detectColorMode({getColorDepth: () => 24}, {NO_COLOR: '1'}), 'mono'); assert.equal(detectColorMode({getColorDepth: () => 8}, {}), 'ansi256'); assert.equal(detectColorMode({getColorDepth: () => 4}, {}), 'ansi16');
-  const text = fitText('并行工作流 diagnostic', 12); assert.equal(displayWidth(text), 12); assert.match(text, /…$/);
+test('Focus Detail folds locally while action detail overrides the folded node view', () => {
+  const fixture = canonicalFixture('retryable');
+  const folded = buildRunTextPresentation(fixture.view, 80, 138_000, {...optionsFor(fixture), detailExpanded: false});
+  assert.equal(folded.detail, undefined);
+  const action = {...optionsFor(fixture), detailExpanded: false};
+  action.action = {...action.action!, interaction: {...interactionFor(fixture), mode: 'retry-confirm', actionTarget: {nodeId: 'integration-tests', kind: 'retry', duplicateRisk: false}}};
+  const focused = buildRunTextPresentation(fixture.view, 80, 138_000, action);
+  assert.match(focused.detail?.title ?? '', /ACTION \/ integration-tests/);
+});
+
+test('color capability levels preserve semantic roles and mono removes color only', () => {
+  assert.equal(detectColorMode({getColorDepth: () => 24}, {NO_COLOR: '1'}), 'mono');
+  assert.equal(detectColorMode({getColorDepth: () => 24}, {FISHYUME_THEME: 'mono'}), 'mono');
+  assert.equal(detectColorMode({getColorDepth: () => 24}, {}), 'truecolor');
+  assert.equal(detectColorMode({getColorDepth: () => 8}, {}), 'ansi256');
+  assert.equal(detectColorMode({getColorDepth: () => 4}, {}), 'ansi16');
+  for (const mode of ['ansi16', 'ansi256', 'truecolor'] as ColorMode[]) assert.ok(colorFor('danger', mode));
+  assert.equal(colorFor('danger', 'mono'), undefined);
+  assert.equal(detectSymbolMode({TERM: 'dumb'}), 'ascii'); assert.equal(detectSymbolMode({FISHYUME_ASCII: '1'}), 'ascii'); assert.equal(detectSymbolMode({}), 'unicode');
+});
+
+test('CJK, emoji, combining marks, and long paths truncate by display width', () => {
+  for (const value of ['并行工作流 diagnostic', 'operator 🐟 console', 'Cafe\u0301 / E:/团队/很长的路径']) {
+    const text = fitText(value, 12); assert.ok(displayWidth(text) <= 12); assert.match(text, /…$/);
+  }
 });

@@ -24,6 +24,7 @@
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --import tsx src/**/*.test.ts src/**/*.test.tsx",
+    "gallery": "tsx scripts/render-tui-gallery.ts",
     "pack:dry-run": "npm pack --dry-run",
     "pack:audit": "node scripts/audit-pack.mjs --dry-run",
     "pack:audit:real": "node scripts/audit-pack.mjs --real"

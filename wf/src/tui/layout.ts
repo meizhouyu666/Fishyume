@@ -7,3 +7,28 @@ export function normalizeInline(text: string): string {return text.replace(/\s+/
 export function fitText(text: string, width: number): string {if (width <= 0) return ''; const normalized = normalizeInline(text); if (displayWidth(normalized) <= width) return normalized; if (width === 1) return '…'; let result = ''; let used = 0; for (const character of normalized) {const characterWidth = displayWidth(character); if (used + characterWidth > width - 1) break; result += character; used += characterWidth} return `${result}…`}
 export function padDisplay(text: string, width: number): string {const fitted = fitText(text, width); return `${fitted}${' '.repeat(Math.max(0, width - displayWidth(fitted)))}`}
 export function assertWidth(lines: readonly string[], width: number): boolean {return lines.every(line => displayWidth(line) <= width)}
+
+export function joinColumns(left: string, right: string, width: number, minimumGap = 2): string {
+  if (width <= 0) return '';
+  const normalizedLeft = normalizeInline(left); const normalizedRight = normalizeInline(right);
+  const rightWidth = displayWidth(normalizedRight);
+  if (rightWidth >= width) return fitText(normalizedRight, width);
+  const leftWidth = Math.max(0, width - rightWidth - minimumGap);
+  if (leftWidth <= 0) return fitText(`${normalizedLeft} ${normalizedRight}`, width);
+  const fittedLeft = fitText(normalizedLeft, leftWidth);
+  return `${fittedLeft}${' '.repeat(Math.max(minimumGap, width - displayWidth(fittedLeft) - rightWidth))}${normalizedRight}`;
+}
+
+export function wrapItems(items: readonly string[], width: number, separator = '  '): string[] {
+  const result: string[] = []; let line = '';
+  for (const rawItem of items) {
+    const item = normalizeInline(rawItem);
+    if (!item) continue;
+    if (!line) {line = fitText(item, width); continue}
+    const candidate = `${line}${separator}${item}`;
+    if (displayWidth(candidate) <= width) line = candidate;
+    else {result.push(line); line = fitText(item, width)}
+  }
+  if (line) result.push(line);
+  return result;
+}

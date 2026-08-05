@@ -1,17 +1,32 @@
 import React, {type ReactNode} from 'react';
 import {Box, Text} from 'ink';
-import type {AttemptSnapshot, NodeSummary, RunStatusView, WorkflowSnapshot} from '../bridge/types.js';
-import {colorFor, designTokens, statusBadgeText, statusForRun, type ColorMode, type ColorRole, type SemanticStatus} from './design-tokens.js';
-import {fitText, terminalSize} from './layout.js';
-import {footerLines, formatAttemptRow, formatNodeRow, headerLines, progressText} from './presentation.js';
+import {colorFor, type ColorMode, type ColorRole} from './design-tokens.js';
+import {dividerLine, type RunTextPresentation, type WorkflowRowPresentation} from './presentation.js';
 
 interface ThemeProps {colorMode: ColorMode}
-function ThemedText({role, colorMode, children, bold}: ThemeProps & {role: ColorRole; children: ReactNode; bold?: boolean}) {return <Text color={colorFor(role, colorMode)} bold={bold}>{children}</Text>}
-export function StatusBadge({status, colorMode}: ThemeProps & {status: SemanticStatus}) {const token = designTokens.status[status]; return <ThemedText role={token.role} colorMode={colorMode} bold>{statusBadgeText(status)}</ThemedText>}
-export function Header({run, width, elapsedMs, colorMode}: ThemeProps & {run: WorkflowSnapshot; width: number; elapsedMs: number}) {const lines = headerLines(run, width, elapsedMs); return <Box flexDirection="column"><Box><ThemedText role="brand" colorMode={colorMode} bold>{fitText(lines[0] ?? '', width)}</ThemedText></Box>{lines.slice(1).map((line, index) => <Box key={index}><ThemedText role={index === 0 ? designTokens.status[statusForRun(run)].role : 'muted'} colorMode={colorMode}>{line}</ThemedText></Box>)}</Box>}
-export function Panel({title, width, colorMode, children}: ThemeProps & {title: string; width: number; children: ReactNode}) {const bordered = terminalSize(width) !== 'narrow'; return <Box flexDirection="column" width={width} borderStyle={bordered ? 'classic' : undefined} paddingX={bordered ? designTokens.spacing.panelX : 0}><ThemedText role="strong" colorMode={colorMode} bold>{`${designTokens.emphasis.sectionPrefix} ${title}`}</ThemedText>{children}</Box>}
-export function Section(props: React.ComponentProps<typeof Panel>) {return <Panel {...props}/>}
-export function NodeRow({node, width, colorMode, marker = ''}: ThemeProps & {node: NodeSummary; width: number; marker?: string}) {const formatted = formatNodeRow(node, Math.max(1, width - marker.length)); const first = formatted.lines[0] ?? ''; const badge = statusBadgeText(formatted.status); return <Box flexDirection="column"><Box>{marker ? <ThemedText role={marker.startsWith('>') ? 'strong' : 'muted'} colorMode={colorMode} bold={marker.startsWith('>')}>{marker}</ThemedText> : null}<StatusBadge status={formatted.status} colorMode={colorMode}/><Text>{first.slice(badge.length)}</Text></Box>{formatted.lines.slice(1).map((line, index) => <ThemedText key={index} role="muted" colorMode={colorMode}>{marker ? '  ' : ''}{line}</ThemedText>)}</Box>}
-export function AttemptRow({attempt, width, colorMode}: ThemeProps & {attempt: AttemptSnapshot; width: number}) {const formatted = formatAttemptRow(attempt, width); const first = formatted.lines[0] ?? ''; const badge = statusBadgeText(formatted.status); return <Box><StatusBadge status={formatted.status} colorMode={colorMode}/><Text>{first.slice(badge.length)}</Text></Box>}
-export function ProgressSummary({run, width, colorMode}: ThemeProps & {run: WorkflowSnapshot; width: number}) {return <Box><ThemedText role="muted" colorMode={colorMode}>{fitText(progressText(run), width)}</ThemedText></Box>}
-export function HelpFooter({view, width, colorMode}: ThemeProps & {view: RunStatusView; width: number}) {return <Box flexDirection="column" marginTop={designTokens.spacing.section}>{footerLines(view, width).map((line, index) => <ThemedText key={index} role="muted" colorMode={colorMode}>{line}</ThemedText>)}</Box>}
+function ThemedText({role, colorMode, children, bold}: ThemeProps & {role: ColorRole; children: ReactNode; bold?: boolean}) {
+  return <Text color={colorFor(role, colorMode)} bold={bold}>{children}</Text>;
+}
+
+function WorkflowRow({row, colorMode}: ThemeProps & {row: WorkflowRowPresentation}) {
+  return <Box>
+    <ThemedText role={row.selected ? 'brand' : 'muted'} colorMode={colorMode} bold={row.selected}>{`${row.marker} `}</ThemedText>
+    <ThemedText role={row.role} colorMode={colorMode} bold={row.selected}>{`${row.statusText} `}</ThemedText>
+    <Text bold={row.selected}>{row.content}</Text>
+  </Box>;
+}
+
+export function CalmConsole({presentation, width, colorMode, symbolMode}: ThemeProps & {presentation: RunTextPresentation; width: number; symbolMode: 'unicode' | 'ascii'}) {
+  return <Box flexDirection="column" width={width}>
+    {presentation.header.map((line, index) => <ThemedText key={`header:${index}`} role={index === 0 ? 'brand' : index === 1 ? 'strong' : 'muted'} colorMode={colorMode} bold={index === 0}>{line}</ThemedText>)}
+    <ThemedText role="muted" colorMode={colorMode}>{presentation.divider}</ThemedText>
+    {presentation.workflow.map(row => <WorkflowRow key={row.nodeId} row={row} colorMode={colorMode}/>)}
+    {presentation.detail ? <>
+      <ThemedText role={presentation.detail.role} colorMode={colorMode} bold>{dividerLine(width, symbolMode, presentation.detail.title)}</ThemedText>
+      {presentation.detail.lines.map((line, index) => <Text key={`detail:${index}`}>{line}</Text>)}
+      <ThemedText role="muted" colorMode={colorMode}>{presentation.divider}</ThemedText>
+    </> : null}
+    {presentation.statusStrip ? <ThemedText role="muted" colorMode={colorMode}>{presentation.statusStrip}</ThemedText> : null}
+    {presentation.footer.map((line, index) => <ThemedText key={`footer:${index}`} role="muted" colorMode={colorMode}>{line}</ThemedText>)}
+  </Box>;
+}

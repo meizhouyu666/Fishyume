@@ -4,6 +4,8 @@
 >
 > 产品边界：CLI/TUI 是正式产品表面；本批继续保持 Engine 为唯一业务状态所有者，不建设 Web/Desktop，不实现模型路由、Prompt Library、自动重试、超时或 fallback。
 
+> M3.3 注记：视觉选择现已扩展到全部 Workflow 节点，`Enter` 控制 Focus Detail；本文件的 action 资格、`nodeId/kind/duplicateRisk` 固定、Watch ownership/detach 和 RPC 安全语义继续有效。只有“选择仅遍历可操作节点”的展示规则被 M3.3 取代。
+
 ## 1. 目标
 
 把 M3 第一批的只读 Run TUI 提升为可日常操作的键盘优先 Run Console。用户应能在同一终端表面观察运行、处理人工审批、显式重试异常节点、取消 Run，并在退出后可靠恢复观察。

@@ -1,0 +1,315 @@
+Fishyume M3.3 Calm Operator Console — canonical text gallery
+Generated from pure RunStatusView fixtures; elapsed time is fixed at 02:18.
+Color capability is verified separately by tests; this file intentionally contains no ANSI escapes.
+
+======================== concurrent / 80 columns ========================
+FISHYUME / release-workflow / 并行验证
+RUNNING · 2m18s · 1/5 settled · capacity 3
+run run-concurrent-a91f · direct · capacity 3
+────────────────────────────────────────────────────────────────────────────────
+  ✓ done    plan · a1
+› ● run     实现-operator-console · a2 · direct
+  ● run     windows-pty-check · a1 · ccpanes
+  ◆ approve review · approval_required · Approve the re…
+  ○ pending publish
+── 实现-operator-console / attempt 2 ───────────────────────────────────────────
+agent · running
+attempt 2 · direct · handle persisted · execution pid:4821
+────────────────────────────────────────────────────────────────────────────────
+2 active · 1 waiting · capacity 3
+↑↓/j/k select  Enter fold  c cancel  ? help  q detach
+
+======================== concurrent / 120 columns ========================
+FISHYUME / release-workflow / 并行验证                                                                     RUNNING 2m18s
+run run-concurrent-a91f · direct · capacity 3                                                                1/5 settled
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ done    plan · agent · a1
+› ● run     实现-operator-console · agent · a2 · direct · handle persisted · exec pid:4821
+  ● run     windows-pty-check · agent · a1 · ccpanes · handle persisted · exec session:pty-77
+  ◆ approve review · approval · approval_required · Approve the release evidence.
+  ○ pending publish · agent
+── 实现-operator-console / attempt 2 ───────────────────────────────────────────────────────────────────────────────────
+agent · running
+attempt 2 · direct · handle persisted · execution pid:4821
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+2 active · 1 waiting · capacity 3
+↑↓/j/k select  Enter fold  c cancel  ? help  q detach
+
+======================== concurrent / 160 columns ========================
+FISHYUME / release-workflow / 并行验证                                                                                                             RUNNING 2m18s
+run run-concurrent-a91f · direct · capacity 3                                                                                                        1/5 settled
+state E:/团队/.fishyume/runs/run-concurrent-a91f/state-with-a-long-reviewable-path
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ done    plan · agent · a1
+› ● run     实现-operator-console · agent · a2 · direct · handle persisted · exec pid:4821
+  ● run     windows-pty-check · agent · a1 · ccpanes · handle persisted · exec session:pty-77
+  ◆ approve review · approval · approval_required · Approve the release evidence.
+  ○ pending publish · agent
+── 实现-operator-console / attempt 2 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+agent · running
+attempt 2 · direct · handle persisted · execution pid:4821
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+2 active · 1 waiting · capacity 3
+↑↓/j/k select  Enter fold  c cancel  ? help  q detach
+
+======================== approval / 80 columns ========================
+FISHYUME / production-release
+APPROVAL · 2m18s · 1/3 settled · capacity 3
+run run-approval-b72c · direct · capacity 3
+────────────────────────────────────────────────────────────────────────────────
+  ✓ done    plan · a1
+› ◆ approve security-review · approval_required · Approve produc…
+  ○ pending deploy
+── security-review ─────────────────────────────────────────────────────────────
+approval · waiting · approval_required
+diagnostic · approval_required · Approve production deployment after reviewing …
+result · Deployment awaits a human decision.
+────────────────────────────────────────────────────────────────────────────────
+1 waiting · capacity 3
+↑↓/j/k select  Enter fold  a approve  r reject  c cancel  ? help  q detach
+
+======================== approval / 120 columns ========================
+FISHYUME / production-release                                                                             APPROVAL 2m18s
+run run-approval-b72c · direct · capacity 3                                                                  1/3 settled
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ done    plan · agent · a1
+› ◆ approve security-review · approval · approval_required · Approve production deployment after reviewing…
+  ○ pending deploy · agent
+── security-review ─────────────────────────────────────────────────────────────────────────────────────────────────────
+approval · waiting · approval_required
+diagnostic · approval_required · Approve production deployment after reviewing duplicate-risk controls.
+result · Deployment awaits a human decision.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 waiting · capacity 3
+↑↓/j/k select  Enter fold  a approve  r reject  c cancel  ? help  q detach
+
+======================== approval / 160 columns ========================
+FISHYUME / production-release                                                                                                                     APPROVAL 2m18s
+run run-approval-b72c · direct · capacity 3                                                                                                          1/3 settled
+state E:/团队/.fishyume/runs/run-approval-b72c/state-with-a-long-reviewable-path
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ done    plan · agent · a1
+› ◆ approve security-review · approval · approval_required · Approve production deployment after reviewing duplicate-risk controls.
+  ○ pending deploy · agent
+── security-review ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+approval · waiting · approval_required
+diagnostic · approval_required · Approve production deployment after reviewing duplicate-risk controls.
+result · Deployment awaits a human decision.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 waiting · capacity 3
+↑↓/j/k select  Enter fold  a approve  r reject  c cancel  ? help  q detach
+
+======================== retryable / 80 columns ========================
+FISHYUME / release-validation
+WAITING · 2m18s · 2/3 settled · capacity 3
+run run-retry-c83d · direct · capacity 3
+────────────────────────────────────────────────────────────────────────────────
+  ✓ done    build · a1
+› ! fail    integration-tests · a2 · invalid_result · Expected jun…
+  ○ pending package
+── integration-tests ───────────────────────────────────────────────────────────
+agent · completed · failed · invalid_result
+diagnostic · invalid_result · Expected junit.xml was not produced.
+result · Test runner exited before publishing results.
+warnings · Retry will create attempt 3.
+checks · typecheck passed · integration result missing
+artifacts · E:/团队/logs/integration-attempt-2.txt
+────────────────────────────────────────────────────────────────────────────────
+1 failed · capacity 3
+↑↓/j/k select  Enter fold  R retry  c cancel  ? help  q detach
+
+======================== retryable / 120 columns ========================
+FISHYUME / release-validation                                                                              WAITING 2m18s
+run run-retry-c83d · direct · capacity 3                                                                     2/3 settled
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ done    build · agent · a1
+› ! fail    integration-tests · agent · a2 · invalid_result · Expected junit.xml was not produced.
+  ○ pending package · agent
+── integration-tests ───────────────────────────────────────────────────────────────────────────────────────────────────
+agent · completed · failed · invalid_result
+diagnostic · invalid_result · Expected junit.xml was not produced.
+result · Test runner exited before publishing results.
+warnings · Retry will create attempt 3.
+checks · typecheck passed · integration result missing
+artifacts · E:/团队/logs/integration-attempt-2.txt
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 failed · capacity 3
+↑↓/j/k select  Enter fold  R retry  c cancel  ? help  q detach
+
+======================== retryable / 160 columns ========================
+FISHYUME / release-validation                                                                                                                      WAITING 2m18s
+run run-retry-c83d · direct · capacity 3                                                                                                             2/3 settled
+state E:/团队/.fishyume/runs/run-retry-c83d/state-with-a-long-reviewable-path
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ done    build · agent · a1
+› ! fail    integration-tests · agent · a2 · invalid_result · Expected junit.xml was not produced.
+  ○ pending package · agent
+── integration-tests ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+agent · completed · failed · invalid_result
+diagnostic · invalid_result · Expected junit.xml was not produced.
+result · Test runner exited before publishing results.
+warnings · Retry will create attempt 3.
+checks · typecheck passed · integration result missing
+artifacts · E:/团队/logs/integration-attempt-2.txt
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 failed · capacity 3
+↑↓/j/k select  Enter fold  R retry  c cancel  ? help  q detach
+
+======================== indeterminate / 80 columns ========================
+FISHYUME / artifact-release
+WAITING · 2m18s · 2/3 settled · capacity 3
+run run-unknown-d94e · direct · capacity 3
+────────────────────────────────────────────────────────────────────────────────
+  ✓ done    prepare · a1
+› ? unknown publish-artifact · a3 · completion_missing · Backend …
+  ○ pending notify
+── ACTION / publish-artifact · retry · duplicate-risk ──────────────────────────
+Retry may repeat external effects. Explicit duplicate-risk acknowledgement is r…
+────────────────────────────────────────────────────────────────────────────────
+1 failed · capacity 3
+Enter confirm  Esc discard
+
+======================== indeterminate / 120 columns ========================
+FISHYUME / artifact-release                                                                                WAITING 2m18s
+run run-unknown-d94e · direct · capacity 3                                                                   2/3 settled
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ done    prepare · agent · a1
+› ? unknown publish-artifact · agent · a3 · completion_missing · Backend completion was not observed; exter…
+  ○ pending notify · agent
+── ACTION / publish-artifact · retry · duplicate-risk ──────────────────────────────────────────────────────────────────
+Retry may repeat external effects. Explicit duplicate-risk acknowledgement is required.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 failed · capacity 3
+Enter confirm  Esc discard
+
+======================== indeterminate / 160 columns ========================
+FISHYUME / artifact-release                                                                                                                        WAITING 2m18s
+run run-unknown-d94e · direct · capacity 3                                                                                                           2/3 settled
+state E:/团队/.fishyume/runs/run-unknown-d94e/state-with-a-long-reviewable-path
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ done    prepare · agent · a1
+› ? unknown publish-artifact · agent · a3 · completion_missing · Backend completion was not observed; external publish may already have happe…
+  ○ pending notify · agent
+── ACTION / publish-artifact · retry · duplicate-risk ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+Retry may repeat external effects. Explicit duplicate-risk acknowledgement is required.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 failed · capacity 3
+Enter confirm  Esc discard
+
+======================== cancelling / 80 columns ========================
+FISHYUME / cancel-workflow
+CANCELLING · 2m18s · 1/4 settled · capacity 3
+run run-stopping-e15f · direct · capacity 3
+────────────────────────────────────────────────────────────────────────────────
+  ✓ done    prepare · a1
+  ● run     stop-local-worker · a2 · direct · Cancellation request…
+› ● run     stop-remote-worker · a1 · ccpanes · Remote session stil…
+  ○ pending finalize
+── stop-remote-worker / attempt 1 ──────────────────────────────────────────────
+agent · running
+attempt 1 · ccpanes · session persisted · execution session:remote-9
+diagnostic · cancel_failed · Remote session still reports active.
+────────────────────────────────────────────────────────────────────────────────
+2 active · capacity 3
+↑↓/j/k select  Enter fold  ? help  q detach
+
+======================== cancelling / 120 columns ========================
+FISHYUME / cancel-workflow                                                                              CANCELLING 2m18s
+run run-stopping-e15f · direct · capacity 3                                                                  1/4 settled
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ done    prepare · agent · a1
+  ● run     stop-local-worker · agent · a2 · direct · handle persisted · exec pid:5100 · Cancellation reques…
+› ● run     stop-remote-worker · agent · a1 · ccpanes · session persisted · exec session:remote-9 · Remote se…
+  ○ pending finalize · agent
+── stop-remote-worker / attempt 1 ──────────────────────────────────────────────────────────────────────────────────────
+agent · running
+attempt 1 · ccpanes · session persisted · execution session:remote-9
+diagnostic · cancel_failed · Remote session still reports active.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+2 active · capacity 3
+↑↓/j/k select  Enter fold  ? help  q detach
+
+======================== cancelling / 160 columns ========================
+FISHYUME / cancel-workflow                                                                                                                      CANCELLING 2m18s
+run run-stopping-e15f · direct · capacity 3                                                                                                          1/4 settled
+state E:/团队/.fishyume/runs/run-stopping-e15f/state-with-a-long-reviewable-path
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ done    prepare · agent · a1
+  ● run     stop-local-worker · agent · a2 · direct · handle persisted · exec pid:5100 · Cancellation requested; execution confirmation pendin…
+› ● run     stop-remote-worker · agent · a1 · ccpanes · session persisted · exec session:remote-9 · Remote session still reports active.
+  ○ pending finalize · agent
+── stop-remote-worker / attempt 1 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+agent · running
+attempt 1 · ccpanes · session persisted · execution session:remote-9
+diagnostic · cancel_failed · Remote session still reports active.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+2 active · capacity 3
+↑↓/j/k select  Enter fold  ? help  q detach
+
+======================== terminal / 80 columns ========================
+FISHYUME / release-workflow
+FAILED · 2m18s · 4/4 settled · capacity 3
+run run-terminal-f260 · direct · capacity 3
+────────────────────────────────────────────────────────────────────────────────
+  ✓ done    plan · a1
+› ! fail    verify · a2 · Two checks failed.
+  × cancel  cleanup · a1
+  × reject  approval · user_requested
+── verify ──────────────────────────────────────────────────────────────────────
+agent · completed · failed
+diagnostic · invalid_result · Two checks failed.
+result · Verification failed.
+warnings · Do not publish this build.
+checks · typecheck passed · unit tests failed
+summary · Release stopped: verification failed and approval was rejected.
+next · fishyume status run-terminal-f260
+state · E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-p…
+────────────────────────────────────────────────────────────────────────────────
+1 failed · capacity 3
+status fishyume status run-terminal-f260
+state E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path
+q exit
+
+======================== terminal / 120 columns ========================
+FISHYUME / release-workflow                                                                                 FAILED 2m18s
+run run-terminal-f260 · direct · capacity 3                                                                  4/4 settled
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ done    plan · agent · a1
+› ! fail    verify · agent · a2 · Two checks failed.
+  × cancel  cleanup · agent · a1
+  × reject  approval · approval · user_requested
+── verify ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+agent · completed · failed
+diagnostic · invalid_result · Two checks failed.
+result · Verification failed.
+warnings · Do not publish this build.
+checks · typecheck passed · unit tests failed
+summary · Release stopped: verification failed and approval was rejected.
+next · fishyume status run-terminal-f260
+state · E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 failed · capacity 3
+status fishyume status run-terminal-f260
+state E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path  q exit
+
+======================== terminal / 160 columns ========================
+FISHYUME / release-workflow                                                                                                                         FAILED 2m18s
+run run-terminal-f260 · direct · capacity 3                                                                                                          4/4 settled
+state E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ✓ done    plan · agent · a1
+› ! fail    verify · agent · a2 · Two checks failed.
+  × cancel  cleanup · agent · a1
+  × reject  approval · approval · user_requested
+── verify ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+agent · completed · failed
+diagnostic · invalid_result · Two checks failed.
+result · Verification failed.
+warnings · Do not publish this build.
+checks · typecheck passed · unit tests failed
+summary · Release stopped: verification failed and approval was rejected.
+next · fishyume status run-terminal-f260
+state · E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 failed · capacity 3
+status fishyume status run-terminal-f260  state E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path  q exit
