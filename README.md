@@ -58,9 +58,7 @@ go build ./cmd/wf-engine
 
 cd ..\wf
 npm ci
-npm run typecheck
-npm test
-npm run build
+npm run verify
 ```
 
 开发 checkout 可显式设置 Engine：

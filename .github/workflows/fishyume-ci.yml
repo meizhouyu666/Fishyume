@@ -31,7 +31,7 @@ jobs:
         run: go test -race ./...
       - name: TypeScript checks
         working-directory: wf
-        run: npm ci && npm run typecheck && npm test && npm run build && npm run pack:audit && npm run pack:audit:real
+        run: npm ci && npm run verify
       - name: Diff check
         run: git diff --check
 
