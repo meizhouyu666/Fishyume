@@ -36,21 +36,31 @@ func currentProcessIdentity(pid int) (processIdentity, bool, error) {
 	defer windows.CloseHandle(handle)
 	result, err := windows.WaitForSingleObject(handle, 0)
 	if err != nil {
-		return processIdentity{}, false, err
+		return inaccessibleProcessIdentity(err)
 	}
 	if result == windows.WAIT_OBJECT_0 {
 		return processIdentity{}, false, nil
 	}
 	var creation, exit, kernel, user windows.Filetime
 	if err := windows.GetProcessTimes(handle, &creation, &exit, &kernel, &user); err != nil {
-		return processIdentity{}, false, err
+		return inaccessibleProcessIdentity(err)
 	}
 	buffer := make([]uint16, windows.MAX_PATH*4)
 	size := uint32(len(buffer))
 	if err := windows.QueryFullProcessImageName(handle, 0, &buffer[0], &size); err != nil {
-		return processIdentity{}, false, err
+		return inaccessibleProcessIdentity(err)
 	}
 	return processIdentity{Fingerprint: fmt.Sprintf("%d", creation.Nanoseconds()), Executable: filepath.Clean(windows.UTF16ToString(buffer[:size]))}, true, nil
+}
+
+func inaccessibleProcessIdentity(err error) (processIdentity, bool, error) {
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		// The handle may become inaccessible while a process is exiting. Keep
+		// treating the PID as occupied but intentionally non-matching so it is
+		// never observed or terminated using stale identity evidence.
+		return processIdentity{Fingerprint: "inaccessible"}, true, nil
+	}
+	return processIdentity{}, false, err
 }
 
 func terminateProcessTree(ctx context.Context, ref processRef) error {

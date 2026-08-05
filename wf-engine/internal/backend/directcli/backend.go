@@ -258,10 +258,16 @@ func (b *Backend) Observe(_ context.Context, handle backend.ExecutionHandle) (*b
 	}
 	events, err := readEventEvidence(paths.Events)
 	if err != nil {
+		if isTransientFileAccess(err) {
+			return transientArtifactObservation("event log", err), nil
+		}
 		return nil, err
 	}
 	exit, exitExists, err := readExitRecord(paths.Exit, data)
 	if err != nil {
+		if isTransientFileAccess(err) {
+			return transientArtifactObservation("exit record", err), nil
+		}
 		return invalidResultObservation(err.Error()), nil
 	}
 	if events.Completed || exitExists {
@@ -286,6 +292,9 @@ func (b *Backend) Observe(_ context.Context, handle backend.ExecutionHandle) (*b
 func completedObservation(paths artifactSet, data handleData, events eventEvidence, exit exitRecord, exitExists bool) *backend.ExecutionObservation {
 	result, resultExists, err := readResult(paths.Result, data)
 	if err != nil {
+		if isTransientFileAccess(err) {
+			return transientArtifactObservation("structured result", err)
+		}
 		return invalidResultObservation(err.Error())
 	}
 	if resultExists {
@@ -294,6 +303,9 @@ func completedObservation(paths artifactSet, data handleData, events eventEviden
 				return invalidResultObservation("Direct result appeared after the supervisor recorded process exit")
 			}
 			currentHash, hashErr := executableSHA256(paths.Result)
+			if hashErr != nil && isTransientFileAccess(hashErr) {
+				return transientArtifactObservation("structured result integrity check", hashErr)
+			}
 			if hashErr != nil || currentHash != exit.ResultSHA256 {
 				return invalidResultObservation("Direct structured result changed after process exit")
 			}
@@ -316,6 +328,13 @@ func completedObservation(paths artifactSet, data handleData, events eventEviden
 		return &backend.ExecutionObservation{State: backend.ObservationTerminal, Result: &backend.AgentResult{Status: "failed", Summary: fmt.Sprintf("Codex CLI exited with code %d without a structured result", exit.ExitCode)}}
 	}
 	return &backend.ExecutionObservation{State: backend.ObservationResultPending, Diagnostic: "Codex CLI finished without a structured result"}
+}
+
+func transientArtifactObservation(name string, err error) *backend.ExecutionObservation {
+	return &backend.ExecutionObservation{
+		State:      backend.ObservationResultPending,
+		Diagnostic: fmt.Sprintf("Direct %s is temporarily inaccessible: %v", name, err),
+	}
 }
 
 func (b *Backend) Output(_ context.Context, handle backend.ExecutionHandle, lines int) (string, error) {
@@ -405,6 +424,7 @@ func (b *Backend) Cancel(ctx context.Context, handle backend.ExecutionHandle) (*
 
 func (b *Backend) waitReady(ctx context.Context, path, executionID string) (readyRecord, error) {
 	deadline := time.Now().Add(b.config.StartupTimeout)
+	var lastTransientErr error
 	for {
 		var ready readyRecord
 		if err := readJSONFile(path, 64*1024, &ready); err == nil {
@@ -412,10 +432,17 @@ func (b *Backend) waitReady(ctx context.Context, path, executionID string) (read
 				return readyRecord{}, fmt.Errorf("Direct supervisor ready record has the wrong execution identity")
 			}
 			return ready, nil
-		} else if !os.IsNotExist(unwrapPathError(err)) {
+		} else if os.IsNotExist(unwrapPathError(err)) {
+			lastTransientErr = nil
+		} else if isTransientFileAccess(err) {
+			lastTransientErr = err
+		} else {
 			return readyRecord{}, err
 		}
 		if time.Now().After(deadline) {
+			if lastTransientErr != nil {
+				return readyRecord{}, fmt.Errorf("Direct supervisor ready record remained inaccessible within %s: %w", b.config.StartupTimeout, lastTransientErr)
+			}
 			return readyRecord{}, fmt.Errorf("Direct supervisor did not become ready within %s", b.config.StartupTimeout)
 		}
 		select {
