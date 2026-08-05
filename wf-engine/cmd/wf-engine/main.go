@@ -7,12 +7,16 @@ import (
 
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/backend/ccpanes"
+	"wf.local/wf-engine/internal/backend/directcli"
 	"wf.local/wf-engine/internal/rpc"
 	"wf.local/wf-engine/internal/run"
 	"wf.local/wf-engine/internal/store"
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "direct-supervisor" {
+		os.Exit(directcli.RunSupervisor(os.Args[2]))
+	}
 	state, err := store.NewDefault()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -24,6 +28,10 @@ func main() {
 	}
 	registry := backend.NewRegistry()
 	if err := registry.Register(ccpanesBackend); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := registry.Register(directcli.New(directcli.Config{StateRoot: state.Root()})); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
