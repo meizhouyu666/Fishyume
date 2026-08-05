@@ -647,7 +647,7 @@ func (s *Service) Cancel(ctx context.Context, runID string) (WorkflowSnapshot, e
 		}
 		lease, acquireErr := s.leases.Acquire(runID, "cancel")
 		if acquireErr == nil {
-			result, cancelErr := s.handleCancellationRequest(ctx, runID)
+			result, cancelErr := s.handleConcurrentCancellationRequest(ctx, runID)
 			resolveErr := s.resolveCancellationRequest(runID, request.ID, cancelErr)
 			releaseErr := lease.Release()
 			if cancelErr != nil || resolveErr != nil || releaseErr != nil {
@@ -686,7 +686,7 @@ func (s *Service) monitorCancellationRequests(ctx context.Context, runID string,
 		request, err := s.store.ReadCancellationRequest(runID)
 		if err == nil {
 			cancelCtx, cancel := context.WithTimeout(context.Background(), cancelBackendTimeout)
-			_, cancelErr := s.handleCancellationRequest(cancelCtx, runID)
+			_, cancelErr := s.handleConcurrentCancellationRequest(cancelCtx, runID)
 			cancel()
 			_ = s.resolveCancellationRequest(runID, request.ID, cancelErr)
 			s.stopController(runID, generation)
