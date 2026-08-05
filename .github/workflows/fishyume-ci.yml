@@ -22,7 +22,7 @@ jobs:
           node-version: '24.x'
           cache: npm
           cache-dependency-path: wf/package-lock.json
-      - name: Go checks
+      - name: Go checks (Backend fixtures included)
         working-directory: wf-engine
         run: go test ./... && go vet ./... && go build ./cmd/wf-engine
       - name: Linux race check
@@ -144,4 +144,5 @@ jobs:
           if ($doctorOutput -notmatch 'ok engine 0.2.1-alpha.1 started') { throw 'installed Windows Engine did not start' }
           if ($doctorOutput -notmatch 'ok protocol 2 compatible') { throw 'installed Windows Engine protocol check failed' }
 
-# The registered-project live smoke is intentionally manual and never runs in CI.
+# Go checks include executable fake CC-Panes/Direct and dual-Backend Workflow gates.
+# Real Codex authentication and the registered-project CC-Panes smoke remain manual.

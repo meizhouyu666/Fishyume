@@ -1,7 +1,10 @@
 # Fishyume CLI
 
-Install the `fishyume` package to use the primary `fishyume` command or the compatible `wf` alias. The package does not download executable code during installation; matching Engine packages are optional exact-version dependencies.
+Install the `fishyume` package to use the primary `fishyume` command or the compatible `wf` alias. Installation does not download executable code; matching Engine packages are optional exact-version dependencies.
 
-Fishyume-managed Agent sessions require a dedicated non-interactive CC-Panes launch profile created by an administrator. Set `FISHYUME_CCPANES_PROFILE_ID` to its exact profile ID (`WF_CCPANES_PROFILE_ID` remains a lower-precedence compatibility alias). Fishyume passes the ID to `launch_task` and never creates or globally binds an unrestricted profile.
+Fishyume currently ships two Agent Backends:
 
-See the repository README for workflows, state compatibility, security, release artifacts, and manual smoke instructions.
+- `ccpanes` is the default. It requires a dedicated non-interactive launch profile in `FISHYUME_CCPANES_PROFILE_ID` (`WF_CCPANES_PROFILE_ID` is a lower-precedence compatibility alias).
+- `direct` runs an installed and authenticated Codex CLI locally, without CC-Panes. Use `fishyume doctor --backend direct`, optionally set `FISHYUME_CODEX_PATH`, and control its sandbox with `FISHYUME_DIRECT_SANDBOX`.
+
+Backend selection order is `--backend`, Workflow `defaults.backend`, `FISHYUME_BACKEND`, then `ccpanes`. See the repository README for workflow examples, recovery guarantees, state compatibility, security, release artifacts, and live smoke instructions.
