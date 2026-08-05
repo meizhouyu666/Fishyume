@@ -12,10 +12,12 @@ CC-Panes 是默认 Agent Backend，不是 Fishyume 的架构边界。当前还�
 - 输入、条件分支和受限模板变量
 - Run、Node、Attempt 持久化与跨进程恢复
 - 崩溃接管、取消和 Backend 进程身份校验
+- 确定性、有界的并行 Agent 调度与多 Attempt 恢复
+- 失败后停止新调度并排空活动兄弟；显式取消要求逐 Attempt 确认
 - Backend Registry、能力检查和 Doctor 诊断
 - `fishyume` 主命令及兼容别名 `wf`
 
-当前最多同时运行一个 Agent，适合需要明确审批和可靠恢复的本地自动化流程。
+`execution.maxConcurrency` 可设为 `1..32`；实际并发取 Workflow 请求、Backend 每 Run 限制和 Fishyume 安全上限的最小值。`maxConcurrency: 1` 保持原有确定性顺序。
 
 ## Agent Backend
 
@@ -82,12 +84,16 @@ defaults:
   runtime: local
 
 execution:
-  maxConcurrency: 1
+  maxConcurrency: 2
 
 nodes:
   plan:
     type: agent
     task: "为 {{ inputs.goal }} 制定实现方案"
+
+  research:
+    type: agent
+    task: "并行分析 {{ inputs.goal }} 的风险与验证点"
 
   approve:
     type: approval
@@ -96,12 +102,12 @@ nodes:
 
   implement:
     type: agent
-    dependsOn: [approve]
+    dependsOn: [approve, research]
     when:
       node: approve
       field: result.decision
       equals: approved
-    task: "执行已批准的方案：{{ nodes.plan.result.summary }}"
+    task: "执行已批准的方案：{{ nodes.plan.result.summary }}；验证：{{ nodes.research.result.summary }}"
 ```
 
 CLI `--backend` 可以覆盖示例中的 `defaults.backend`：
@@ -124,6 +130,6 @@ fishyume cancel <run-id>
 
 ## 当前边界
 
-M2.1.2 暂不支持单个 Workflow 混用 Backend、并行 Agent、通用 Shell/HTTP/容器节点、自动重试、模型回退或动态节点。Backend 契约和 Registry 已从核心编排逻辑中独立，但第三方插件 SDK 与运行时热加载尚未提供。
+M2.2 仍不支持单个 Workflow 混用 Backend、通用 Shell/HTTP/容器节点、自动重试、模型回退或动态节点。Backend 契约和 Registry 已从核心编排逻辑中独立，但第三方插件 SDK、动态发现与运行时热加载尚未提供。
 
 更完整的需求、架构和里程碑说明见 [`docs/`](./docs/)。

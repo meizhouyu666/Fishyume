@@ -29,11 +29,14 @@ export function writeStatus(view: RunStatusView, output: TextWriter): void {
   if (!run) throw new Error('status response did not contain a run');
   const conclusion = run.conclusion ? ` conclusion=${run.conclusion}` : '';
   const reason = run.reason ? ` reason=${run.reason}` : '';
-  output.write(`run=${run.id} workflow=${run.workflowName} phase=${run.phase}${conclusion}${reason}\n`);
+  const capacity = run.effectiveConcurrency ? ` capacity=${run.effectiveConcurrency}` : '';
+  output.write(`run=${run.id} workflow=${run.workflowName} backend=${run.backend}${capacity} phase=${run.phase}${conclusion}${reason}\n`);
   for (const node of view.nodes ?? []) {
-    output.write(`node=${node.id} type=${node.type} phase=${node.phase}${node.conclusion ? ` conclusion=${node.conclusion}` : ''}${node.reason ? ` reason=${node.reason}` : ''}${node.currentAttempt ? ` attempt=${node.currentAttempt}` : ''}\n`);
+    output.write(`node=${node.id} type=${node.type} phase=${node.phase}${node.conclusion ? ` conclusion=${node.conclusion}` : ''}${node.reason ? ` reason=${node.reason}` : ''}${node.currentAttempt ? ` attempt=${node.currentAttempt}` : ''}${node.diagnostic ? ` diagnostic=${node.diagnostic}` : ''}\n`);
   }
-  if (view.activeAttempt) output.write(`active node=${view.activeAttempt.nodeId} attempt=${view.activeAttempt.number} backend=${view.activeAttempt.backend}\n`);
+  for (const attempt of view.activeAttempts ?? (view.activeAttempt ? [view.activeAttempt] : [])) output.write(`active node=${attempt.nodeId} attempt=${attempt.number} backend=${attempt.backend}\n`);
+  for (const approval of view.waitingApprovals ?? []) output.write(`approval node=${approval.id} phase=${approval.phase}${approval.diagnostic ? ` prompt=${approval.diagnostic}` : ''}\n`);
+  for (const diagnostic of view.diagnostics ?? []) if (diagnostic.message) output.write(`diagnostic node=${diagnostic.nodeId}${diagnostic.reason ? ` reason=${diagnostic.reason}` : ''} message=${diagnostic.message}\n`);
 }
 
 export function formatElapsed(elapsedMs: number): string {const seconds = Math.max(0, Math.floor(elapsedMs / 1000)); const minutes = Math.floor(seconds / 60); return minutes > 0 ? `${minutes}m${seconds % 60}s` : `${seconds}s`}

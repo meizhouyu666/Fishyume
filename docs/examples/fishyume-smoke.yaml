@@ -4,14 +4,17 @@ defaults:
   tool: codex
   runtime: local
 execution:
-  maxConcurrency: 1
+  maxConcurrency: 2
 nodes:
   plan:
     type: agent
     task: "Return exactly: smoke plan completed."
+  review:
+    type: agent
+    task: "Return exactly: smoke review completed."
   approve:
     type: approval
-    dependsOn: [plan]
+    dependsOn: [plan, review]
     prompt: "Approve the smoke plan?"
   implement:
     type: agent
@@ -20,5 +23,5 @@ nodes:
       node: approve
       field: result.decision
       equals: approved
-    task: "Return exactly: smoke implementation completed."
+    task: "Return exactly: smoke implementation completed after {{ nodes.plan.result.summary }} and {{ nodes.review.result.summary }}"
     requiredSkills: []

@@ -6,12 +6,12 @@ import {formatElapsed} from './text-reporter.js';
 export function RunApp({snapshot, startedAt}: {snapshot: WorkflowSnapshot; startedAt: number}) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {const timer = setInterval(() => setNow(Date.now()), 250); return () => clearInterval(timer)}, []);
-  const active = snapshot.activeNodeId ? snapshot.nodes[snapshot.activeNodeId] : undefined;
+  const activeNodes = snapshot.topologicalOrder.map(id => snapshot.nodes[id]).filter(node => node && (node.phase === 'running' || node.phase === 'waiting'));
   return <Box flexDirection="column">
     <Text>run: {snapshot.id}</Text>
     <Text>workflow: {snapshot.workflowName}</Text>
     <Text>phase: {snapshot.phase}{snapshot.conclusion ? ` / ${snapshot.conclusion}` : ''}{snapshot.reason ? ` (${snapshot.reason})` : ''}</Text>
-    {active ? <Text>node: {active.id} / {active.phase}</Text> : null}
+    {activeNodes.map(node => <Text key={node.id}>node: {node.id} / {node.phase}{node.reason ? ` (${node.reason})` : ''}{node.diagnostic ? ` — ${node.diagnostic}` : ''}</Text>)}
     <Text>elapsed: {formatElapsed(now - startedAt)}</Text>
     <Text>state: {snapshot.stateDir}</Text>
     {snapshot.summary ? <Text>summary: {snapshot.summary}</Text> : null}
