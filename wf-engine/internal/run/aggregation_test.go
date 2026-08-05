@@ -241,6 +241,11 @@ func TestUnchangedWaitingObservationWithActiveSiblingIsBounded(t *testing.T) {
 	}
 	close(b.release)
 	advance <- struct{}{}
+	waitCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := service.WaitControllers(waitCtx); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func countRunEvents(t *testing.T, state *store.Store, runID string) int {
