@@ -1459,7 +1459,7 @@ func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generati
 			}
 			now := s.now().UTC()
 			attempt.Phase, attempt.Conclusion, attempt.ResultConsumed, attempt.UpdatedAt, attempt.CompletedAt = NodePhaseCompleted, ConclusionSucceeded, true, now, &now
-			node.Phase, node.Conclusion, node.Reason, node.Result, node.UpdatedAt = NodePhaseCompleted, ConclusionSucceeded, "", &normalized, now
+			node.Phase, node.Conclusion, node.Reason, node.Diagnostic, node.Result, node.UpdatedAt = NodePhaseCompleted, ConclusionSucceeded, "", "", &normalized, now
 			if err := s.store.WriteResult(runID, nodeID, attemptNumber, normalized); err != nil {
 				return err
 			}
@@ -1485,7 +1485,7 @@ func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generati
 			}
 			now := s.now().UTC()
 			attempt.Phase, attempt.Conclusion, attempt.ResultConsumed, attempt.UpdatedAt, attempt.CompletedAt = NodePhaseCompleted, ConclusionFailed, true, now, &now
-			node.Phase, node.Conclusion, node.Result, node.UpdatedAt = NodePhaseCompleted, ConclusionFailed, &normalized, now
+			node.Phase, node.Conclusion, node.Reason, node.Diagnostic, node.Result, node.UpdatedAt = NodePhaseCompleted, ConclusionFailed, "", result.Summary, &normalized, now
 			if err := s.store.WriteResult(runID, nodeID, attemptNumber, normalized); err != nil {
 				return err
 			}
@@ -1495,13 +1495,10 @@ func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generati
 			if err := s.writeAttempt(attempt, false); err != nil {
 				return err
 			}
-			run.Nodes[nodeID], run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = summarizeNode(*node), PhaseCompleted, ConclusionFailed, ReasonUpstreamFailed, "", result.Summary, now
-			if err := s.skipUnstarted(run, ReasonUpstreamFailed); err != nil {
-				return err
-			}
-			return s.persistRun(run, node, "run.completed", run.Summary)
+			run.Nodes[nodeID], run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = summarizeNode(*node), PhaseRunning, "", "", "", result.Summary, now
+			return s.persistRun(run, node, "node.completed", run.Summary)
 		})
-		return false, err
+		return err == nil, err
 	case "waiting_input", "blocked", "waitinginput":
 		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonAgentWaitingInput, result.Summary)
 	case "completion_missing", "idle":
@@ -1527,7 +1524,7 @@ func (s *Service) waiting(runID, nodeID string, attemptNumber int, generation ui
 		}
 		now := s.now().UTC()
 		attempt.Phase, attempt.Reason, attempt.UpdatedAt = NodePhaseWaiting, reason, now
-		node.Phase, node.Reason, node.UpdatedAt = NodePhaseWaiting, reason, now
+		node.Phase, node.Reason, node.Diagnostic, node.UpdatedAt = NodePhaseWaiting, reason, message, now
 		run.Phase, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = PhaseWaiting, reason, node.ID, message, now
 		if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
 			return err
@@ -1552,8 +1549,8 @@ func (s *Service) finishIndeterminate(runID, nodeID string, attemptNumber int, g
 		}
 		now := s.now().UTC()
 		attempt.Phase, attempt.Conclusion, attempt.UpdatedAt, attempt.CompletedAt = NodePhaseCompleted, ConclusionIndeterminate, now, &now
-		node.Phase, node.Conclusion, node.Reason, node.UpdatedAt = NodePhaseCompleted, ConclusionIndeterminate, "", now
-		run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = PhaseCompleted, ConclusionIndeterminate, "", "", message, now
+		node.Phase, node.Conclusion, node.Reason, node.Diagnostic, node.UpdatedAt = NodePhaseCompleted, ConclusionIndeterminate, "", message, now
+		run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = PhaseRunning, "", "", "", message, now
 		if err := s.writeAttempt(attempt, false); err != nil {
 			return err
 		}
@@ -1561,10 +1558,7 @@ func (s *Service) finishIndeterminate(runID, nodeID string, attemptNumber int, g
 			return err
 		}
 		run.Nodes[node.ID] = summarizeNode(*node)
-		if err := s.skipUnstarted(run, ReasonUpstreamFailed); err != nil {
-			return err
-		}
-		return s.persistRun(run, node, "run.completed", message)
+		return s.persistRun(run, node, "node.completed", message)
 	})
 }
 

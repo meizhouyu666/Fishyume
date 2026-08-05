@@ -50,6 +50,7 @@ const (
 	ReasonCancelFailed      Reason = "cancel_failed"
 	ReasonConditionFalse    Reason = "condition_false"
 	ReasonUpstreamFailed    Reason = "upstream_failed"
+	ReasonFailurePolicy     Reason = "failure_policy"
 	ReasonWorkflowCancelled Reason = "workflow_cancelled"
 	ReasonControllerDetach  Reason = "controller_detached"
 	ReasonUserRequested     Reason = "user_requested"
@@ -263,7 +264,7 @@ func validConclusion(conclusion Conclusion) bool {
 }
 func validReason(reason Reason) bool {
 	switch reason {
-	case ReasonApprovalRequired, ReasonAgentWaitingInput, ReasonCompletionMissing, ReasonInvalidResult, ReasonCancelFailed, ReasonConditionFalse, ReasonUpstreamFailed, ReasonWorkflowCancelled, ReasonControllerDetach, ReasonUserRequested:
+	case ReasonApprovalRequired, ReasonAgentWaitingInput, ReasonCompletionMissing, ReasonInvalidResult, ReasonCancelFailed, ReasonConditionFalse, ReasonUpstreamFailed, ReasonFailurePolicy, ReasonWorkflowCancelled, ReasonControllerDetach, ReasonUserRequested:
 		return true
 	}
 	return false

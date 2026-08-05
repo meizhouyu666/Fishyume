@@ -82,6 +82,21 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 			}
 			progressed = true
 		}
+		for _, nodeID := range decision.SkipFailurePolicy {
+			node, err := findNode(nodes, nodeID)
+			if err != nil {
+				return err
+			}
+			node.Phase, node.Reason, node.Diagnostic, node.UpdatedAt = NodePhaseSkipped, ReasonFailurePolicy, "not scheduled after workflow failure", s.now().UTC()
+			if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
+				return err
+			}
+			run.Nodes[node.ID] = summarizeNode(*node)
+			if err := s.persistRun(run, node, "node.skipped", node.Diagnostic); err != nil {
+				return err
+			}
+			progressed = true
+		}
 		results := make(map[string]workflow.Result)
 		for _, node := range nodes {
 			if node.Result != nil {
@@ -165,16 +180,14 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 			launches = append(launches, pendingLaunch{runID: run.ID, nodeID: node.ID, attempt: number, backend: run.Backend, launchSpec: backend.AgentExecutionSpec{RunID: run.ID, NodeID: node.ID, Attempt: number, Workspace: run.Project, Tool: tool, Runtime: runtimeKind, Instructions: prompt, RequiredSkills: append([]string(nil), definition.RequiredSkills...), ResultContract: backend.ResultContract{MaxBytes: workflow.MaxResultBytes}}})
 			progressed = true
 		}
-		if len(launches) == 0 && !progressed && decision.Complete {
-			conclusion, reason := aggregateConclusion(nodes, normalized.Document)
-			run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = PhaseCompleted, conclusion, reason, "", "workflow completed", s.now().UTC()
-			stop = true
-			return s.persistRun(run, nil, "run.completed", run.Summary)
-		}
-		if len(launches) == 0 && len(decision.ReadyApprovals) > 0 && decision.ActiveAgents == 0 {
-			run.Phase, run.Reason, run.Conclusion, run.UpdatedAt = PhaseWaiting, ReasonApprovalRequired, "", s.now().UTC()
-			stop = true
-			return s.persistRun(run, nil, "run.waiting", run.Summary)
+		if len(launches) == 0 {
+			eventType, shouldStop := aggregateRunState(run, nodes, normalized.Document, s.now().UTC())
+			if eventType != "" {
+				if err := s.persistRun(run, nil, eventType, run.Summary); err != nil {
+					return err
+				}
+			}
+			stop = shouldStop
 		}
 		return nil
 	})

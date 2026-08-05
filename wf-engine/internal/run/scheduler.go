@@ -10,15 +10,16 @@ import (
 const FishyumeSafetyConcurrencyCeiling = 8
 
 type SchedulingDecision struct {
-	ReadyAgents     []string
-	ReadyApprovals  []string
-	SkipUpstream    []string
-	SkipConditions  []string
-	EffectiveLimit  int
-	ActiveAgents    int
-	AvailableAgents int
-	StopScheduling  bool
-	Complete        bool
+	ReadyAgents       []string
+	ReadyApprovals    []string
+	SkipUpstream      []string
+	SkipConditions    []string
+	SkipFailurePolicy []string
+	EffectiveLimit    int
+	ActiveAgents      int
+	AvailableAgents   int
+	StopScheduling    bool
+	Complete          bool
 }
 
 // PlanSchedule derives a deterministic scheduling decision without Backend I/O.
@@ -64,6 +65,10 @@ func PlanSchedule(normalized workflow.Normalized, run WorkflowSnapshot, nodes []
 	}
 	for _, nodeID := range normalized.TopologicalOrder {
 		node, ok := byID[nodeID]
+		if ok && decision.StopScheduling && node.Type == "approval" && node.Phase == NodePhaseWaiting {
+			decision.SkipFailurePolicy = append(decision.SkipFailurePolicy, nodeID)
+			continue
+		}
 		if !ok || (node.Phase != NodePhasePending && node.Phase != NodePhaseReady) {
 			continue
 		}
@@ -95,6 +100,10 @@ func PlanSchedule(normalized workflow.Normalized, run WorkflowSnapshot, nodes []
 				decision.SkipConditions = append(decision.SkipConditions, nodeID)
 				continue
 			}
+		}
+		if decision.StopScheduling {
+			decision.SkipFailurePolicy = append(decision.SkipFailurePolicy, nodeID)
+			continue
 		}
 		if definition.Type == "approval" {
 			decision.ReadyApprovals = append(decision.ReadyApprovals, nodeID)
