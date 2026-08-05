@@ -1,6 +1,6 @@
 # Fishyume M2.1.2 后端独立性实施计划
 
-> 状态：待确认
+> 状态：已确认，执行中
 > 日期：2026-08-05
 > 依据：`docs/fishyume-m2.1.2-backend-independence.md`
 > 范围：只实施后端独立性，不进入 M2.2 并发
