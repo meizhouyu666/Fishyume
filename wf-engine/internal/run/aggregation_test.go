@@ -13,11 +13,12 @@ import (
 )
 
 type aggregateBackend struct {
-	mu         sync.Mutex
-	starts     []string
-	cancels    int
-	failedNode string
-	release    chan struct{}
+	mu          sync.Mutex
+	starts      []string
+	cancels     int
+	failedNode  string
+	waitingNode string
+	release     chan struct{}
 }
 
 func (*aggregateBackend) Name() string { return "aggregate" }
@@ -38,6 +39,9 @@ func (b *aggregateBackend) Observe(_ context.Context, handle backend.ExecutionHa
 	nodeID := handle.ID[len("handle-"):]
 	if nodeID == b.failedNode {
 		return &backend.ExecutionObservation{State: backend.ObservationTerminal, Result: &backend.AgentResult{Status: "failed", Summary: nodeID + " failed"}}, nil
+	}
+	if nodeID == b.waitingNode {
+		return &backend.ExecutionObservation{State: backend.ObservationWaitingInput, Diagnostic: "input required"}, nil
 	}
 	select {
 	case <-b.release:
@@ -194,6 +198,49 @@ func TestUnchangedActiveObservationDoesNotAppendAggregateEvents(t *testing.T) {
 	if final.Conclusion != ConclusionSucceeded {
 		t.Fatalf("final=%+v", final)
 	}
+}
+
+func TestUnchangedWaitingObservationWithActiveSiblingIsBounded(t *testing.T) {
+	b := &aggregateBackend{waitingNode: "a", release: make(chan struct{})}
+	state := store.New(t.TempDir())
+	service := NewService(b, state)
+	cycles := make(chan struct{})
+	advance := make(chan struct{})
+	service.testHooks.idleReconcileDelay = func(ctx context.Context) error {
+		select {
+		case cycles <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		select {
+		case <-advance:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	started, err := service.StartWorkflow(context.Background(), StartWorkflowRequest{Project: "p", Content: parallelWorkflow(2)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-cycles:
+	case <-time.After(3 * time.Second):
+		t.Fatal("waiting/active reconciliation did not reach bounded delay")
+	}
+	first := countRunEvents(t, state, started.ID)
+	advance <- struct{}{}
+	select {
+	case <-cycles:
+	case <-time.After(3 * time.Second):
+		t.Fatal("second waiting/active reconciliation did not reach bounded delay")
+	}
+	second := countRunEvents(t, state, started.ID)
+	if second != first {
+		t.Fatalf("unchanged waiting observation appended events: first=%d second=%d", first, second)
+	}
+	close(b.release)
+	advance <- struct{}{}
 }
 
 func countRunEvents(t *testing.T, state *store.Store, runID string) int {

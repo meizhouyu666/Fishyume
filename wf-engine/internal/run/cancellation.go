@@ -22,11 +22,17 @@ type cancellationOutcome struct {
 }
 
 func (s *Service) handleConcurrentCancellationRequest(ctx context.Context, runID string) (WorkflowSnapshot, error) {
-	targets, err := s.markConcurrentCancellationIntent(runID)
+	targets, supportsConcurrentCancel, err := s.markConcurrentCancellationIntent(runID)
 	if err != nil {
 		return WorkflowSnapshot{}, err
 	}
 	outcomes := make([]cancellationOutcome, len(targets))
+	if !supportsConcurrentCancel {
+		for index, target := range targets {
+			outcomes[index] = s.cancelTarget(ctx, runID, target)
+		}
+		return s.applyCancellationOutcomes(runID, outcomes)
+	}
 	semaphore := make(chan struct{}, FishyumeSafetyConcurrencyCeiling)
 	var group sync.WaitGroup
 	for index, target := range targets {
@@ -47,37 +53,50 @@ func (s *Service) handleConcurrentCancellationRequest(ctx context.Context, runID
 	return s.applyCancellationOutcomes(runID, outcomes)
 }
 
-func (s *Service) markConcurrentCancellationIntent(runID string) ([]cancellationTarget, error) {
+func (s *Service) markConcurrentCancellationIntent(runID string) ([]cancellationTarget, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	run, nodes, err := s.loadRun(runID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if run.Phase == PhaseCompleted {
-		return nil, nil
+		return nil, false, nil
 	}
 	if !run.CancelRequested || run.Phase != PhaseCancelling {
 		run.CancelRequested, run.Phase, run.Conclusion, run.Reason, run.Summary, run.UpdatedAt = true, PhaseCancelling, "", "", "workflow cancellation requested", s.now().UTC()
 		if err := s.persistRun(&run, nil, "run.cancelling", run.Summary); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 	targets := make([]cancellationTarget, 0)
+	backendName := ""
 	for _, node := range nodes {
 		if node.Type != "agent" || node.CurrentAttempt < 1 || (node.Phase != NodePhaseRunning && node.Phase != NodePhaseWaiting) {
 			continue
 		}
 		var attempt AttemptSnapshot
 		if err := s.store.ReadAttempt(runID, node.ID, node.CurrentAttempt, &attempt); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if attempt.Phase == NodePhaseCompleted && attempt.Conclusion == ConclusionCancelled {
 			continue
 		}
+		if backendName == "" {
+			backendName = attempt.Backend
+		} else if attempt.Backend != backendName {
+			return nil, false, fmt.Errorf("active Attempts use mixed Backends %q and %q", backendName, attempt.Backend)
+		}
 		targets = append(targets, cancellationTarget{nodeID: node.ID, attempt: node.CurrentAttempt})
 	}
-	return targets, nil
+	if len(targets) == 0 {
+		return targets, false, nil
+	}
+	candidate, err := s.registry.Get(backendName)
+	if err != nil {
+		return nil, false, err
+	}
+	return targets, candidate.Capabilities().SupportsConcurrentCancel, nil
 }
 
 func (s *Service) cancelTarget(ctx context.Context, runID string, target cancellationTarget) cancellationOutcome {

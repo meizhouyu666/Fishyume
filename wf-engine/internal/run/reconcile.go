@@ -42,32 +42,35 @@ func (s *Service) reconcileAttempts(ctx context.Context, runID string, generatio
 	}
 	group.Wait()
 	progressed := false
+	recordWaiting := func(ref activeAttemptRef, reason Reason, message string) error {
+		changed, err := s.waitingIfChanged(runID, ref.nodeID, ref.attempt, generation, reason, message)
+		if changed {
+			progressed = true
+		}
+		return err
+	}
 	for _, result := range results {
 		if result.err != nil {
 			if errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded) {
 				return progressed, false, result.err
 			}
-			if err := s.waiting(runID, result.ref.nodeID, result.ref.attempt, generation, ReasonCompletionMissing, result.err.Error()); err != nil {
+			if err := recordWaiting(result.ref, ReasonCompletionMissing, result.err.Error()); err != nil {
 				return progressed, false, err
 			}
-			progressed = true
 			continue
 		}
 		observation := result.observation
 		if observation == nil {
-			if err := s.waiting(runID, result.ref.nodeID, result.ref.attempt, generation, ReasonCompletionMissing, "Backend returned no execution observation"); err != nil {
+			if err := recordWaiting(result.ref, ReasonCompletionMissing, "Backend returned no execution observation"); err != nil {
 				return progressed, false, err
 			}
-			progressed = true
 			continue
 		}
 		switch observation.State {
 		case backend.ObservationTerminal:
 			if err := backend.ValidateExecutionObservation(*observation); err != nil {
-				if waitErr := s.waiting(runID, result.ref.nodeID, result.ref.attempt, generation, ReasonInvalidResult, err.Error()); waitErr != nil {
+				if waitErr := recordWaiting(result.ref, ReasonInvalidResult, err.Error()); waitErr != nil {
 					return progressed, false, waitErr
-				} else {
-					progressed = true
 				}
 				continue
 			}
@@ -80,19 +83,17 @@ func (s *Service) reconcileAttempts(ctx context.Context, runID string, generatio
 			if message == "" {
 				message = "Agent is waiting for input"
 			}
-			if err := s.waiting(runID, result.ref.nodeID, result.ref.attempt, generation, ReasonAgentWaitingInput, message); err != nil {
+			if err := recordWaiting(result.ref, ReasonAgentWaitingInput, message); err != nil {
 				return progressed, false, err
 			}
-			progressed = true
 		case backend.ObservationResultPending:
 			message := observation.Diagnostic
 			if message == "" {
 				message = "Agent result remained unavailable after bounded reconciliation"
 			}
-			if err := s.waiting(runID, result.ref.nodeID, result.ref.attempt, generation, ReasonCompletionMissing, message); err != nil {
+			if err := recordWaiting(result.ref, ReasonCompletionMissing, message); err != nil {
 				return progressed, false, err
 			}
-			progressed = true
 		case backend.ObservationLost, backend.ObservationExited:
 			if err := s.finishIndeterminate(runID, result.ref.nodeID, result.ref.attempt, generation, "Agent execution was lost without a valid terminal result"); err != nil {
 				return progressed, false, err

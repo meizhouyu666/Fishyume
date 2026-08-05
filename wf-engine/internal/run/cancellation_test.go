@@ -12,18 +12,22 @@ import (
 )
 
 type multiCancelBackend struct {
-	mu          sync.Mutex
-	calls       map[string]int
-	active      int
-	maxActive   int
-	entered     chan struct{}
-	release     chan struct{}
-	enteredOnce sync.Once
+	mu                       sync.Mutex
+	calls                    map[string]int
+	active                   int
+	maxActive                int
+	entered                  chan struct{}
+	firstEntered             chan struct{}
+	release                  chan struct{}
+	enteredOnce              sync.Once
+	firstOnce                sync.Once
+	supportsConcurrentCancel bool
+	failFirstB               bool
 }
 
 func (*multiCancelBackend) Name() string { return "multi-cancel" }
-func (*multiCancelBackend) Capabilities() backend.Capabilities {
-	return backend.Capabilities{Tools: []string{"codex"}, Runtimes: []string{"local"}, SupportsOutput: true, MaxConcurrentAgents: 2, SupportsConcurrentCancel: true}
+func (b *multiCancelBackend) Capabilities() backend.Capabilities {
+	return backend.Capabilities{Tools: []string{"codex"}, Runtimes: []string{"local"}, SupportsOutput: true, MaxConcurrentAgents: 2, SupportsConcurrentCancel: b.supportsConcurrentCancel}
 }
 func (b *multiCancelBackend) Doctor(context.Context, backend.DoctorRequest) backend.DoctorReport {
 	return backend.DoctorReport{Backend: b.Name(), Ready: true}
@@ -47,6 +51,9 @@ func (b *multiCancelBackend) Cancel(_ context.Context, handle backend.ExecutionH
 	if b.active > b.maxActive {
 		b.maxActive = b.active
 	}
+	if b.active == 1 && b.firstEntered != nil {
+		b.firstOnce.Do(func() { close(b.firstEntered) })
+	}
 	if b.active == 2 {
 		b.enteredOnce.Do(func() { close(b.entered) })
 	}
@@ -56,14 +63,14 @@ func (b *multiCancelBackend) Cancel(_ context.Context, handle backend.ExecutionH
 	b.mu.Lock()
 	b.active--
 	b.mu.Unlock()
-	if nodeID == "b" && call == 1 {
+	if b.failFirstB && nodeID == "b" && call == 1 {
 		return &backend.CancelResult{State: backend.CancelNotConfirmed, Diagnostic: "first attempt not confirmed"}, nil
 	}
 	return &backend.CancelResult{State: backend.CancelConfirmed}, nil
 }
 
 func TestConcurrentCancellationRequiresAllConfirmationsAndRetriesOnlyUnresolved(t *testing.T) {
-	b := &multiCancelBackend{calls: map[string]int{}, entered: make(chan struct{}), release: make(chan struct{})}
+	b := &multiCancelBackend{calls: map[string]int{}, entered: make(chan struct{}), release: make(chan struct{}), supportsConcurrentCancel: true, failFirstB: true}
 	state := store.New(t.TempDir())
 	service := NewService(b, state)
 	started, err := service.StartWorkflow(context.Background(), StartWorkflowRequest{Project: "p", Content: parallelWorkflow(2)})
@@ -112,5 +119,56 @@ func TestConcurrentCancellationRequiresAllConfirmationsAndRetriesOnlyUnresolved(
 	b.mu.Unlock()
 	if callsA != 1 || callsB != 2 || maxActive != 2 {
 		t.Fatalf("calls a=%d b=%d maxActive=%d", callsA, callsB, maxActive)
+	}
+}
+
+func TestCancellationSerializesWhenBackendDoesNotSupportConcurrentCancel(t *testing.T) {
+	b := &multiCancelBackend{calls: map[string]int{}, entered: make(chan struct{}), firstEntered: make(chan struct{}), release: make(chan struct{})}
+	state := store.New(t.TempDir())
+	service := NewService(b, state)
+	started, err := service.StartWorkflow(context.Background(), StartWorkflowRequest{Project: "p", Content: parallelWorkflow(2)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		view, viewErr := service.Status(started.ID)
+		if viewErr == nil && len(view.ActiveAttempts) == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("active Attempts not ready: view=%+v err=%v", view, viewErr)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	type result struct {
+		run WorkflowSnapshot
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		run, cancelErr := service.Cancel(context.Background(), started.ID)
+		done <- result{run: run, err: cancelErr}
+	}()
+	select {
+	case <-b.firstEntered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("first Cancel call did not start")
+	}
+	select {
+	case <-b.entered:
+		t.Fatal("Cancel calls overlapped despite SupportsConcurrentCancel=false")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(b.release)
+	completed := <-done
+	if completed.err != nil || completed.run.Conclusion != ConclusionCancelled {
+		t.Fatalf("cancelled=%+v err=%v", completed.run, completed.err)
+	}
+	b.mu.Lock()
+	maxActive, callsA, callsB := b.maxActive, b.calls["a"], b.calls["b"]
+	b.mu.Unlock()
+	if maxActive != 1 || callsA != 1 || callsB != 1 {
+		t.Fatalf("maxActive=%d calls=%v", maxActive, map[string]int{"a": callsA, "b": callsB})
 	}
 }

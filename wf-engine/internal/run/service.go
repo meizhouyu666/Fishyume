@@ -1527,7 +1527,17 @@ func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generati
 }
 
 func (s *Service) waiting(runID, nodeID string, attemptNumber int, generation uint64, reason Reason, message string) error {
-	return s.controllerMutation(runID, generation, "node.waiting", func(run *WorkflowSnapshot, nodes []NodeSnapshot) error {
+	_, err := s.waitingIfChanged(runID, nodeID, attemptNumber, generation, reason, message)
+	return err
+}
+
+func (s *Service) waitingIfChanged(runID, nodeID string, attemptNumber int, generation uint64, reason Reason, message string) (bool, error) {
+	var normalized workflow.Normalized
+	if err := s.store.ReadWorkflow(runID, &normalized); err != nil {
+		return false, err
+	}
+	changed := false
+	err := s.controllerMutation(runID, generation, "node.waiting", func(run *WorkflowSnapshot, nodes []NodeSnapshot) error {
 		node, err := findNode(nodes, nodeID)
 		if err != nil {
 			return err
@@ -1536,19 +1546,31 @@ func (s *Service) waiting(runID, nodeID string, attemptNumber int, generation ui
 		if err := s.store.ReadAttempt(runID, nodeID, attemptNumber, &attempt); err != nil {
 			return err
 		}
+		nodeChanged := attempt.Phase != NodePhaseWaiting || attempt.Reason != reason || node.Phase != NodePhaseWaiting || node.Reason != reason || node.Diagnostic != message
+		before := *run
 		now := s.now().UTC()
 		attempt.Phase, attempt.Reason, attempt.UpdatedAt = NodePhaseWaiting, reason, now
 		node.Phase, node.Reason, node.Diagnostic, node.UpdatedAt = NodePhaseWaiting, reason, message, now
-		run.Phase, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = PhaseWaiting, reason, node.ID, message, now
-		if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
+		aggregateRunState(run, nodes, normalized.Document, now)
+		if !nodeChanged && !aggregateRunStateChanged(before, *run) {
+			return nil
+		}
+		if nodeChanged {
+			if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
+				return err
+			}
+			if err := s.writeAttempt(attempt, false); err != nil {
+				return err
+			}
+			run.Nodes[node.ID] = summarizeNode(*node)
+		}
+		if err := s.persistRun(run, node, "node.waiting", message); err != nil {
 			return err
 		}
-		if err := s.writeAttempt(attempt, false); err != nil {
-			return err
-		}
-		run.Nodes[node.ID] = summarizeNode(*node)
-		return s.persistRun(run, node, "node.waiting", message)
+		changed = true
+		return nil
 	})
+	return changed, err
 }
 
 func (s *Service) finishIndeterminate(runID, nodeID string, attemptNumber int, generation uint64, message string) error {

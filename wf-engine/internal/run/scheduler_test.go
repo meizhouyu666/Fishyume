@@ -87,6 +87,32 @@ func TestPlanScheduleStopsAfterFailureAndMarksDescendants(t *testing.T) {
 	}
 }
 
+func TestPlanScheduleAllowsExplicitEligibleFailureBranch(t *testing.T) {
+	doc := workflow.Document{APIVersion: workflow.APIVersion, Name: "failure-branch", Execution: workflow.Execution{MaxConcurrency: 3}, Nodes: map[string]workflow.Node{
+		"failed":     {Type: "agent", Task: "fail"},
+		"handler":    {Type: "agent", DependsOn: []string{"failed"}, When: &workflow.Condition{Node: "failed", Field: "result.reason", Equals: "failed"}, Task: "handle"},
+		"descendant": {Type: "agent", DependsOn: []string{"failed"}, Task: "descendant"},
+		"sibling":    {Type: "agent", Task: "sibling"},
+	}}
+	order, err := workflow.Validate(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedResult := workflow.Result{Reason: "failed"}
+	decision, err := PlanSchedule(workflow.Normalized{Document: doc, TopologicalOrder: order}, WorkflowSnapshot{}, []NodeSnapshot{
+		{ID: "failed", Type: "agent", Phase: NodePhaseCompleted, Conclusion: ConclusionFailed, Result: &failedResult},
+		{ID: "handler", Type: "agent", Phase: NodePhasePending},
+		{ID: "descendant", Type: "agent", Phase: NodePhasePending},
+		{ID: "sibling", Type: "agent", Phase: NodePhasePending},
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.StopScheduling || !reflect.DeepEqual(decision.ReadyAgents, []string{"handler"}) || !reflect.DeepEqual(decision.SkipUpstream, []string{"descendant"}) || !reflect.DeepEqual(decision.SkipFailurePolicy, []string{"sibling"}) {
+		t.Fatalf("decision=%+v", decision)
+	}
+}
+
 func TestPlanScheduleRejectsInvalidBackendLimit(t *testing.T) {
 	doc := workflow.Document{APIVersion: workflow.APIVersion, Name: "invalid", Execution: workflow.Execution{MaxConcurrency: 1}, Nodes: map[string]workflow.Node{"a": {Type: "agent", Task: "a"}}}
 	if _, err := PlanSchedule(workflow.Normalized{Document: doc, TopologicalOrder: []string{"a"}}, WorkflowSnapshot{}, []NodeSnapshot{{ID: "a", Type: "agent", Phase: NodePhasePending}}, -1); err == nil {

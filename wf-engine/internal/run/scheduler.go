@@ -87,10 +87,7 @@ func PlanSchedule(normalized workflow.Normalized, run WorkflowSnapshot, nodes []
 		if !stable {
 			continue
 		}
-		if upstreamFailed {
-			decision.SkipUpstream = append(decision.SkipUpstream, nodeID)
-			continue
-		}
+		eligibleFailureBranch := false
 		if definition.When != nil {
 			matches, err := workflow.Evaluate(*definition.When, results)
 			if err != nil {
@@ -100,8 +97,12 @@ func PlanSchedule(normalized workflow.Normalized, run WorkflowSnapshot, nodes []
 				decision.SkipConditions = append(decision.SkipConditions, nodeID)
 				continue
 			}
+			eligibleFailureBranch = upstreamFailed
+		} else if upstreamFailed {
+			decision.SkipUpstream = append(decision.SkipUpstream, nodeID)
+			continue
 		}
-		if decision.StopScheduling {
+		if decision.StopScheduling && !eligibleFailureBranch {
 			decision.SkipFailurePolicy = append(decision.SkipFailurePolicy, nodeID)
 			continue
 		}
@@ -109,7 +110,7 @@ func PlanSchedule(normalized workflow.Normalized, run WorkflowSnapshot, nodes []
 			decision.ReadyApprovals = append(decision.ReadyApprovals, nodeID)
 			continue
 		}
-		if !decision.StopScheduling && decision.AvailableAgents > 0 {
+		if decision.AvailableAgents > 0 {
 			decision.ReadyAgents = append(decision.ReadyAgents, nodeID)
 			decision.AvailableAgents--
 		}
