@@ -276,6 +276,58 @@ func TestStatusDerivesMultipleActiveNodesAndAttempts(t *testing.T) {
 	}
 }
 
+func TestResumeReconcilesMultipleActiveAttemptsWithoutDuplicateStart(t *testing.T) {
+	state := store.New(t.TempDir())
+	runID := "run-parallel-resume"
+	if err := state.InitWorkflowRun(runID); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
+	doc := workflow.Document{APIVersion: workflow.APIVersion, Name: "parallel-resume", Defaults: workflow.Defaults{Backend: "fake", Tool: "codex", Runtime: "local"}, Execution: workflow.Execution{MaxConcurrency: 2}, Nodes: map[string]workflow.Node{
+		"a": {Type: "agent", Task: "a"}, "b": {Type: "agent", Task: "b"},
+	}}
+	order, err := workflow.Validate(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.WriteWorkflow(runID, workflow.Normalized{Document: doc, TopologicalOrder: order}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := WorkflowSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, ID: runID, WorkflowName: doc.Name, Project: "p", Backend: "fake", Phase: PhasePaused, Reason: ReasonControllerDetach, TopologicalOrder: order, Nodes: map[string]NodeSummary{}, StateDir: state.RunDir(runID), CreatedAt: now, UpdatedAt: now}
+	for _, nodeID := range order {
+		node := NodeSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: runID, ID: nodeID, Type: "agent", Phase: NodePhaseRunning, CurrentAttempt: 1, CreatedAt: now, UpdatedAt: now}
+		if err := state.WriteNode(runID, nodeID, node); err != nil {
+			t.Fatal(err)
+		}
+		snapshot.Nodes[nodeID] = summarizeNode(node)
+		attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: runID, NodeID: nodeID, Number: 1, Phase: NodePhaseRunning, Backend: "fake", LaunchState: LaunchHandlePersisted, Execution: &backend.ExecutionHandle{Backend: "fake", SchemaVersion: 1, ID: "session-" + nodeID, Data: json.RawMessage(`{}`)}, PromptHash: "hash", StartedAt: now, UpdatedAt: now}
+		if err := state.WriteAttempt(runID, nodeID, 1, attempt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.WriteSnapshot(runID, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	b := &fakeWorkflowBackend{observations: map[string][]backend.Observation{
+		"session-a": {{State: backend.ObservationTerminal, Result: &backend.BackendResult{Status: "succeeded", Summary: "a done"}}},
+		"session-b": {{State: backend.ObservationTerminal, Result: &backend.BackendResult{Status: "succeeded", Summary: "b done"}}},
+	}}
+	service := NewService(b, state)
+	if _, err := service.Resume(context.Background(), ResumeRequest{RunID: runID}); err != nil {
+		t.Fatal(err)
+	}
+	final := waitForRun(t, service, runID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	if final.Conclusion != ConclusionSucceeded {
+		t.Fatalf("final=%+v", final)
+	}
+	b.mu.Lock()
+	launches, observes := b.launches, b.reconcileCalls
+	b.mu.Unlock()
+	if launches != 0 || observes != 2 {
+		t.Fatalf("launches=%d observes=%d", launches, observes)
+	}
+}
+
 func TestWorkflowApprovalResumeContextAndConditionalSkip(t *testing.T) {
 	b := &fakeWorkflowBackend{waitResults: []backend.BackendResult{
 		{Status: "succeeded", Summary: "safe plan", Artifacts: []string{"plan.md"}},

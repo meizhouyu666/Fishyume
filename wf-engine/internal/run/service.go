@@ -987,16 +987,21 @@ func (s *Service) control(ctx context.Context, runID string, generation uint64) 
 		if run.Phase == PhaseCompleted || run.CancelRequested {
 			return
 		}
-		if active := findActiveNode(nodes); active != nil && active.CurrentAttempt > 0 {
-			progressed, err := s.reconcileAttempt(ctx, runID, active.ID, active.CurrentAttempt, generation)
+		if active := findActiveAttempts(nodes); len(active) > 0 {
+			progressed, allWaiting, err := s.reconcileAttempts(ctx, runID, generation, active)
 			if err != nil {
 				if ctx.Err() == nil && !errors.Is(err, errControllerInactive) {
 					s.pauseControllerOnError(runID, generation, err)
 				}
 				return
 			}
-			if !progressed {
+			if allWaiting {
 				return
+			}
+			if !progressed {
+				if err := s.waitStartupIdleReconcile(ctx); err != nil {
+					return
+				}
 			}
 			continue
 		}
