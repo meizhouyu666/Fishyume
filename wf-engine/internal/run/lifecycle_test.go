@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"wf.local/wf-engine/internal/backend"
 )
 
 func TestLifecycleValidationSeparatesPhaseAndConclusion(t *testing.T) {
@@ -35,6 +37,15 @@ func TestLifecycleValidationSeparatesPhaseAndConclusion(t *testing.T) {
 	}
 	if err := ValidateAttemptSnapshot(AttemptSnapshot{Number: 1, Phase: NodePhaseWaiting, Reason: ReasonCompletionMissing, LaunchState: LaunchSessionPersisted}); err != nil {
 		t.Fatal(err)
+	}
+	current := AttemptSnapshot{Number: 1, Phase: NodePhaseRunning, Backend: "direct", LaunchState: LaunchHandlePersisted,
+		Execution: &backend.ExecutionHandle{Backend: "direct", SchemaVersion: 1, ID: "process-1", Data: json.RawMessage(`{"pid":1}`)}}
+	if err := ValidateAttemptSnapshot(current); err != nil {
+		t.Fatal(err)
+	}
+	current.Execution.Backend = "ccpanes"
+	if err := ValidateAttemptSnapshot(current); err == nil {
+		t.Fatal("accepted an execution handle for a different Backend")
 	}
 	if err := ValidateAttemptSnapshot(AttemptSnapshot{Number: 1, Phase: NodePhaseRunning, LaunchState: "unknown"}); err == nil {
 		t.Fatal("unknown launch state accepted")
@@ -100,8 +111,20 @@ func TestM211SnapshotFixturesRemainReadable(t *testing.T) {
 		if err := ValidateAttemptSnapshot(*item.Attempt); err != nil {
 			t.Fatalf("fixture %s attempt: %v", item.Name, err)
 		}
-		if item.Attempt.TaskBindingID == "" || item.Attempt.Session == nil || item.Attempt.Session.Metadata["bindingId"] == "" {
+		if item.Attempt.legacyExecution == nil || item.Attempt.legacyExecution.SessionID == "" || item.Attempt.legacyExecution.Metadata["bindingId"] == "" {
 			t.Fatalf("fixture %s lost historical CC-Panes identity: %+v", item.Name, item.Attempt)
+		}
+		if item.Name == "completed" && !item.Attempt.ResultConsumed {
+			t.Fatal("historical bindingConsumed=true was not converted to resultConsumed")
+		}
+		encoded, err := json.Marshal(item.Attempt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, legacyField := range []string{`"session"`, `"taskBindingId"`, `"launchMetadata"`, `"bindingConsumed"`, `"session_persisted"`, `"finished_without_session"`} {
+			if strings.Contains(string(encoded), legacyField) {
+				t.Fatalf("fixture %s re-serialized legacy field %s: %s", item.Name, legacyField, encoded)
+			}
 		}
 	}
 }

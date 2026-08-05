@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"wf.local/wf-engine/internal/backend"
+	"wf.local/wf-engine/internal/backend/contracttest"
 )
 
 func TestCCPanesCtlFixture(t *testing.T) {
@@ -290,6 +291,49 @@ func TestReconcileStateMappingsWithExecutableFixture(t *testing.T) {
 				t.Fatalf("terminal observation=%+v", observation)
 			}
 		})
+	}
+}
+
+func TestAdapterContract(t *testing.T) {
+	contracttest.Run(t, func(t *testing.T, scenario contracttest.Scenario) contracttest.Fixture {
+		t.Helper()
+		fixtureScenario := map[contracttest.Scenario]string{
+			contracttest.ScenarioActive:                "active",
+			contracttest.ScenarioWaitingInput:          "waiting-input",
+			contracttest.ScenarioResultPending:         "idle",
+			contracttest.ScenarioTerminalSucceeded:     "success",
+			contracttest.ScenarioTerminalFailed:        "failed-binding",
+			contracttest.ScenarioTerminalIndeterminate: "exited",
+			contracttest.ScenarioLost:                  "session-not-found",
+			contracttest.ScenarioCancelConfirmed:       "success",
+			contracttest.ScenarioCancelNotConfirmed:    "kill-unsuccessful",
+		}[scenario]
+		legacy, _ := fixtureBackend(t, fixtureScenario)
+		return contracttest.Fixture{
+			Backend: NewAdapterWithBackend(legacy),
+			Spec: backend.AgentExecutionSpec{
+				RunID: "run-contract", NodeID: "agent-1", Attempt: 1, Workspace: `C:\fixture-project`,
+				Tool: "codex", Runtime: "local", Instructions: "do work",
+			},
+		}
+	})
+}
+
+func TestAdapterLegacySessionRoundTrip(t *testing.T) {
+	legacy, _ := fixtureBackend(t, "success")
+	adapter := NewAdapterWithBackend(legacy)
+	handle, err := adapter.DecodeLegacySession(backend.Session{ID: "session-legacy", Metadata: map[string]string{
+		"bindingId": "binding-legacy", "project": `C:\fixture-project`,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := adapter.sessionFromHandle(*handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.ID != "session-legacy" || session.Metadata["bindingId"] != "binding-legacy" {
+		t.Fatalf("session=%+v", session)
 	}
 }
 

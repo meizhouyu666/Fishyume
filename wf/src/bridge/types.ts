@@ -27,7 +27,14 @@ export type RunSnapshot = WorkflowSnapshot;
 
 export interface NodeResult {summary?: string; artifacts?: string[]; warnings?: string[]; checks?: string[]; usage?: {inputTokensEstimated?: number; outputTokensEstimated?: number}; decision?: 'approved' | 'rejected'; reason?: string}
 export interface NodeSnapshot extends NodeSummary {protocolVersion: 2; stateSchemaVersion?: number; runId: string; result?: NodeResult; createdAt: string; updatedAt: string}
-export interface AttemptSnapshot {protocolVersion: 2; stateSchemaVersion?: number; runId: string; nodeId: string; number: number; phase: NodePhase; conclusion?: Conclusion; reason?: Reason; backend: string; launchState?: 'prepared' | 'dispatching' | 'session_persisted' | 'finished_without_session'; session?: {id: string; metadata?: Record<string, string>}; taskBindingId?: string; launchMetadata?: Record<string, string>; promptHash: string; bindingConsumed: boolean; startedAt: string; updatedAt: string; completedAt?: string}
+export interface ExecutionHandle {backend: string; schemaVersion: number; id: string; data?: Record<string, unknown>}
+export interface AttemptSnapshot {
+  protocolVersion: 2; stateSchemaVersion?: number; runId: string; nodeId: string; number: number; phase: NodePhase;
+  conclusion?: Conclusion; reason?: Reason; backend: string;
+  launchState?: 'prepared' | 'dispatching' | 'handle_persisted' | 'finished_without_handle' | 'session_persisted' | 'finished_without_session';
+  execution?: ExecutionHandle; resultConsumed?: boolean;
+  promptHash: string; startedAt: string; updatedAt: string; completedAt?: string;
+}
 export interface LegacySnapshot {protocolVersion: 1; id: string; status: string; nodeStatus: string; project: string; summary?: string; stateDir: string; createdAt: string; updatedAt: string}
 export interface RunStatusView {protocolVersion: 2; legacy: boolean; run?: WorkflowSnapshot; legacyRun?: LegacySnapshot; nodes?: NodeSnapshot[]; activeAttempt?: AttemptSnapshot}
 

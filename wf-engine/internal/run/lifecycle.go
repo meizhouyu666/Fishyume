@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/workflow"
 )
 
@@ -99,39 +100,38 @@ type NodeSnapshot struct {
 	UpdatedAt          time.Time        `json:"updatedAt"`
 }
 
-type SessionSnapshot struct {
-	ID       string            `json:"id"`
-	Metadata map[string]string `json:"metadata,omitempty"`
-}
-
 type LaunchState string
 
 const (
-	LaunchPrepared               LaunchState = "prepared"
-	LaunchDispatching            LaunchState = "dispatching"
+	LaunchPrepared              LaunchState = "prepared"
+	LaunchDispatching           LaunchState = "dispatching"
+	LaunchHandlePersisted       LaunchState = "handle_persisted"
+	LaunchFinishedWithoutHandle LaunchState = "finished_without_handle"
+
+	// Deprecated M2.1.1 launch states retained for compatibility reads.
 	LaunchSessionPersisted       LaunchState = "session_persisted"
 	LaunchFinishedWithoutSession LaunchState = "finished_without_session"
 )
 
 type AttemptSnapshot struct {
-	ProtocolVersion    int               `json:"protocolVersion"`
-	StateSchemaVersion int               `json:"stateSchemaVersion"`
-	RunID              string            `json:"runId"`
-	NodeID             string            `json:"nodeId"`
-	Number             int               `json:"number"`
-	Phase              NodePhase         `json:"phase"`
-	Conclusion         Conclusion        `json:"conclusion,omitempty"`
-	Reason             Reason            `json:"reason,omitempty"`
-	Backend            string            `json:"backend"`
-	LaunchState        LaunchState       `json:"launchState,omitempty"`
-	Session            *SessionSnapshot  `json:"session,omitempty"`
-	TaskBindingID      string            `json:"taskBindingId,omitempty"`
-	LaunchMetadata     map[string]string `json:"launchMetadata,omitempty"`
-	PromptHash         string            `json:"promptHash"`
-	BindingConsumed    bool              `json:"bindingConsumed"`
-	StartedAt          time.Time         `json:"startedAt"`
-	UpdatedAt          time.Time         `json:"updatedAt"`
-	CompletedAt        *time.Time        `json:"completedAt,omitempty"`
+	ProtocolVersion    int                      `json:"protocolVersion"`
+	StateSchemaVersion int                      `json:"stateSchemaVersion"`
+	RunID              string                   `json:"runId"`
+	NodeID             string                   `json:"nodeId"`
+	Number             int                      `json:"number"`
+	Phase              NodePhase                `json:"phase"`
+	Conclusion         Conclusion               `json:"conclusion,omitempty"`
+	Reason             Reason                   `json:"reason,omitempty"`
+	Backend            string                   `json:"backend"`
+	LaunchState        LaunchState              `json:"launchState,omitempty"`
+	Execution          *backend.ExecutionHandle `json:"execution,omitempty"`
+	ResultConsumed     bool                     `json:"resultConsumed"`
+	PromptHash         string                   `json:"promptHash"`
+	StartedAt          time.Time                `json:"startedAt"`
+	UpdatedAt          time.Time                `json:"updatedAt"`
+	CompletedAt        *time.Time               `json:"completedAt,omitempty"`
+
+	legacyExecution *legacyExecutionSnapshot
 }
 
 type WorkflowEvent struct {
@@ -224,7 +224,15 @@ func ValidateAttemptSnapshot(snapshot AttemptSnapshot) error {
 	if snapshot.Phase == NodePhaseWaiting && snapshot.Reason == "" {
 		return fmt.Errorf("waiting attempt requires a reason")
 	}
-	if snapshot.LaunchState != "" && snapshot.LaunchState != LaunchPrepared && snapshot.LaunchState != LaunchDispatching && snapshot.LaunchState != LaunchSessionPersisted && snapshot.LaunchState != LaunchFinishedWithoutSession {
+	if snapshot.Execution != nil {
+		if err := backend.ValidateExecutionHandle(*snapshot.Execution); err != nil {
+			return fmt.Errorf("attempt has invalid execution handle: %w", err)
+		}
+		if snapshot.Execution.Backend != snapshot.Backend {
+			return fmt.Errorf("attempt Backend %q does not match execution handle Backend %q", snapshot.Backend, snapshot.Execution.Backend)
+		}
+	}
+	if snapshot.LaunchState != "" && snapshot.LaunchState != LaunchPrepared && snapshot.LaunchState != LaunchDispatching && snapshot.LaunchState != LaunchHandlePersisted && snapshot.LaunchState != LaunchFinishedWithoutHandle && snapshot.LaunchState != LaunchSessionPersisted && snapshot.LaunchState != LaunchFinishedWithoutSession {
 		return fmt.Errorf("attempt has invalid launch state %q", snapshot.LaunchState)
 	}
 	return nil

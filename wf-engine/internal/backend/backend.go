@@ -126,6 +126,12 @@ type AgentBackend interface {
 	Cancel(context.Context, ExecutionHandle) (*CancelResult, error)
 }
 
+// LegacySessionDecoder is used only to resume M2.1.1 Attempts that persisted
+// the former Session shape. New Attempts persist ExecutionHandle directly.
+type LegacySessionDecoder interface {
+	DecodeLegacySession(Session) (*ExecutionHandle, error)
+}
+
 func ValidateAgentExecutionSpec(spec AgentExecutionSpec) error {
 	if strings.TrimSpace(spec.RunID) == "" {
 		return fmt.Errorf("run ID is required")

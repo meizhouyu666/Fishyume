@@ -15,24 +15,36 @@ import (
 )
 
 type fakeBackend struct {
-	result backend.BackendResult
+	result backend.AgentResult
 	wait   chan struct{}
 }
 
-func (*fakeBackend) Name() string                 { return "ccpanes" }
-func (*fakeBackend) Doctor(context.Context) error { return nil }
-func (*fakeBackend) Launch(context.Context, backend.LaunchSpec) (*backend.Session, error) {
-	return &backend.Session{ID: "session-1", Metadata: map[string]string{}}, nil
+func (*fakeBackend) Name() string { return "ccpanes" }
+func (*fakeBackend) Capabilities() backend.Capabilities {
+	return backend.Capabilities{Tools: []string{"codex"}, Runtimes: []string{"local"}, SupportsOutput: true}
 }
-func (f *fakeBackend) Wait(context.Context, backend.Session) (*backend.BackendResult, error) {
+func (f *fakeBackend) Doctor(context.Context, backend.DoctorRequest) backend.DoctorReport {
+	return backend.DoctorReport{Backend: f.Name(), Ready: true}
+}
+func (*fakeBackend) Start(context.Context, backend.AgentExecutionSpec) (*backend.ExecutionHandle, error) {
+	return &backend.ExecutionHandle{Backend: "ccpanes", SchemaVersion: 1, ID: "session-1"}, nil
+}
+func (f *fakeBackend) Observe(context.Context, backend.ExecutionHandle) (*backend.ExecutionObservation, error) {
 	if f.wait != nil {
 		<-f.wait
 	}
 	value := f.result
-	return &value, nil
+	if value.Status == "" {
+		return &backend.ExecutionObservation{State: backend.ObservationResultPending}, nil
+	}
+	return &backend.ExecutionObservation{State: backend.ObservationTerminal, Result: &value}, nil
 }
-func (*fakeBackend) Output(context.Context, backend.Session, int) (string, error) { return "", nil }
-func (*fakeBackend) Cancel(context.Context, backend.Session) error                { return nil }
+func (*fakeBackend) Output(context.Context, backend.ExecutionHandle, int) (string, error) {
+	return "", nil
+}
+func (*fakeBackend) Cancel(context.Context, backend.ExecutionHandle) (*backend.CancelResult, error) {
+	return &backend.CancelResult{State: backend.CancelConfirmed}, nil
+}
 
 type safeBuffer struct {
 	mu sync.Mutex

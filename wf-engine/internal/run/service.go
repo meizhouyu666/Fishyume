@@ -95,7 +95,7 @@ type serviceTestHooks struct {
 }
 
 type Service struct {
-	backend backend.Backend
+	backend backend.AgentBackend
 	store   *store.Store
 	leases  *store.LeaseManager
 	now     func() time.Time
@@ -109,7 +109,7 @@ type Service struct {
 	testHooks      serviceTestHooks
 }
 
-func NewService(b backend.Backend, stores ...*store.Store) *Service {
+func NewService(b backend.AgentBackend, stores ...*store.Store) *Service {
 	var state *store.Store
 	if len(stores) > 0 {
 		state = stores[0]
@@ -130,29 +130,42 @@ func (s *Service) SetEventSink(sink EventSink) {
 }
 
 func (s *Service) Doctor(ctx context.Context, project string) DoctorReport {
-	report := DoctorReport{}
-	if err := s.backend.Doctor(ctx); err != nil {
-		report.BackendDiagnostic = err.Error()
-		return report
-	}
-	report.BackendReady = true
-	report.BackendDiagnostic = "CC-Panes control CLI, release orchestrator, and daemon are ready"
-	if strings.TrimSpace(project) == "" {
+	project = strings.TrimSpace(project)
+	backendReport := s.backend.Doctor(ctx, backend.DoctorRequest{Workspace: project})
+	report := DoctorReport{BackendReady: backendReport.Ready, BackendDiagnostic: doctorDiagnostic(backendReport)}
+	if project == "" {
 		return report
 	}
 	report.ProjectChecked = true
-	doctor, ok := s.backend.(backend.ProjectDoctor)
-	if !ok {
-		report.ProjectDiagnostic = "backend does not support project registration checks"
-		return report
+	report.ProjectReady = backendReport.Ready
+	report.ProjectDiagnostic = doctorDiagnosticNamed(backendReport, "workspace")
+	if report.ProjectDiagnostic == "" {
+		report.ProjectDiagnostic = report.BackendDiagnostic
 	}
-	if err := doctor.DoctorProject(ctx, project); err != nil {
-		report.ProjectDiagnostic = err.Error()
-		return report
-	}
-	report.ProjectReady = true
-	report.ProjectDiagnostic = "project is registered in CC-Panes"
 	return report
+}
+
+func doctorDiagnostic(report backend.DoctorReport) string {
+	if len(report.Diagnostics) == 0 {
+		if report.Ready {
+			return "backend " + report.Backend + " is ready"
+		}
+		return "backend " + report.Backend + " is not ready"
+	}
+	parts := make([]string, 0, len(report.Diagnostics))
+	for _, diagnostic := range report.Diagnostics {
+		parts = append(parts, diagnostic.Name+": "+diagnostic.Message)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func doctorDiagnosticNamed(report backend.DoctorReport, name string) string {
+	for _, diagnostic := range report.Diagnostics {
+		if diagnostic.Name == name {
+			return diagnostic.Message
+		}
+	}
+	return ""
 }
 
 func (s *Service) Start(ctx context.Context, request StartRequest) (WorkflowSnapshot, error) {
@@ -525,14 +538,22 @@ func (s *Service) handleCancellationRequest(ctx context.Context, runID string) (
 		return WorkflowSnapshot{}, err
 	}
 	if activeNodeID != "" && attemptNumber > 0 {
-		attempt, session, sessionErr := s.waitForCancellationSession(ctx, runID, activeNodeID, attemptNumber)
-		if sessionErr != nil {
-			return s.persistCancelFailure(runID, activeNodeID, sessionErr.Error())
+		attempt, handle, handleErr := s.waitForCancellationHandle(ctx, runID, activeNodeID, attemptNumber)
+		if handleErr != nil {
+			return s.persistCancelFailure(runID, activeNodeID, handleErr.Error())
 		}
 		alreadyCancelled := attempt.Phase == NodePhaseCompleted && attempt.Conclusion == ConclusionCancelled
-		if !alreadyCancelled && session != nil {
-			if err := s.backend.Cancel(ctx, *session); err != nil {
-				message := "cancel backend session: " + err.Error()
+		if !alreadyCancelled && handle != nil {
+			result, err := s.backend.Cancel(ctx, *handle)
+			if err != nil {
+				message := "cancel Backend execution: " + err.Error()
+				return s.persistCancelFailure(runID, activeNodeID, message)
+			}
+			if result == nil || result.State != backend.CancelConfirmed {
+				message := "Backend did not confirm execution cancellation"
+				if result != nil && strings.TrimSpace(result.Diagnostic) != "" {
+					message += ": " + result.Diagnostic
+				}
 				return s.persistCancelFailure(runID, activeNodeID, message)
 			}
 		}
@@ -564,7 +585,7 @@ func (s *Service) markCancellationIntent(runID string) (string, int, error) {
 	return "", 0, nil
 }
 
-func (s *Service) waitForCancellationSession(ctx context.Context, runID, nodeID string, attemptNumber int) (AttemptSnapshot, *backend.Session, error) {
+func (s *Service) waitForCancellationHandle(ctx context.Context, runID, nodeID string, attemptNumber int) (AttemptSnapshot, *backend.ExecutionHandle, error) {
 	deadline := time.Now().Add(cancelSessionPersistGrace)
 	for {
 		var attempt AttemptSnapshot
@@ -577,22 +598,23 @@ func (s *Service) waitForCancellationSession(ctx context.Context, runID, nodeID 
 			}
 			continue
 		}
-		if attempt.Session != nil && attempt.Session.ID != "" {
-			session := backend.Session{ID: attempt.Session.ID, Metadata: attempt.Session.Metadata}
-			return attempt, &session, nil
+		if handle, err := s.executionHandle(attempt); err != nil {
+			return attempt, nil, err
+		} else if handle != nil {
+			return attempt, handle, nil
 		}
 		switch attempt.LaunchState {
 		case LaunchPrepared:
 			return attempt, nil, nil
 		case "":
-			return attempt, nil, errors.New("cannot confirm cancellation because the active Attempt predates durable launch-state tracking and has no persisted session")
-		case LaunchFinishedWithoutSession:
-			return attempt, nil, errors.New("cannot confirm cancellation because Backend launch finished without a persisted session")
-		case LaunchSessionPersisted:
-			return attempt, nil, errors.New("cannot confirm cancellation because launch state is session_persisted but session metadata is missing")
+			return attempt, nil, errors.New("cannot confirm cancellation because the active Attempt predates durable launch-state tracking and has no persisted execution handle")
+		case LaunchFinishedWithoutHandle, LaunchFinishedWithoutSession:
+			return attempt, nil, errors.New("cannot confirm cancellation because Backend launch finished without a persisted execution handle")
+		case LaunchHandlePersisted, LaunchSessionPersisted:
+			return attempt, nil, errors.New("cannot confirm cancellation because launch state says the execution handle was persisted but handle data is missing")
 		case LaunchDispatching:
 			if time.Now().After(deadline) {
-				return attempt, nil, errors.New("cannot confirm cancellation because Backend launch did not persist a session before the cancellation grace expired")
+				return attempt, nil, errors.New("cannot confirm cancellation because Backend launch did not persist an execution handle before the cancellation grace expired")
 			}
 		}
 		if err := s.waitCancellationPoll(ctx); err != nil {
@@ -821,7 +843,7 @@ type pendingLaunch struct {
 	runID      string
 	nodeID     string
 	attempt    int
-	launchSpec backend.LaunchSpec
+	launchSpec backend.AgentExecutionSpec
 }
 
 func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint64, normalized workflow.Normalized) (bool, bool, error) {
@@ -961,7 +983,8 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 				runtimeKind = "local"
 			}
 			launch = &pendingLaunch{runID: run.ID, nodeID: node.ID, attempt: number,
-				launchSpec: backend.LaunchSpec{RunID: run.ID, Project: run.Project, Tool: tool, Runtime: runtimeKind, Prompt: prompt, StateDir: run.StateDir}}
+				launchSpec: backend.AgentExecutionSpec{RunID: run.ID, NodeID: node.ID, Attempt: number, Workspace: run.Project, Tool: tool, Runtime: runtimeKind,
+					Instructions: prompt, RequiredSkills: append([]string(nil), definition.RequiredSkills...), ResultContract: backend.ResultContract{MaxBytes: workflow.MaxResultBytes}}}
 			progressed = true
 			return nil
 		}
@@ -1000,33 +1023,33 @@ func (s *Service) launchAgent(ctx context.Context, generation uint64, launch pen
 	if err := s.beginBackendLaunch(launch, generation); err != nil {
 		return false, err
 	}
-	session, launchErr := s.backend.Launch(ctx, launch.launchSpec)
+	handle, launchErr := s.backend.Start(ctx, launch.launchSpec)
 	if hook := s.testHooks.afterLaunch; hook != nil {
 		hook()
 	}
-	if session != nil && session.ID != "" {
-		if err := s.persistLaunchedSession(launch, *session); err != nil {
+	if handle != nil && handle.ID != "" {
+		if err := s.persistExecutionHandle(launch, *handle); err != nil {
 			return false, err
 		}
-	} else if err := s.markLaunchFinishedWithoutSession(launch); err != nil {
+	} else if err := s.markLaunchFinishedWithoutHandle(launch); err != nil {
 		return false, err
 	}
 	if launchErr != nil {
-		if session != nil && session.ID != "" {
-			return false, s.waiting(launch.runID, launch.nodeID, launch.attempt, generation, ReasonCompletionMissing, "Agent session launched but post-launch binding update failed: "+launchErr.Error())
+		if handle != nil && handle.ID != "" {
+			return false, s.waiting(launch.runID, launch.nodeID, launch.attempt, generation, ReasonCompletionMissing, "Agent execution started but Backend post-start setup failed: "+launchErr.Error())
 		}
 		if ctx.Err() != nil {
 			return false, ctx.Err()
 		}
 		return true, s.finishIndeterminate(launch.runID, launch.nodeID, launch.attempt, generation, "backend launch outcome is unknown: "+launchErr.Error())
 	}
-	if session == nil || session.ID == "" {
-		return true, s.finishIndeterminate(launch.runID, launch.nodeID, launch.attempt, generation, "backend launch returned no session")
+	if handle == nil || handle.ID == "" {
+		return true, s.finishIndeterminate(launch.runID, launch.nodeID, launch.attempt, generation, "Backend launch returned no execution handle")
 	}
 	if ctx.Err() != nil {
 		return false, errControllerInactive
 	}
-	return s.waitAttempt(ctx, launch.runID, launch.nodeID, launch.attempt, generation, *session)
+	return s.waitAttempt(ctx, launch.runID, launch.nodeID, launch.attempt, generation, *handle)
 }
 
 func (s *Service) beginBackendLaunch(launch pendingLaunch, generation uint64) error {
@@ -1051,36 +1074,65 @@ func (s *Service) beginBackendLaunch(launch pendingLaunch, generation uint64) er
 	return s.writeAttempt(attempt, false)
 }
 
-func (s *Service) markLaunchFinishedWithoutSession(launch pendingLaunch) error {
+func (s *Service) markLaunchFinishedWithoutHandle(launch pendingLaunch) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var attempt AttemptSnapshot
 	if err := s.store.ReadAttempt(launch.runID, launch.nodeID, launch.attempt, &attempt); err != nil {
 		return err
 	}
-	if attempt.Session != nil && attempt.Session.ID != "" {
+	if attempt.Execution != nil && attempt.Execution.ID != "" {
 		return nil
 	}
-	attempt.LaunchState, attempt.UpdatedAt = LaunchFinishedWithoutSession, s.now().UTC()
+	attempt.LaunchState, attempt.UpdatedAt = LaunchFinishedWithoutHandle, s.now().UTC()
 	return s.writeAttempt(attempt, false)
 }
 
-func (s *Service) persistLaunchedSession(launch pendingLaunch, session backend.Session) error {
+func (s *Service) persistExecutionHandle(launch pendingLaunch, handle backend.ExecutionHandle) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := backend.ValidateExecutionHandle(handle); err != nil {
+		return err
+	}
+	if handle.Backend != s.backend.Name() {
+		return fmt.Errorf("Backend %q returned a handle for %q", s.backend.Name(), handle.Backend)
+	}
 	var attempt AttemptSnapshot
 	if err := s.store.ReadAttempt(launch.runID, launch.nodeID, launch.attempt, &attempt); err != nil {
 		return err
 	}
-	if attempt.Session != nil && attempt.Session.ID != "" && attempt.Session.ID != session.ID {
-		return fmt.Errorf("attempt %d already owns session %q", attempt.Number, attempt.Session.ID)
+	if attempt.Execution != nil && attempt.Execution.ID != "" && attempt.Execution.ID != handle.ID {
+		return fmt.Errorf("attempt %d already owns execution %q", attempt.Number, attempt.Execution.ID)
 	}
-	attempt.LaunchState = LaunchSessionPersisted
-	attempt.Session = &SessionSnapshot{ID: session.ID, Metadata: session.Metadata}
-	attempt.TaskBindingID = session.Metadata["bindingId"]
-	attempt.LaunchMetadata = session.Metadata
+	attempt.LaunchState = LaunchHandlePersisted
+	attempt.Execution = &handle
 	attempt.UpdatedAt = s.now().UTC()
 	return s.writeAttempt(attempt, false)
+}
+
+func (s *Service) executionHandle(attempt AttemptSnapshot) (*backend.ExecutionHandle, error) {
+	if attempt.Execution != nil {
+		handle := *attempt.Execution
+		if err := backend.ValidateExecutionHandle(handle); err != nil {
+			return nil, err
+		}
+		if handle.Backend != attempt.Backend {
+			return nil, fmt.Errorf("Attempt Backend %q does not match execution handle Backend %q", attempt.Backend, handle.Backend)
+		}
+		return &handle, nil
+	}
+	if attempt.legacyExecution == nil || attempt.legacyExecution.SessionID == "" {
+		return nil, nil
+	}
+	decoder, ok := s.backend.(backend.LegacySessionDecoder)
+	if !ok {
+		return nil, fmt.Errorf("Backend %q cannot decode a legacy M2.1.1 session", s.backend.Name())
+	}
+	metadata := make(map[string]string, len(attempt.legacyExecution.Metadata))
+	for key, value := range attempt.legacyExecution.Metadata {
+		metadata[key] = value
+	}
+	return decoder.DecodeLegacySession(backend.Session{ID: attempt.legacyExecution.SessionID, Metadata: metadata})
 }
 
 func (s *Service) reconcileAttempt(ctx context.Context, runID, nodeID string, attemptNumber int, generation uint64) (bool, error) {
@@ -1088,87 +1140,90 @@ func (s *Service) reconcileAttempt(ctx context.Context, runID, nodeID string, at
 	if err := s.store.ReadAttempt(runID, nodeID, attemptNumber, &attempt); err != nil {
 		return false, err
 	}
-	if attempt.Session == nil || attempt.Session.ID == "" {
-		return true, s.finishIndeterminate(runID, nodeID, attemptNumber, generation, "Attempt exists without a persisted session; refusing duplicate launch")
+	handle, err := s.executionHandle(attempt)
+	if err != nil {
+		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Could not decode persisted execution handle: "+err.Error())
 	}
-	session := backend.Session{ID: attempt.Session.ID, Metadata: attempt.Session.Metadata}
-	if reconciler, ok := s.backend.(backend.Reconciler); ok {
-		observation, err := reconciler.Reconcile(ctx, session)
+	if handle == nil {
+		return true, s.finishIndeterminate(runID, nodeID, attemptNumber, generation, "Attempt exists without a persisted execution handle; refusing duplicate launch")
+	}
+	return s.waitAttempt(ctx, runID, nodeID, attemptNumber, generation, *handle)
+}
+
+func (s *Service) waitAttempt(ctx context.Context, runID, nodeID string, attemptNumber int, generation uint64, handle backend.ExecutionHandle) (bool, error) {
+	for {
+		observation, err := s.backend.Observe(ctx, handle)
+		if output, outputErr := s.backend.Output(context.Background(), handle, 200); outputErr == nil {
+			if writeErr := s.store.WriteNodeOutput(runID, nodeID, attemptNumber, output); writeErr != nil {
+				return false, writeErr
+			}
+		}
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
 		if err != nil {
-			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend reconciliation transport failed: "+err.Error())
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend observation transport failed: "+err.Error())
 		}
 		if observation == nil {
-			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend reconciliation returned no observation")
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend returned no execution observation")
 		}
 		switch observation.State {
 		case backend.ObservationTerminal:
+			if err := backend.ValidateExecutionObservation(*observation); err != nil {
+				return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonInvalidResult, err.Error())
+			}
 			return s.finishResult(runID, nodeID, attemptNumber, generation, observation.Result)
 		case backend.ObservationWaitingInput:
 			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonAgentWaitingInput, "Agent is waiting for input")
-		case backend.ObservationCompletionMissing:
-			return s.reconcileStartupIdle(ctx, runID, nodeID, attemptNumber, generation, session, reconciler)
-		case backend.ObservationExited, backend.ObservationLost:
-			return true, s.finishIndeterminate(runID, nodeID, attemptNumber, generation, "Agent session ended without a terminal TaskBinding")
+		case backend.ObservationResultPending:
+			return s.reconcileResultPending(ctx, runID, nodeID, attemptNumber, generation, handle)
+		case backend.ObservationLost, backend.ObservationExited:
+			return true, s.finishIndeterminate(runID, nodeID, attemptNumber, generation, "Agent execution was lost without a valid terminal result")
 		case backend.ObservationError:
-			return s.finishResult(runID, nodeID, attemptNumber, generation, &backend.BackendResult{Status: "failed", Summary: "Agent session reported an error"})
+			return s.finishResult(runID, nodeID, attemptNumber, generation, &backend.AgentResult{Status: "failed", Summary: "Agent execution reported an error"})
 		case backend.ObservationActive:
-			return s.waitAttempt(ctx, runID, nodeID, attemptNumber, generation, session)
+			if err := s.waitStartupIdleReconcile(ctx); err != nil {
+				return false, err
+			}
+		default:
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend returned unsupported observation state "+string(observation.State))
 		}
 	}
-	return s.waitAttempt(ctx, runID, nodeID, attemptNumber, generation, session)
 }
 
-func (s *Service) waitAttempt(ctx context.Context, runID, nodeID string, attemptNumber int, generation uint64, session backend.Session) (bool, error) {
-	result, err := s.backend.Wait(ctx, session)
-	if output, outputErr := s.backend.Output(context.Background(), session, 200); outputErr == nil {
-		if writeErr := s.store.WriteNodeOutput(runID, nodeID, attemptNumber, output); writeErr != nil {
-			return false, writeErr
-		}
-	}
-	if ctx.Err() != nil {
-		return false, ctx.Err()
-	}
-	if err != nil {
-		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend wait transport failed: "+err.Error())
-	}
-	if result != nil && (strings.EqualFold(result.Status, "completion_missing") || strings.EqualFold(result.Status, "idle")) {
-		if reconciler, ok := s.backend.(backend.Reconciler); ok {
-			return s.reconcileStartupIdle(ctx, runID, nodeID, attemptNumber, generation, session, reconciler)
-		}
-	}
-	return s.finishResult(runID, nodeID, attemptNumber, generation, result)
-}
-
-func (s *Service) reconcileStartupIdle(ctx context.Context, runID, nodeID string, attemptNumber int, generation uint64, session backend.Session, reconciler backend.Reconciler) (bool, error) {
+func (s *Service) reconcileResultPending(ctx context.Context, runID, nodeID string, attemptNumber int, generation uint64, handle backend.ExecutionHandle) (bool, error) {
 	for check := 0; check < startupIdleReconcileChecks; check++ {
 		if err := s.waitStartupIdleReconcile(ctx); err != nil {
 			return false, err
 		}
-		observation, err := reconciler.Reconcile(ctx, session)
+		observation, err := s.backend.Observe(ctx, handle)
 		if err != nil {
-			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend startup-idle reconciliation failed: "+err.Error())
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend result reconciliation failed: "+err.Error())
 		}
 		if observation == nil {
-			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend startup-idle reconciliation returned no observation")
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend result reconciliation returned no observation")
 		}
 		switch observation.State {
 		case backend.ObservationTerminal:
+			if err := backend.ValidateExecutionObservation(*observation); err != nil {
+				return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonInvalidResult, err.Error())
+			}
 			return s.finishResult(runID, nodeID, attemptNumber, generation, observation.Result)
 		case backend.ObservationActive:
-			return s.waitAttempt(ctx, runID, nodeID, attemptNumber, generation, session)
+			return s.waitAttempt(ctx, runID, nodeID, attemptNumber, generation, handle)
 		case backend.ObservationWaitingInput:
 			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonAgentWaitingInput, "Agent is waiting for input")
-		case backend.ObservationCompletionMissing:
+		case backend.ObservationResultPending:
 			continue
 		case backend.ObservationExited, backend.ObservationLost:
-			return true, s.finishIndeterminate(runID, nodeID, attemptNumber, generation, "Agent session ended without a terminal TaskBinding")
+			return true, s.finishIndeterminate(runID, nodeID, attemptNumber, generation, "Agent execution was lost without a valid terminal result")
 		case backend.ObservationError:
-			return s.finishResult(runID, nodeID, attemptNumber, generation, &backend.BackendResult{Status: "failed", Summary: "Agent session reported an error"})
+			return s.finishResult(runID, nodeID, attemptNumber, generation, &backend.AgentResult{Status: "failed", Summary: "Agent execution reported an error"})
 		default:
-			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend startup-idle reconciliation returned unsupported state "+string(observation.State))
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend result reconciliation returned unsupported state "+string(observation.State))
 		}
 	}
-	return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Agent remained idle without a terminal TaskBinding after bounded startup reconciliation")
+	return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Agent result remained unavailable after bounded reconciliation")
 }
 
 func (s *Service) waitStartupIdleReconcile(ctx context.Context) error {
@@ -1185,7 +1240,7 @@ func (s *Service) waitStartupIdleReconcile(ctx context.Context) error {
 	}
 }
 
-func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generation uint64, result *backend.BackendResult) (bool, error) {
+func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generation uint64, result *backend.AgentResult) (bool, error) {
 	if result == nil {
 		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend returned no result")
 	}
@@ -1206,7 +1261,7 @@ func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generati
 				return err
 			}
 			now := s.now().UTC()
-			attempt.Phase, attempt.Conclusion, attempt.BindingConsumed, attempt.UpdatedAt, attempt.CompletedAt = NodePhaseCompleted, ConclusionSucceeded, true, now, &now
+			attempt.Phase, attempt.Conclusion, attempt.ResultConsumed, attempt.UpdatedAt, attempt.CompletedAt = NodePhaseCompleted, ConclusionSucceeded, true, now, &now
 			node.Phase, node.Conclusion, node.Reason, node.Result, node.UpdatedAt = NodePhaseCompleted, ConclusionSucceeded, "", &normalized, now
 			if err := s.store.WriteResult(runID, nodeID, attemptNumber, normalized); err != nil {
 				return err
@@ -1232,7 +1287,7 @@ func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generati
 				return err
 			}
 			now := s.now().UTC()
-			attempt.Phase, attempt.Conclusion, attempt.BindingConsumed, attempt.UpdatedAt, attempt.CompletedAt = NodePhaseCompleted, ConclusionFailed, true, now, &now
+			attempt.Phase, attempt.Conclusion, attempt.ResultConsumed, attempt.UpdatedAt, attempt.CompletedAt = NodePhaseCompleted, ConclusionFailed, true, now, &now
 			node.Phase, node.Conclusion, node.Result, node.UpdatedAt = NodePhaseCompleted, ConclusionFailed, &normalized, now
 			if err := s.store.WriteResult(runID, nodeID, attemptNumber, normalized); err != nil {
 				return err

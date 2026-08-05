@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,29 +33,63 @@ type fakeWorkflowBackend struct {
 	cancelRelease   chan struct{}
 	waitReturn      chan backend.BackendResult
 	waitReturned    chan struct{}
+	preferObserve   bool
 }
 
-func (*fakeWorkflowBackend) Name() string                 { return "fake" }
-func (*fakeWorkflowBackend) Doctor(context.Context) error { return nil }
-func (b *fakeWorkflowBackend) Launch(_ context.Context, spec backend.LaunchSpec) (*backend.Session, error) {
+func (*fakeWorkflowBackend) Name() string { return "fake" }
+func (*fakeWorkflowBackend) Capabilities() backend.Capabilities {
+	return backend.Capabilities{Tools: []string{"codex"}, Runtimes: []string{"local"}, SupportsOutput: true, SupportsWaitingInput: true}
+}
+func (b *fakeWorkflowBackend) Doctor(context.Context, backend.DoctorRequest) backend.DoctorReport {
+	return backend.DoctorReport{Backend: b.Name(), Ready: true}
+}
+func (b *fakeWorkflowBackend) Start(_ context.Context, spec backend.AgentExecutionSpec) (*backend.ExecutionHandle, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.launches++
-	b.prompts = append(b.prompts, spec.Prompt)
+	b.prompts = append(b.prompts, spec.Instructions)
 	id := fmt.Sprintf("session-%d", b.launches)
-	return &backend.Session{ID: id, Metadata: map[string]string{"bindingId": "binding-" + id, "project": spec.Project}}, nil
+	data, _ := json.Marshal(map[string]any{"project": spec.Workspace, "bindingId": "binding-" + id})
+	return &backend.ExecutionHandle{Backend: b.Name(), SchemaVersion: 1, ID: id, Data: data}, nil
 }
-func (b *fakeWorkflowBackend) Wait(ctx context.Context, _ backend.Session) (*backend.BackendResult, error) {
+func (b *fakeWorkflowBackend) Observe(ctx context.Context, handle backend.ExecutionHandle) (*backend.ExecutionObservation, error) {
 	b.mu.Lock()
-	b.waitCalls++
 	block := b.waitBlock
 	waitReturn, waitReturned := b.waitReturn, b.waitReturned
+	queue := b.observations[handle.ID]
+	if b.preferObserve && len(queue) > 0 {
+		b.reconcileCalls++
+		observation := queue[0]
+		b.observations[handle.ID] = queue[1:]
+		if observation.State == backend.ObservationActive {
+			b.preferObserve = false
+		}
+		b.mu.Unlock()
+		return observationFromLegacyFixture(observation), nil
+	}
+	if b.preferObserve {
+		b.reconcileCalls++
+		b.mu.Unlock()
+		return &backend.ExecutionObservation{State: backend.ObservationResultPending}, nil
+	}
 	if len(b.waitResults) > 0 {
+		b.waitCalls++
 		result := b.waitResults[0]
 		b.waitResults = b.waitResults[1:]
+		if result.Status == "completion_missing" || result.Status == "idle" {
+			b.preferObserve = true
+		}
 		b.mu.Unlock()
-		return &result, nil
+		return observationFromResult(result), nil
 	}
+	if len(queue) > 0 {
+		b.reconcileCalls++
+		observation := queue[0]
+		b.observations[handle.ID] = queue[1:]
+		b.mu.Unlock()
+		return observationFromLegacyFixture(observation), nil
+	}
+	b.waitCalls++
 	b.mu.Unlock()
 	if block {
 		select {
@@ -68,10 +103,32 @@ func (b *fakeWorkflowBackend) Wait(ctx context.Context, _ backend.Session) (*bac
 					close(waitReturned)
 				}
 			}
-			return &result, nil
+			return observationFromResult(result), nil
 		}
 	}
-	return &backend.BackendResult{Status: "completion_missing", Summary: "missing"}, nil
+	return &backend.ExecutionObservation{State: backend.ObservationResultPending, Diagnostic: "missing"}, nil
+}
+
+func observationFromResult(result backend.BackendResult) *backend.ExecutionObservation {
+	switch result.Status {
+	case "waiting_input":
+		return &backend.ExecutionObservation{State: backend.ObservationWaitingInput, Diagnostic: result.Summary}
+	case "completion_missing", "idle":
+		return &backend.ExecutionObservation{State: backend.ObservationResultPending, Diagnostic: result.Summary}
+	default:
+		copy := backend.AgentResult(result)
+		return &backend.ExecutionObservation{State: backend.ObservationTerminal, Result: &copy}
+	}
+}
+
+func observationFromLegacyFixture(observation backend.Observation) *backend.ExecutionObservation {
+	if observation.State == backend.ObservationExited {
+		return &backend.ExecutionObservation{State: backend.ObservationTerminal, Result: &backend.AgentResult{Status: "indeterminate", Summary: "fixture exited"}}
+	}
+	if observation.State == backend.ObservationError {
+		return &backend.ExecutionObservation{State: backend.ObservationTerminal, Result: &backend.AgentResult{Status: "failed", Summary: "fixture error"}}
+	}
+	return &observation
 }
 
 func instantCancelPoll(ctx context.Context) error {
@@ -82,17 +139,17 @@ func instantCancelPoll(ctx context.Context) error {
 		return nil
 	}
 }
-func (*fakeWorkflowBackend) Output(context.Context, backend.Session, int) (string, error) {
+func (*fakeWorkflowBackend) Output(context.Context, backend.ExecutionHandle, int) (string, error) {
 	return "recent output", nil
 }
-func (b *fakeWorkflowBackend) Cancel(_ context.Context, _ backend.Session) error {
+func (b *fakeWorkflowBackend) Cancel(_ context.Context, _ backend.ExecutionHandle) (*backend.CancelResult, error) {
 	b.mu.Lock()
 	b.cancelAttempts++
 	entered, release := b.cancelEntered, b.cancelRelease
 	if b.cancelFailures > 0 {
 		b.cancelFailures--
 		b.mu.Unlock()
-		return fmt.Errorf("fixture kill failed")
+		return &backend.CancelResult{State: backend.CancelNotConfirmed, Diagnostic: "fixture kill failed"}, nil
 	}
 	b.mu.Unlock()
 	if entered != nil {
@@ -108,19 +165,11 @@ func (b *fakeWorkflowBackend) Cancel(_ context.Context, _ backend.Session) error
 	b.mu.Lock()
 	b.successfulKills++
 	b.mu.Unlock()
-	return nil
+	return &backend.CancelResult{State: backend.CancelConfirmed}, nil
 }
-func (b *fakeWorkflowBackend) Reconcile(_ context.Context, session backend.Session) (*backend.Observation, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.reconcileCalls++
-	queue := b.observations[session.ID]
-	if len(queue) == 0 {
-		return &backend.Observation{State: backend.ObservationCompletionMissing}, nil
-	}
-	result := queue[0]
-	b.observations[session.ID] = queue[1:]
-	return &result, nil
+func (b *fakeWorkflowBackend) DecodeLegacySession(session backend.Session) (*backend.ExecutionHandle, error) {
+	data, _ := json.Marshal(map[string]any{"metadata": session.Metadata})
+	return &backend.ExecutionHandle{Backend: b.Name(), SchemaVersion: 1, ID: session.ID, Data: data}, nil
 }
 
 func waitForRun(t *testing.T, service *Service, runID string, predicate func(WorkflowSnapshot) bool) WorkflowSnapshot {
@@ -280,7 +329,7 @@ func TestCrashResumeReconcilesWithoutDuplicateLaunch(t *testing.T) {
 	}
 	waitForRun(t, first, started.ID, func(run WorkflowSnapshot) bool {
 		view, _ := first.Status(run.ID)
-		return run.Phase == PhaseRunning && view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+		return run.Phase == PhaseRunning && view.ActiveAttempt != nil && view.ActiveAttempt.Execution != nil
 	})
 	if _, err := first.Detach(started.ID); err != nil {
 		t.Fatal(err)
@@ -302,6 +351,55 @@ func TestCrashResumeReconcilesWithoutDuplicateLaunch(t *testing.T) {
 	b.mu.Unlock()
 	if launches != 1 {
 		t.Fatalf("resume duplicated launch: %d", launches)
+	}
+}
+
+func TestNewAttemptPersistsGenericExecutionHandleOnly(t *testing.T) {
+	b := &fakeWorkflowBackend{waitResults: []backend.BackendResult{{Status: "succeeded", Summary: "done"}}, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	service := NewService(b, state)
+	started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	data, err := os.ReadFile(state.AttemptPath(started.ID, "agent-1", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{`"execution"`, `"handle_persisted"`, `"resultConsumed": true`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("Attempt omitted %s: %s", want, text)
+		}
+	}
+	for _, forbidden := range []string{`"session"`, `"taskBindingId"`, `"launchMetadata"`, `"bindingConsumed"`} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("new Attempt persisted legacy field %s: %s", forbidden, text)
+		}
+	}
+}
+
+func TestLegacyM211AttemptDecodesThroughBackendAdapter(t *testing.T) {
+	var attempt AttemptSnapshot
+	if err := json.Unmarshal([]byte(`{
+      "protocolVersion":2,"stateSchemaVersion":1,"runId":"run-legacy","nodeId":"agent-1","number":1,
+      "phase":"running","backend":"fake","launchState":"session_persisted",
+      "session":{"id":"session-legacy","metadata":{"project":"p"}},"taskBindingId":"binding-legacy",
+      "promptHash":"hash","bindingConsumed":false,"startedAt":"2026-08-05T00:00:00Z","updatedAt":"2026-08-05T00:00:01Z"
+    }`), &attempt); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(&fakeWorkflowBackend{}, store.New(t.TempDir()))
+	handle, err := service.executionHandle(attempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handle == nil || handle.ID != "session-legacy" || handle.Backend != "fake" || !strings.Contains(string(handle.Data), "binding-legacy") {
+		t.Fatalf("handle=%+v", handle)
+	}
+	if attempt.LaunchState != LaunchHandlePersisted {
+		t.Fatalf("legacy launch state was not normalized: %q", attempt.LaunchState)
 	}
 }
 
@@ -328,7 +426,7 @@ func TestResumeReconciliationClassifiesDelayedMissingAndExited(t *testing.T) {
 			}
 			waitForRun(t, first, started.ID, func(run WorkflowSnapshot) bool {
 				view, _ := first.Status(run.ID)
-				return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+				return view.ActiveAttempt != nil && view.ActiveAttempt.Execution != nil
 			})
 			if _, err := first.Detach(started.ID); err != nil {
 				t.Fatal(err)
@@ -419,8 +517,8 @@ func TestStartupIdleReconciliationDoesNotPrematurelyCompleteMissing(t *testing.T
 			if err := state.ReadAttempt(started.ID, "agent-1", 1, &attempt); err != nil {
 				t.Fatal(err)
 			}
-			if attempt.BindingConsumed != test.wantBindingTaken {
-				t.Fatalf("attempt=%+v want bindingConsumed=%t", attempt, test.wantBindingTaken)
+			if attempt.ResultConsumed != test.wantBindingTaken {
+				t.Fatalf("attempt=%+v want resultConsumed=%t", attempt, test.wantBindingTaken)
 			}
 			b.mu.Lock()
 			launches, waitCalls, reconciles := b.launches, b.waitCalls, b.reconcileCalls
@@ -454,7 +552,7 @@ func TestStartupIdleReconciliationDelayHonorsCancellation(t *testing.T) {
 	}
 }
 
-func TestAttemptWithoutPersistedSessionBecomesIndeterminateWithoutLaunch(t *testing.T) {
+func TestAttemptWithoutPersistedHandleBecomesIndeterminateWithoutLaunch(t *testing.T) {
 	b := &fakeWorkflowBackend{observations: map[string][]backend.Observation{}}
 	state := store.New(t.TempDir())
 	service := NewService(b, state)
@@ -471,7 +569,8 @@ func TestAttemptWithoutPersistedSessionBecomesIndeterminateWithoutLaunch(t *test
 	if err := state.ReadAttempt(started.ID, "agent-1", 1, &attempt); err != nil {
 		t.Fatal(err)
 	}
-	attempt.Session = nil
+	attempt.Execution = nil
+	attempt.legacyExecution = nil
 	attempt.Phase = NodePhaseRunning
 	attempt.Conclusion = ""
 	if err := state.UpdateAttempt(started.ID, "agent-1", 1, attempt); err != nil {
@@ -556,7 +655,7 @@ func TestCancelFailureRetryAndConcurrentIdempotence(t *testing.T) {
 	}
 	waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool {
 		view, _ := service.Status(run.ID)
-		return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Execution != nil
 	})
 	failed, err := service.Cancel(context.Background(), started.ID)
 	if err == nil || failed.Phase != PhaseWaiting || failed.Reason != ReasonCancelFailed || !failed.CancelRequested {
@@ -613,7 +712,7 @@ func TestCrossProcessCancelCoordinatesWithLeaseOwner(t *testing.T) {
 	}
 	waitForRun(t, owner, started.ID, func(run WorkflowSnapshot) bool {
 		view, _ := owner.Status(run.ID)
-		return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Execution != nil
 	})
 	requester := NewService(b, state)
 	requester.testHooks.cancelRequestDelay = instantCancelPoll
@@ -653,7 +752,7 @@ func TestCrossProcessCancelIntentPreventsFailedTerminalWhileKillInFlight(t *test
 	}
 	waitForRun(t, owner, started.ID, func(run WorkflowSnapshot) bool {
 		view, _ := owner.Status(run.ID)
-		return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Execution != nil
 	})
 	requester := NewService(b, state)
 	requester.testHooks.cancelRequestDelay = instantCancelPoll
@@ -715,7 +814,7 @@ func TestCrossProcessCancelFailureIsTruthfulAndRetryable(t *testing.T) {
 	}
 	waitForRun(t, owner, started.ID, func(run WorkflowSnapshot) bool {
 		view, _ := owner.Status(run.ID)
-		return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Execution != nil
 	})
 	requester := NewService(b, state)
 	requester.testHooks.cancelRequestDelay = instantCancelPoll
@@ -848,7 +947,7 @@ func TestConcurrentCrossProcessCancelIsIdempotent(t *testing.T) {
 	}
 	waitForRun(t, owner, started.ID, func(run WorkflowSnapshot) bool {
 		view, _ := owner.Status(run.ID)
-		return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Execution != nil
 	})
 	services := []*Service{NewService(b, state), NewService(b, state)}
 	results := make(chan error, len(services))
@@ -885,7 +984,7 @@ func TestStaleCancelRequestIsRecoveredAfterOwnerExit(t *testing.T) {
 	}
 	waitForRun(t, owner, started.ID, func(run WorkflowSnapshot) bool {
 		view, _ := owner.Status(run.ID)
-		return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Execution != nil
 	})
 	if _, err := owner.Detach(started.ID); err != nil {
 		t.Fatal(err)
@@ -1036,7 +1135,7 @@ nodes: {approve: {type: approval, prompt: approve}}
 	}
 }
 
-func TestDetachAfterLaunchPersistsSessionAndResumeDoesNotRelaunch(t *testing.T) {
+func TestDetachAfterLaunchPersistsHandleAndResumeDoesNotRelaunch(t *testing.T) {
 	b := &fakeWorkflowBackend{waitBlock: true, observations: map[string][]backend.Observation{}}
 	state := store.New(t.TempDir())
 	service := NewService(b, state)
@@ -1059,8 +1158,8 @@ func TestDetachAfterLaunchPersistsSessionAndResumeDoesNotRelaunch(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.ActiveAttempt == nil || view.ActiveAttempt.Session == nil || view.ActiveAttempt.Session.ID != "session-1" {
-		t.Fatalf("session metadata was not persisted after detach: %+v", view.ActiveAttempt)
+	if view.ActiveAttempt == nil || view.ActiveAttempt.Execution == nil || view.ActiveAttempt.Execution.ID != "session-1" {
+		t.Fatalf("execution handle was not persisted after detach: %+v", view.ActiveAttempt)
 	}
 	b.mu.Lock()
 	b.waitBlock = false
@@ -1373,7 +1472,7 @@ func TestCancelRequestPersistenceFailureDoesNotKill(t *testing.T) {
 	}
 	waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool {
 		view, _ := service.Status(run.ID)
-		return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Execution != nil
 	})
 	state.SetFaultInjectorForTest(failOnce(func(operation, path string) bool {
 		return operation == "write_json" && strings.HasSuffix(path, "run.json")
@@ -1402,7 +1501,7 @@ func TestCancelInFlightEmitsOnlyCancelledTerminal(t *testing.T) {
 	}
 	waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool {
 		view, _ := service.Status(run.ID)
-		return view.ActiveAttempt != nil && view.ActiveAttempt.Session != nil
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Execution != nil
 	})
 	result := make(chan error, 1)
 	go func() { _, cancelErr := service.Cancel(context.Background(), started.ID); result <- cancelErr }()

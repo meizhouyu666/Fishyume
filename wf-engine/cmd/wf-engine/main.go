@@ -17,9 +17,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	backend, backendErr := ccpanes.New()
+	backend, backendErr := ccpanes.NewAdapter()
 	if backendErr != nil {
-		backend = ccpanes.NewUnavailable(backendErr)
+		backend = ccpanes.NewUnavailableAdapter(backendErr)
 	}
 	server := rpc.NewServer(os.Stdin, os.Stdout, run.NewService(backend, state))
 	if err := server.Serve(context.Background()); err != nil {
