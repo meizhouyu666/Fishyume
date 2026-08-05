@@ -48,6 +48,13 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 		if err != nil {
 			return err
 		}
+		effective, err := EffectiveConcurrency(normalized.Document.Execution.MaxConcurrency, backendLimit)
+		if err != nil {
+			return err
+		}
+		if run.EffectiveConcurrency != effective {
+			run.EffectiveConcurrency = effective
+		}
 		decision, err := PlanSchedule(normalized, *run, nodes, backendLimit)
 		if err != nil {
 			return err

@@ -57,24 +57,25 @@ const (
 )
 
 type WorkflowSnapshot struct {
-	ProtocolVersion    int                    `json:"protocolVersion"`
-	StateSchemaVersion int                    `json:"stateSchemaVersion"`
-	ID                 string                 `json:"id"`
-	WorkflowName       string                 `json:"workflowName"`
-	Project            string                 `json:"project"`
-	Backend            string                 `json:"backend"`
-	Phase              Phase                  `json:"phase"`
-	Conclusion         Conclusion             `json:"conclusion,omitempty"`
-	Reason             Reason                 `json:"reason,omitempty"`
-	Summary            string                 `json:"summary,omitempty"`
-	Inputs             map[string]any         `json:"inputs,omitempty"`
-	TopologicalOrder   []string               `json:"topologicalOrder"`
-	Nodes              map[string]NodeSummary `json:"nodes"`
-	ActiveNodeID       string                 `json:"activeNodeId,omitempty"`
-	CancelRequested    bool                   `json:"cancelRequested"`
-	StateDir           string                 `json:"stateDir"`
-	CreatedAt          time.Time              `json:"createdAt"`
-	UpdatedAt          time.Time              `json:"updatedAt"`
+	ProtocolVersion      int                    `json:"protocolVersion"`
+	StateSchemaVersion   int                    `json:"stateSchemaVersion"`
+	ID                   string                 `json:"id"`
+	WorkflowName         string                 `json:"workflowName"`
+	Project              string                 `json:"project"`
+	Backend              string                 `json:"backend"`
+	EffectiveConcurrency int                    `json:"effectiveConcurrency,omitempty"`
+	Phase                Phase                  `json:"phase"`
+	Conclusion           Conclusion             `json:"conclusion,omitempty"`
+	Reason               Reason                 `json:"reason,omitempty"`
+	Summary              string                 `json:"summary,omitempty"`
+	Inputs               map[string]any         `json:"inputs,omitempty"`
+	TopologicalOrder     []string               `json:"topologicalOrder"`
+	Nodes                map[string]NodeSummary `json:"nodes"`
+	ActiveNodeID         string                 `json:"activeNodeId,omitempty"`
+	CancelRequested      bool                   `json:"cancelRequested"`
+	StateDir             string                 `json:"stateDir"`
+	CreatedAt            time.Time              `json:"createdAt"`
+	UpdatedAt            time.Time              `json:"updatedAt"`
 }
 
 type NodeSummary struct {

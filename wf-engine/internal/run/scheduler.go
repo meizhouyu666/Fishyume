@@ -134,3 +134,20 @@ func backendConcurrencyLimit(candidate backend.AgentBackend) (int, error) {
 	}
 	return limit, nil
 }
+
+func EffectiveConcurrency(workflowLimit, backendLimit int) (int, error) {
+	if workflowLimit < 1 {
+		return 0, fmt.Errorf("workflow maxConcurrency must be positive")
+	}
+	if backendLimit < 0 {
+		return 0, fmt.Errorf("Backend maxConcurrentAgents cannot be negative")
+	}
+	limit := FishyumeSafetyConcurrencyCeiling
+	if workflowLimit < limit {
+		limit = workflowLimit
+	}
+	if backendLimit > 0 && backendLimit < limit {
+		limit = backendLimit
+	}
+	return limit, nil
+}

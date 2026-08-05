@@ -320,6 +320,12 @@ func ensureBackendReady(ctx context.Context, candidate backend.AgentBackend, pro
 
 func validateBackendCapabilities(candidate backend.AgentBackend, normalized workflow.Normalized) error {
 	capabilities := candidate.Capabilities()
+	if capabilities.MaxConcurrentAgents < 0 {
+		return fmt.Errorf("Backend %q declares negative maxConcurrentAgents", candidate.Name())
+	}
+	if _, err := EffectiveConcurrency(normalized.Document.Execution.MaxConcurrency, capabilities.MaxConcurrentAgents); err != nil {
+		return fmt.Errorf("Backend %q concurrency capability: %w", candidate.Name(), err)
+	}
 	for _, nodeID := range normalized.TopologicalOrder {
 		node := normalized.Document.Nodes[nodeID]
 		if node.Type != "agent" {
@@ -372,6 +378,14 @@ func (s *Service) startNormalized(_ context.Context, project string, normalized 
 	if err := s.store.WriteWorkflow(id, normalized); err != nil {
 		return WorkflowSnapshot{}, err
 	}
+	candidate, err := s.registry.Get(backendName)
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	effectiveConcurrency, err := EffectiveConcurrency(normalized.Document.Execution.MaxConcurrency, candidate.Capabilities().MaxConcurrentAgents)
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
 	now := s.now().UTC()
 	nodeSummaries := make(map[string]NodeSummary, len(normalized.Document.Nodes))
 	for _, nodeID := range normalized.TopologicalOrder {
@@ -383,7 +397,7 @@ func (s *Service) startNormalized(_ context.Context, project string, normalized 
 		nodeSummaries[nodeID] = summarizeNode(node)
 	}
 	run := WorkflowSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, ID: id, WorkflowName: normalized.Document.Name, Project: project,
-		Backend: backendName, Phase: PhaseCreated, Inputs: normalized.Inputs, TopologicalOrder: normalized.TopologicalOrder,
+		Backend: backendName, EffectiveConcurrency: effectiveConcurrency, Phase: PhaseCreated, Inputs: normalized.Inputs, TopologicalOrder: normalized.TopologicalOrder,
 		Nodes: nodeSummaries, StateDir: s.store.RunDir(id), CreatedAt: now, UpdatedAt: now}
 	if err := s.persistRun(&run, nil, "run.created", "workflow run created"); err != nil {
 		return WorkflowSnapshot{}, err

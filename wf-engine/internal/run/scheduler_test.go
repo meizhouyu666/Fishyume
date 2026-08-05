@@ -93,3 +93,22 @@ func TestPlanScheduleRejectsInvalidBackendLimit(t *testing.T) {
 		t.Fatal("accepted negative Backend limit")
 	}
 }
+
+func TestEffectiveConcurrencyUsesPlatformNeutralLimits(t *testing.T) {
+	for _, test := range []struct {
+		workflow, backend, want int
+	}{
+		{workflow: 1, backend: 0, want: 1},
+		{workflow: 2, backend: 0, want: 2},
+		{workflow: 10, backend: 3, want: 3},
+		{workflow: 32, backend: 0, want: FishyumeSafetyConcurrencyCeiling},
+	} {
+		got, err := EffectiveConcurrency(test.workflow, test.backend)
+		if err != nil || got != test.want {
+			t.Fatalf("effective(%d,%d)=%d err=%v want=%d", test.workflow, test.backend, got, err, test.want)
+		}
+	}
+	if _, err := EffectiveConcurrency(2, -1); err == nil {
+		t.Fatal("accepted negative Backend limit")
+	}
+}

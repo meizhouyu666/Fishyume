@@ -15,7 +15,7 @@ type fakeBackend struct {
 
 func (*fakeBackend) Name() string { return "contract-fixture" }
 func (*fakeBackend) Capabilities() backend.Capabilities {
-	return backend.Capabilities{Tools: []string{"codex"}, Runtimes: []string{"local"}, SupportsOutput: true, SupportsWaitingInput: true}
+	return backend.Capabilities{Tools: []string{"codex"}, Runtimes: []string{"local"}, SupportsOutput: true, SupportsWaitingInput: true, MaxConcurrentAgents: 2, SupportsConcurrentCancel: true}
 }
 func (b *fakeBackend) Doctor(context.Context, backend.DoctorRequest) backend.DoctorReport {
 	return backend.DoctorReport{Backend: b.Name(), Ready: true}

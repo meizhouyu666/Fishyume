@@ -32,6 +32,16 @@ type Factory func(*testing.T, Scenario) Fixture
 
 func Run(t *testing.T, factory Factory) {
 	t.Helper()
+	t.Run("scheduling-capabilities", func(t *testing.T) {
+		fixture := factory(t, ScenarioActive)
+		capabilities := fixture.Backend.Capabilities()
+		if capabilities.MaxConcurrentAgents < 0 {
+			t.Fatalf("negative maxConcurrentAgents: %+v", capabilities)
+		}
+		if !capabilities.SupportsConcurrentCancel {
+			t.Fatalf("Backend does not declare confirmed concurrent cancellation: %+v", capabilities)
+		}
+	})
 	t.Run("doctor", func(t *testing.T) {
 		fixture := factory(t, ScenarioActive)
 		report := fixture.Backend.Doctor(context.Background(), backend.DoctorRequest{
