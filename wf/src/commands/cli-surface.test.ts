@@ -32,3 +32,9 @@ test('run and doctor expose Backend selection', () => {
     assert.match(result.stdout, /--backend/);
   }
 });
+
+test('status exposes watch and rejects incompatible or non-interactive use before starting the Engine', () => {
+  const help = invoke('status', '--help'); assert.equal(help.status, 0, help.stderr); assert.match(help.stdout, /--watch/);
+  const json = invoke('status', 'run-1', '--watch', '--json'); assert.equal(json.status, 6); assert.match(json.stderr, /cannot be combined with --json/);
+  const nonTTY = invoke('status', 'run-1', '--watch'); assert.equal(nonTTY.status, 6); assert.match(nonTTY.stderr, /use plain fishyume status/);
+});

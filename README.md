@@ -15,7 +15,7 @@ CC-Panes 是默认 Agent Backend，不是 Fishyume 的架构边界。当前还�
 - 确定性、有界的并行 Agent 调度与多 Attempt 恢复
 - 失败后停止新调度并排空活动兄弟；显式取消要求逐 Attempt 确认
 - Backend Registry、能力检查和 Doctor 诊断
-- 面向并行 Workflow 的响应式 Ink TUI，覆盖活动 Attempt、等待 Approval、诊断与汇总
+- 面向并行 Workflow 的交互式 Ink Run Console，覆盖活动 Attempt、Approval、显式 retry/cancel、诊断与汇总
 - `fishyume` 主命令及兼容别名 `wf`
 
 `execution.maxConcurrency` 可设为 `1..32`；实际并发取 Workflow 请求、Backend 每 Run 限制和 Fishyume 安全上限的最小值。`maxConcurrency: 1` 保持原有确定性顺序。
@@ -117,6 +117,7 @@ CLI `--backend` 可以覆盖示例中的 `defaults.backend`：
 fishyume run --workflow .\workflow.yaml --backend direct --project "E:\project" --input goal="实现新功能"
 
 fishyume status <run-id>
+fishyume status <run-id> --watch
 fishyume resume <run-id> --approve approve
 fishyume resume <run-id> --reject approve --reason "需要调整方案"
 fishyume resume <run-id> --retry implement
@@ -125,9 +126,11 @@ fishyume cancel <run-id>
 
 ## 终端体验
 
-交互式终端中的 `fishyume run` 使用正式 Ink TUI：固定状态标记不依赖颜色，并在 80/120/160 columns 下分别采用窄、中、宽布局。并行 Attempt、审批命令、诊断、进度和最终摘要均在同一稳定视图中呈现；按 `Ctrl+C` 会 detach，Workflow 继续由 Engine 管理。
+交互式终端中的 `fishyume run` 使用正式 Ink Run Console：固定状态标记不依赖颜色，并在 80/120/160 columns 下分别采用窄、中、宽布局。并行 Attempt、审批、诊断、进度和最终摘要均在同一稳定视图中呈现。`fishyume status <run-id> --watch` 可重新进入同一 Console；终态停止轮询但保留最终视图，直到用户退出。
 
-非 TTY 或 CI 环境继续输出可流式处理的逐行纯文本；`fishyume status --json` 仍只输出一个 JSON 对象。`NO_COLOR` 会保留 TUI 结构并关闭颜色，TrueColor 不可用时自动降级到 256/16 色或单色。实现与验收矩阵见 [`docs/fishyume-m3-tui-productization.md`](./docs/fishyume-m3-tui-productization.md)。
+Console 以 `j`/`k` 或上下方向键选择可操作节点；`a` approve，`r` 输入 reject reason，`R` 确认 retry，`c` 确认 cancel，`?` 展开帮助，`Esc` 放弃当前输入或确认。indeterminate retry 会额外显示 duplicate-risk，并只在明确确认后提交风险确认。`d`、`q` 或 `Ctrl+C` 安全离开：从 `run` 离开会 detach，从 `status --watch` 离开只停止观察，二者都不会隐式 cancel。
+
+非 TTY 或 CI 环境继续输出可流式处理的逐行纯文本；这些环境中的 `status --watch` 会返回诊断并建议使用普通 `status`，不会进入无限输出。`--watch --json` 会被拒绝，`fishyume status --json` 仍只输出一个 JSON 对象。`NO_COLOR` 会保留 TUI 结构并关闭颜色，TrueColor 不可用时自动降级到 256/16 色或单色。实现与验收矩阵见 [`docs/fishyume-m3-tui-productization.md`](./docs/fishyume-m3-tui-productization.md) 与 [`docs/fishyume-m3.2-interactive-run-console.md`](./docs/fishyume-m3.2-interactive-run-console.md)。
 
 默认状态目录：
 
@@ -137,6 +140,6 @@ fishyume cancel <run-id>
 
 ## 当前边界
 
-当前仍不支持单个 Workflow 混用 Backend、通用 Shell/HTTP/容器节点、自动重试、模型回退或动态节点。Backend 契约和 Registry 已从核心编排逻辑中独立，但第三方插件 SDK、动态发现与运行时热加载尚未提供。本轮 M3 只覆盖 TUI 第一批产品化，不包含 Web/Desktop、模型路由或 Prompt Library。
+当前仍不支持单个 Workflow 混用 Backend、通用 Shell/HTTP/容器节点、自动重试、模型回退或动态节点。Backend 契约和 Registry 已从核心编排逻辑中独立，但第三方插件 SDK、动态发现与运行时热加载尚未提供。M3 CLI/TUI 产品面不包含 Web/Desktop、模型路由或 Prompt Library。
 
 更完整的需求、架构和里程碑说明见 [`docs/`](./docs/)。

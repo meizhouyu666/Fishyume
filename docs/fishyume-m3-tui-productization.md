@@ -39,6 +39,8 @@ run command
 
 `RunApp` 消费完整 `RunStatusView`，而不是只消费 `WorkflowSnapshot`。事件到达时界面立即更新 Run/Node phase；随后串行请求 `run.status`，补齐 active Attempts、waiting Approvals 和 diagnostics。串行刷新避免响应乱序覆盖较新的状态，最终停止前还会等待刷新链并读取一次权威状态。
 
+M3.2 在这条边界上增加了共享 `live-console.tsx` controller 与纯 `interaction.ts` 状态机。`run` 继续消费 `run.event`，`status --watch` 以 1 秒有界轮询重新接入；刷新 generation 会使较早响应失效，动作完成后无论成功或失败都重新读取完整 `RunStatusView`。React 只保存选择、帮助、输入/确认、pending 与临时 action message，不保存 Run/Node/diagnostic 业务副本。
+
 纯文本与 JSON 路径不经过 Ink：
 
 - 非 TTY 或 `CI`：继续使用 `TextReporter`；
@@ -103,6 +105,7 @@ run command
 | --- | --- | --- | --- | --- |
 | `fishyume run` | Ink TUI | `TextReporter` | mono Ink TUI | 不适用 |
 | `fishyume status` | 稳定文本状态报告 | 同左 | 无 ANSI | `--json` 单对象不变 |
+| `fishyume status --watch` | 交互式 Run Console | 明确拒绝并建议普通 `status` | mono Run Console | 与 `--json` 互斥 |
 | `resume` / `cancel` | 稳定事件与状态文本 | 同左 | 无 ANSI | 无变化 |
 | `doctor` | 稳定 `ok/fail` 文本 | 同左 | 无 ANSI | 无变化 |
 
@@ -128,6 +131,9 @@ Bridge types 与 RPC 合同本批无变化，因此无需 Go 合同迁移或新�
 - `wf/src/tui/presentation.ts`：保持无 React/Ink 依赖，以便快速、确定性文本测试；
 - `wf/src/tui/components.tsx`：组合通用 Ink 组件；
 - `wf/src/tui/run-app.tsx`：只负责把 `RunStatusView` 编排成产品界面；
-- `wf/src/commands/run.tsx`：只负责 TTY 选择、事件/状态同步和生命周期退出。
+- `wf/src/tui/interaction.ts`：只放 actionable/retry 派生、交互 reducer 与有界 Console 文本；
+- `wf/src/tui/live-console.tsx`：共享 refresh/poll/action/generation/cleanup 与 Ink session 生命周期；
+- `wf/src/commands/run.tsx`：只负责 TTY 选择、Run 创建和纯文本 reporter；
+- `wf/src/commands/status.ts`：保护普通/JSON 合同，并只在合法 TTY 中接入 watch Console。
 
 后续批次若增加交互，必须继续保证 reporter/JSON 路径与 TUI 分离，且不能把 Engine 业务状态转移到 React 本地状态中。

@@ -1,12 +1,10 @@
 import process from 'node:process';
 import {readFile} from 'node:fs/promises';
 import {basename} from 'node:path';
-import React from 'react';
 import {Command, Option} from 'clipanion';
-import {render, type Instance} from 'ink';
 import {EngineBridge, EngineRpcError, type EngineClient} from '../bridge/engine.js';
-import type {JsonScalar, RunEvent, RunStartResult, RunStatusView, WorkflowSnapshot} from '../bridge/types.js';
-import {RunApp} from '../tui/run-app.js';
+import type {JsonScalar, RunStartResult, RunStatusView, WorkflowSnapshot} from '../bridge/types.js';
+import {runLiveConsole} from '../tui/live-console.js';
 import {exitCodeForSnapshot, TextReporter, type TextWriter} from '../tui/text-reporter.js';
 
 const controllerStops = new Set(['waiting', 'paused', 'completed']);
@@ -23,47 +21,40 @@ export async function runWorkflow(client: EngineClient, options: RunOptions, out
     const workflowSelectsBackend = Boolean(options.workflow && !options.backend);
     const hello = await client.hello(workflowSelectsBackend ? undefined : options.project, options.backend);
     if (!workflowSelectsBackend && (!hello.backendReady || (hello.projectChecked && !hello.projectReady))) {output.write(`fail backend ${hello.projectDiagnostic ?? hello.backendDiagnostic}\n`); return 1}
-    let current: WorkflowSnapshot | undefined; let currentView: RunStatusView | undefined; let ink: Instance | undefined; const reporter = new TextReporter(output);
-    let refreshChain = Promise.resolve();
-    const renderCurrent = (): void => {if (currentView) ink?.rerender(<RunApp view={currentView} startedAt={startedAt}/>)};
-    const queueViewRefresh = (): void => {
-      if (!options.useTUI || !current) return;
-      const runId = current.id;
-      refreshChain = refreshChain.then(async () => {
-        const view = await client.call<RunStatusView>('run.status', {runId});
-        if (view.run?.id === runId) {currentView = view; current = view.run; renderCurrent()}
-      }).catch(() => undefined);
-    };
+    const start = (): Promise<RunStartResult> => options.workflow
+      ? readFile(options.workflow, 'utf8').then(content => client.call<RunStartResult>('run.startWorkflow', {project: options.project, backend: options.backend, filename: basename(options.workflow!), content, inputs: options.inputs}))
+      : client.call<RunStartResult>('run.start', {project: options.project, backend: options.backend, tool: options.tool, runtime: options.runtime, task: options.task});
+    if (options.useTUI) {
+      const started = await start();
+      const view = await runLiveConsole(client, {runId: started.runId, mode: 'run', startedAt});
+      return view.run ? exitCodeForSnapshot(view.run) : 6;
+    }
+    let current: WorkflowSnapshot | undefined; const reporter = new TextReporter(output);
     let settle!: () => void; const stopped = new Promise<void>(resolve => {settle = resolve});
     const unsubscribe = client.onRunEvent(event => {
       if (current && event.runId !== current.id) return;
       if (current) {
         current = {...current, phase: event.phase, conclusion: event.conclusion, reason: event.reason, summary: event.message, updatedAt: event.timestamp,
           ...(event.nodeId && current.nodes[event.nodeId] ? {nodes: {...current.nodes, [event.nodeId]: {...current.nodes[event.nodeId], phase: event.nodePhase ?? current.nodes[event.nodeId].phase}}} : {})};
-        currentView = currentView ? {...currentView, run: current} : currentView;
-        if (options.useTUI) {renderCurrent(); queueViewRefresh()} else reporter.event(event);
+        reporter.event(event);
       }
       if (controllerStops.has(event.phase)) settle();
     });
-    const started = options.workflow
-      ? await client.call<RunStartResult>('run.startWorkflow', {project: options.project, backend: options.backend, filename: basename(options.workflow), content: await readFile(options.workflow, 'utf8'), inputs: options.inputs})
-      : await client.call<RunStartResult>('run.start', {project: options.project, backend: options.backend, tool: options.tool, runtime: options.runtime, task: options.task});
+    const started = await start();
     const initial = await client.call<RunStatusView>('run.status', {runId: started.runId});
     if (!initial.run) throw new Error('new run returned legacy or missing status');
-    current = initial.run; currentView = initial;
-    if (options.useTUI) ink = render(<RunApp view={currentView} startedAt={startedAt}/>); else reporter.started(current);
+    current = initial.run; reporter.started(current);
     if (controllerStops.has(current.phase)) settle();
     let detaching = false;
     const onInterrupt = (): void => {if (detaching) return; detaching = true; void client.call<WorkflowSnapshot>('run.detach', {runId: started.runId}).then(snapshot => {current = snapshot; settle()})};
     process.once('SIGINT', onInterrupt);
     try {
       await stopped;
-      await refreshChain;
       const finalView = await client.call<RunStatusView>('run.status', {runId: started.runId});
-      if (!finalView.run) throw new Error('run status disappeared'); current = finalView.run; currentView = finalView;
-      if (options.useTUI) ink?.rerender(<RunApp view={currentView} startedAt={startedAt}/>); else reporter.finished(current, Date.now()-startedAt);
+      if (!finalView.run) throw new Error('run status disappeared'); current = finalView.run;
+      reporter.finished(current, Date.now()-startedAt);
       return exitCodeForSnapshot(current);
-    } finally {process.off('SIGINT', onInterrupt); unsubscribe(); ink?.unmount()}
+    } finally {process.off('SIGINT', onInterrupt); unsubscribe()}
   } catch (error) {
     output.write(`fail ${error instanceof Error ? error.message : String(error)}\n`);
     return error instanceof EngineRpcError && error.code === -32009 ? 7 : 6;

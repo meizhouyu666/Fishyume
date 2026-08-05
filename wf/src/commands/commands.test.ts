@@ -7,7 +7,7 @@ import type {EngineClient, EventListener} from '../bridge/engine.js';
 import type {Conclusion, EngineHello, RunEvent, RunStatusView, WorkflowSnapshot} from '../bridge/types.js';
 import {runDoctor} from './doctor.js';
 import {parseInputValues, runWorkflow, shouldUseTUI} from './run.js';
-import {showStatus} from './status.js';
+import {showStatus, statusWatchError} from './status.js';
 
 class FakeClient implements EngineClient {
   listener?: EventListener; closed = false; helloBackend?: string; calls: Array<{method: string; params?: unknown}> = [];
@@ -61,6 +61,13 @@ test('workflow Backend selection is left to the Engine when CLI has no override'
 });
 
 test('status json emits one machine-readable object', async () => {let output = ''; assert.equal(await showStatus(new FakeClient(), 'run-1', true, {write(text) {output += text}}), 0); assert.equal(output.trim().split('\n').length, 1); assert.equal(JSON.parse(output).run.id, 'run-1')})
+
+test('status watch protects JSON, non-TTY, and CI contracts', () => {
+  assert.match(statusWatchError(true, true, {} as NodeJS.ProcessEnv) ?? '', /cannot be combined with --json/);
+  assert.match(statusWatchError(false, false, {} as NodeJS.ProcessEnv) ?? '', /requires an interactive TTY/);
+  assert.match(statusWatchError(false, true, {CI: '1'} as NodeJS.ProcessEnv) ?? '', /requires an interactive TTY/);
+  assert.equal(statusWatchError(false, true, {NO_COLOR: '1'} as NodeJS.ProcessEnv), undefined);
+});
 
 test('input values accept scalars and reject structured values', () => {assert.deepEqual(parseInputValues(['goal=ship', 'count=2', 'dry=true'], {base: 'x'}), {base: 'x', goal: 'ship', count: 2, dry: true}); assert.throws(() => parseInputValues(['bad=[1,2]']), /JSON scalar/)})
 
