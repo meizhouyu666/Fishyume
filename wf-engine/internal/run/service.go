@@ -987,34 +987,43 @@ func (s *Service) control(ctx context.Context, runID string, generation uint64) 
 		if run.Phase == PhaseCompleted || run.CancelRequested {
 			return
 		}
-		if active := findActiveAttempts(nodes); len(active) > 0 {
-			progressed, allWaiting, err := s.reconcileAttempts(ctx, runID, generation, active)
+		active := findActiveAttempts(nodes)
+		hadActive, allWaiting := len(active) > 0, false
+		if hadActive {
+			progressed, waiting, err := s.reconcileAttempts(ctx, runID, generation, active)
 			if err != nil {
 				if ctx.Err() == nil && !errors.Is(err, errControllerInactive) {
 					s.pauseControllerOnError(runID, generation, err)
 				}
 				return
 			}
-			if allWaiting {
-				return
-			}
+			allWaiting = waiting
 			if !progressed {
-				if err := s.waitStartupIdleReconcile(ctx); err != nil {
-					return
-				}
+				// Continue below so the scheduler can fill remaining capacity.
+			} else if !allWaiting {
+				continue
 			}
-			continue
 		}
-		progressed, stop, err := s.scheduleOne(ctx, runID, generation, normalized)
+		progressed, stop, err := s.scheduleBatch(ctx, runID, generation, normalized)
 		if err != nil {
 			if ctx.Err() == nil && !errors.Is(err, errControllerInactive) {
 				s.pauseControllerOnError(runID, generation, err)
 			}
 			return
 		}
-		if stop || !progressed {
+		if stop {
 			return
 		}
+		if progressed {
+			continue
+		}
+		if hadActive && !allWaiting {
+			if err := s.waitStartupIdleReconcile(ctx); err != nil {
+				return
+			}
+			continue
+		}
+		return
 	}
 }
 
