@@ -13,20 +13,35 @@ const controllerStops = new Set(['waiting', 'paused', 'completed']);
 
 export interface RunOptions {project: string; backend?: string; tool: string; runtime: string; task?: string; workflow?: string; inputs?: Record<string, JsonScalar>; useTUI: boolean}
 
+export function shouldUseTUI(isTTY: boolean | undefined, environment: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(isTTY && !environment.CI);
+}
+
 export async function runWorkflow(client: EngineClient, options: RunOptions, output: TextWriter): Promise<number> {
   const startedAt = Date.now();
   try {
     const workflowSelectsBackend = Boolean(options.workflow && !options.backend);
     const hello = await client.hello(workflowSelectsBackend ? undefined : options.project, options.backend);
     if (!workflowSelectsBackend && (!hello.backendReady || (hello.projectChecked && !hello.projectReady))) {output.write(`fail backend ${hello.projectDiagnostic ?? hello.backendDiagnostic}\n`); return 1}
-    let current: WorkflowSnapshot | undefined; let ink: Instance | undefined; const reporter = new TextReporter(output);
+    let current: WorkflowSnapshot | undefined; let currentView: RunStatusView | undefined; let ink: Instance | undefined; const reporter = new TextReporter(output);
+    let refreshChain = Promise.resolve();
+    const renderCurrent = (): void => {if (currentView) ink?.rerender(<RunApp view={currentView} startedAt={startedAt}/>)};
+    const queueViewRefresh = (): void => {
+      if (!options.useTUI || !current) return;
+      const runId = current.id;
+      refreshChain = refreshChain.then(async () => {
+        const view = await client.call<RunStatusView>('run.status', {runId});
+        if (view.run?.id === runId) {currentView = view; current = view.run; renderCurrent()}
+      }).catch(() => undefined);
+    };
     let settle!: () => void; const stopped = new Promise<void>(resolve => {settle = resolve});
     const unsubscribe = client.onRunEvent(event => {
       if (current && event.runId !== current.id) return;
       if (current) {
         current = {...current, phase: event.phase, conclusion: event.conclusion, reason: event.reason, summary: event.message, updatedAt: event.timestamp,
           ...(event.nodeId && current.nodes[event.nodeId] ? {nodes: {...current.nodes, [event.nodeId]: {...current.nodes[event.nodeId], phase: event.nodePhase ?? current.nodes[event.nodeId].phase}}} : {})};
-        if (options.useTUI) ink?.rerender(<RunApp snapshot={current} startedAt={startedAt}/>); else reporter.event(event);
+        currentView = currentView ? {...currentView, run: current} : currentView;
+        if (options.useTUI) {renderCurrent(); queueViewRefresh()} else reporter.event(event);
       }
       if (controllerStops.has(event.phase)) settle();
     });
@@ -35,17 +50,18 @@ export async function runWorkflow(client: EngineClient, options: RunOptions, out
       : await client.call<RunStartResult>('run.start', {project: options.project, backend: options.backend, tool: options.tool, runtime: options.runtime, task: options.task});
     const initial = await client.call<RunStatusView>('run.status', {runId: started.runId});
     if (!initial.run) throw new Error('new run returned legacy or missing status');
-    current = initial.run;
-    if (options.useTUI) ink = render(<RunApp snapshot={current} startedAt={startedAt}/>); else reporter.started(current);
+    current = initial.run; currentView = initial;
+    if (options.useTUI) ink = render(<RunApp view={currentView} startedAt={startedAt}/>); else reporter.started(current);
     if (controllerStops.has(current.phase)) settle();
     let detaching = false;
     const onInterrupt = (): void => {if (detaching) return; detaching = true; void client.call<WorkflowSnapshot>('run.detach', {runId: started.runId}).then(snapshot => {current = snapshot; settle()})};
     process.once('SIGINT', onInterrupt);
     try {
       await stopped;
+      await refreshChain;
       const finalView = await client.call<RunStatusView>('run.status', {runId: started.runId});
-      if (!finalView.run) throw new Error('run status disappeared'); current = finalView.run;
-      if (options.useTUI) ink?.rerender(<RunApp snapshot={current} startedAt={startedAt}/>); else reporter.finished(current, Date.now()-startedAt);
+      if (!finalView.run) throw new Error('run status disappeared'); current = finalView.run; currentView = finalView;
+      if (options.useTUI) ink?.rerender(<RunApp view={currentView} startedAt={startedAt}/>); else reporter.finished(current, Date.now()-startedAt);
       return exitCodeForSnapshot(current);
     } finally {process.off('SIGINT', onInterrupt); unsubscribe(); ink?.unmount()}
   } catch (error) {
@@ -77,7 +93,7 @@ export class RunCommand extends Command {
     if (Boolean(this.workflow) === Boolean(this.task.length)) {this.context.stderr.write('provide exactly one of --workflow or an ad-hoc task\n'); return 6}
     try {
       const fileValues = this.inputsFile ? JSON.parse(await readFile(this.inputsFile, 'utf8')) as Record<string, unknown> : {};
-      const inputs = parseInputValues(this.input, fileValues); const useTUI = Boolean(process.stdout.isTTY && !process.env.NO_COLOR && !process.env.CI);
+      const inputs = parseInputValues(this.input, fileValues); const useTUI = shouldUseTUI(process.stdout.isTTY);
       return runWorkflow(new EngineBridge(), {project: this.project ?? process.cwd(), backend: this.backend, tool: this.tool, runtime: this.runtime, task: this.task.join(' '), workflow: this.workflow, inputs, useTUI}, this.context.stdout);
     } catch (error) {this.context.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`); return 6}
   }

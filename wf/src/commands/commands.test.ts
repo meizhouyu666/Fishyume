@@ -6,7 +6,7 @@ import test from 'node:test';
 import type {EngineClient, EventListener} from '../bridge/engine.js';
 import type {Conclusion, EngineHello, RunEvent, RunStatusView, WorkflowSnapshot} from '../bridge/types.js';
 import {runDoctor} from './doctor.js';
-import {parseInputValues, runWorkflow} from './run.js';
+import {parseInputValues, runWorkflow, shouldUseTUI} from './run.js';
 import {showStatus} from './status.js';
 
 class FakeClient implements EngineClient {
@@ -63,3 +63,5 @@ test('workflow Backend selection is left to the Engine when CLI has no override'
 test('status json emits one machine-readable object', async () => {let output = ''; assert.equal(await showStatus(new FakeClient(), 'run-1', true, {write(text) {output += text}}), 0); assert.equal(output.trim().split('\n').length, 1); assert.equal(JSON.parse(output).run.id, 'run-1')})
 
 test('input values accept scalars and reject structured values', () => {assert.deepEqual(parseInputValues(['goal=ship', 'count=2', 'dry=true'], {base: 'x'}), {base: 'x', goal: 'ship', count: 2, dry: true}); assert.throws(() => parseInputValues(['bad=[1,2]']), /JSON scalar/)})
+
+test('TTY selection preserves text mode for automation and supports monochrome TUI', () => {assert.equal(shouldUseTUI(false, {}), false); assert.equal(shouldUseTUI(true, {CI: '1'}), false); assert.equal(shouldUseTUI(true, {NO_COLOR: '1'}), true)})

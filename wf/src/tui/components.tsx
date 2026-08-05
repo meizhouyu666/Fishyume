@@ -1,0 +1,17 @@
+import React, {type ReactNode} from 'react';
+import {Box, Text} from 'ink';
+import type {AttemptSnapshot, NodeSummary, RunStatusView, WorkflowSnapshot} from '../bridge/types.js';
+import {colorFor, designTokens, statusBadgeText, statusForRun, type ColorMode, type ColorRole, type SemanticStatus} from './design-tokens.js';
+import {fitText, terminalSize} from './layout.js';
+import {footerLines, formatAttemptRow, formatNodeRow, headerLines, progressText} from './presentation.js';
+
+interface ThemeProps {colorMode: ColorMode}
+function ThemedText({role, colorMode, children, bold}: ThemeProps & {role: ColorRole; children: ReactNode; bold?: boolean}) {return <Text color={colorFor(role, colorMode)} bold={bold}>{children}</Text>}
+export function StatusBadge({status, colorMode}: ThemeProps & {status: SemanticStatus}) {const token = designTokens.status[status]; return <ThemedText role={token.role} colorMode={colorMode} bold>{statusBadgeText(status)}</ThemedText>}
+export function Header({run, width, elapsedMs, colorMode}: ThemeProps & {run: WorkflowSnapshot; width: number; elapsedMs: number}) {const lines = headerLines(run, width, elapsedMs); return <Box flexDirection="column"><Box><ThemedText role="brand" colorMode={colorMode} bold>{fitText(lines[0] ?? '', width)}</ThemedText></Box>{lines.slice(1).map((line, index) => <Box key={index}><ThemedText role={index === 0 ? designTokens.status[statusForRun(run)].role : 'muted'} colorMode={colorMode}>{line}</ThemedText></Box>)}</Box>}
+export function Panel({title, width, colorMode, children}: ThemeProps & {title: string; width: number; children: ReactNode}) {const bordered = terminalSize(width) !== 'narrow'; return <Box flexDirection="column" width={width} borderStyle={bordered ? 'classic' : undefined} paddingX={bordered ? designTokens.spacing.panelX : 0}><ThemedText role="strong" colorMode={colorMode} bold>{`${designTokens.emphasis.sectionPrefix} ${title}`}</ThemedText>{children}</Box>}
+export function Section(props: React.ComponentProps<typeof Panel>) {return <Panel {...props}/>}
+export function NodeRow({node, width, colorMode}: ThemeProps & {node: NodeSummary; width: number}) {const formatted = formatNodeRow(node, width); const first = formatted.lines[0] ?? ''; const badge = statusBadgeText(formatted.status); return <Box flexDirection="column"><Box><StatusBadge status={formatted.status} colorMode={colorMode}/><Text>{first.slice(badge.length)}</Text></Box>{formatted.lines.slice(1).map((line, index) => <ThemedText key={index} role="muted" colorMode={colorMode}>{line}</ThemedText>)}</Box>}
+export function AttemptRow({attempt, width, colorMode}: ThemeProps & {attempt: AttemptSnapshot; width: number}) {const formatted = formatAttemptRow(attempt, width); const first = formatted.lines[0] ?? ''; const badge = statusBadgeText(formatted.status); return <Box><StatusBadge status={formatted.status} colorMode={colorMode}/><Text>{first.slice(badge.length)}</Text></Box>}
+export function ProgressSummary({run, width, colorMode}: ThemeProps & {run: WorkflowSnapshot; width: number}) {return <Box><ThemedText role="muted" colorMode={colorMode}>{fitText(progressText(run), width)}</ThemedText></Box>}
+export function HelpFooter({view, width, colorMode}: ThemeProps & {view: RunStatusView; width: number}) {return <Box flexDirection="column" marginTop={designTokens.spacing.section}>{footerLines(view, width).map((line, index) => <ThemedText key={index} role="muted" colorMode={colorMode}>{line}</ThemedText>)}</Box>}

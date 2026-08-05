@@ -10,3 +10,5 @@ Fishyume currently ships two Agent Backends:
 Backend selection order is `--backend`, Workflow `defaults.backend`, `FISHYUME_BACKEND`, then `ccpanes`. See the repository README for workflow examples, recovery guarantees, state compatibility, security, release artifacts, and live smoke instructions.
 
 Fishyume M2.2 supports bounded parallel Agent execution through `execution.maxConcurrency`. `fishyume status` reports the effective capacity, every active Attempt, waiting Approval, and per-node cancellation or recovery diagnostic. Direct and CC-Panes use the same scheduling and cancellation semantics.
+
+On an interactive terminal, `fishyume run` uses the responsive Ink product surface with explicit non-color status markers, parallel Attempt and Approval panels, diagnostics, progress, and copyable recovery commands. It targets 80/120/160 columns and degrades from TrueColor to ANSI or monochrome. Non-TTY/CI output remains the stable line-oriented reporter, and `fishyume status --json` remains a single machine-readable object.
