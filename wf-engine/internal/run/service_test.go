@@ -547,6 +547,7 @@ func TestResumeReconciliationClassifiesDelayedMissingAndExited(t *testing.T) {
 			if final.Conclusion != test.wantConclusion || final.Reason != test.wantReason {
 				t.Fatalf("final=%+v", final)
 			}
+			waitForControllers(t, second)
 			b.mu.Lock()
 			launches := b.launches
 			b.mu.Unlock()
