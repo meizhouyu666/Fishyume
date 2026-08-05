@@ -72,9 +72,16 @@ fishyume status <run-id> --json
 
 ### CC-Panes
 
-The CC-Panes live smoke was not rerun during this M2.1.2 closure because the current environment does not provide `FISHYUME_CCPANES_PROFILE_ID`. The prior M2.1.1 registered-project live evidence remains applicable, and this milestone adds executable Adapter tests plus the M2.1.1 compatibility matrix instead of fabricating a new live result.
+The M2.1.2 CC-Panes live smoke passed on 2026-08-05 against the registered `E:\meizhouyu\agentstudy\my-agent` project, using the dedicated non-interactive `Fishyume Engine Worker` Codex profile (`d332e0c6-1093-4074-9ef0-7e0d7d702029`, local runtime, YOLO enabled):
 
-To rerun it after supplying the dedicated profile:
+- `fishyume doctor` confirmed Engine `0.2.1-alpha.1`, protocol 2 compatibility, a ready CC-Panes control plane, and project registration;
+- Run `run-9666903f48091e1f78caffc7` completed the Agent -> Approval -> Agent Workflow with conclusion `succeeded`;
+- both Agent Nodes used Backend `ccpanes`, each had exactly one Attempt, and both persisted `resultConsumed=true`;
+- TaskBindings `62bb57b9-8250-41d7-a656-7d2c8a3b1848` and `a9033f57-e62f-4f2e-99a7-148e3bf554d9` completed at 100% with exit code 0;
+- both managed sessions called `ccpanes.update_task_binding`, stayed out of `waitingInput`, and required no manual MCP allow;
+- both smoke sessions were stopped after inspection, no temporary Engine process remained, and the temporary state directory was removed.
+
+To rerun it with a dedicated profile:
 
 ```powershell
 $env:FISHYUME_ENGINE_PATH = (Resolve-Path ./wf-engine/wf-engine.exe).Path
