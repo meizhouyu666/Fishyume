@@ -52,7 +52,7 @@
 ### 2.4 Console 架构
 
 - 提取可复用的 live console/session controller，供 `run` 与 `status --watch` 共用状态刷新和动作提交逻辑。
-- `RunApp` 通过 props/callback 接收动作能力；React 本地状态只允许保存：选择索引、帮助展开、确认态、拒绝原因输入、动作 pending/message。
+- `RunApp` 通过 props/callback 接收动作能力；React 本地状态只保存选择索引/节点身份、帮助展开、确认态、固定 action target、拒绝原因输入、动作 pending/message，不保存业务对象副本。
 - Run、Node、Attempt、Approval、diagnostic、结论、重试资格的最终判断均来自 Engine 状态或与 Engine 规则一致的纯派生函数。
 - presentation 层继续无 React/Ink 依赖；交互状态机优先做成纯函数，以便确定性测试。
 - 不新增 JSON-RPC 方法；复用 `run.status`、`run.resume`、`run.cancel`、`run.detach`。
@@ -113,8 +113,8 @@ reject、retry、cancel 必须进入显式模式；indeterminate retry 必须展
 ### 6.1 实现与验证记录
 
 - 共享 controller 位于 `wf/src/tui/live-console.tsx`，统一负责串行 refresh、watch poll、mutation lock、generation 判定、event subscription、detach 与 cleanup。
-- 纯 actionable/retry 派生与交互 reducer 位于 `wf/src/tui/interaction.ts`；React 只保存选择、帮助、输入/确认、pending 和临时 action message。
-- 自动化验证覆盖 35 项测试，包括普通命令兼容、RPC 参数、重复提交、旧响应丢弃、终态停轮询、timer/subscription cleanup、80/120/160 columns 与 mono-safe 文本。
+- 纯 actionable/retry 派生与交互 reducer 位于 `wf/src/tui/interaction.ts`；React 只保存选择/固定 action identity、帮助、输入/确认、pending 和临时 action message。
+- 自动化验证覆盖 40 项测试，包括普通命令兼容、RPC 参数、重复提交、旧响应丢弃、终态停轮询、timer/subscription cleanup、80/120/160 columns 与 mono-safe 文本，以及固定 nodeId 的确认安全和 Watch ownership detach。
 - 未修改 Go、RPC 方法、RPC 参数合同或持久化 schema，因此按门禁未扩大范围运行 Go 测试。
 - 本机没有可用 Windows PTY harness（未安装 `winpty`/`node-pty`），WSL 有 `script` 但没有 Node.js；因此未伪造 TTY/PTY smoke 通过。已执行构建后 CLI 非 TTY smoke，确认 `--watch --json` 与非 TTY `--watch` 均以退出码 6 给出预期诊断。
 

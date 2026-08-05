@@ -12,18 +12,20 @@ export interface ActionableNode {
 export type ConsoleMode = 'idle' | 'reject' | 'retry-confirm' | 'retry-risk-confirm' | 'cancel-confirm';
 export interface ConsoleInteractionState {
   selectedIndex: number;
+  selectedNodeId?: string;
   helpVisible: boolean;
   mode: ConsoleMode;
   rejectReason: string;
+  actionTarget?: ActionableNode;
 }
 
 export type ConsoleInteractionEvent =
-  | {type: 'move'; delta: -1 | 1; count: number}
-  | {type: 'reconcile'; count: number}
+  | {type: 'move'; delta: -1 | 1; targets: readonly ActionableNode[]}
+  | {type: 'reconcile'; targets: readonly ActionableNode[]}
   | {type: 'toggle-help'}
   | {type: 'escape'}
-  | {type: 'begin-reject'}
-  | {type: 'begin-retry'; duplicateRisk: boolean}
+  | {type: 'begin-reject'; target: ActionableNode}
+  | {type: 'begin-retry'; target: ActionableNode}
   | {type: 'begin-cancel'}
   | {type: 'append-reason'; text: string}
   | {type: 'backspace'}
@@ -31,10 +33,10 @@ export type ConsoleInteractionEvent =
 
 export const initialConsoleInteractionState: ConsoleInteractionState = {selectedIndex: 0, helpVisible: false, mode: 'idle', rejectReason: ''};
 
-export function basicConsoleKeyEvent(input: string, key: {upArrow: boolean; downArrow: boolean; escape: boolean}, count: number): ConsoleInteractionEvent | undefined {
+export function basicConsoleKeyEvent(input: string, key: {upArrow: boolean; downArrow: boolean; escape: boolean}, targets: readonly ActionableNode[]): ConsoleInteractionEvent | undefined {
   if (key.escape) return {type: 'escape'};
-  if (key.downArrow || input === 'j') return {type: 'move', delta: 1, count};
-  if (key.upArrow || input === 'k') return {type: 'move', delta: -1, count};
+  if (key.downArrow || input === 'j') return {type: 'move', delta: 1, targets};
+  if (key.upArrow || input === 'k') return {type: 'move', delta: -1, targets};
   if (input === '?') return {type: 'toggle-help'};
   return undefined;
 }
@@ -67,35 +69,58 @@ export function reconcileSelection(selectedIndex: number, count: number): number
   return Math.min(Math.max(0, selectedIndex), count - 1);
 }
 
+function sameActionableNode(left: ActionableNode, right: ActionableNode): boolean {
+  return left.nodeId === right.nodeId && left.kind === right.kind && left.duplicateRisk === right.duplicateRisk;
+}
+
+export function selectedActionableNode(state: ConsoleInteractionState, targets: readonly ActionableNode[]): ActionableNode | undefined {
+  if (state.selectedNodeId) return targets.find(target => target.nodeId === state.selectedNodeId);
+  return targets[reconcileSelection(state.selectedIndex, targets.length)];
+}
+
+export function boundActionableNode(state: ConsoleInteractionState, targets: readonly ActionableNode[]): ActionableNode | undefined {
+  if (!state.actionTarget) return undefined;
+  return targets.find(target => sameActionableNode(target, state.actionTarget!));
+}
+
 export function transitionConsoleState(state: ConsoleInteractionState, event: ConsoleInteractionEvent): ConsoleInteractionState {
   switch (event.type) {
     case 'move': {
-      if (event.count <= 0 || state.mode !== 'idle') return state;
-      const selectedIndex = (state.selectedIndex + event.delta + event.count) % event.count;
-      return {...state, selectedIndex};
+      if (event.targets.length <= 0 || state.mode !== 'idle') return state;
+      const currentIndex = state.selectedNodeId ? event.targets.findIndex(target => target.nodeId === state.selectedNodeId) : state.selectedIndex;
+      const selectedIndex = ((currentIndex < 0 ? reconcileSelection(state.selectedIndex, event.targets.length) : currentIndex) + event.delta + event.targets.length) % event.targets.length;
+      return {...state, selectedIndex, selectedNodeId: event.targets[selectedIndex]?.nodeId};
     }
-    case 'reconcile':
-      return {...state, selectedIndex: reconcileSelection(state.selectedIndex, event.count), mode: 'idle', rejectReason: ''};
+    case 'reconcile': {
+      const preservedIndex = state.selectedNodeId ? event.targets.findIndex(target => target.nodeId === state.selectedNodeId) : -1;
+      const selectedIndex = preservedIndex >= 0 ? preservedIndex : reconcileSelection(state.selectedIndex, event.targets.length);
+      const selectedNodeId = event.targets[selectedIndex]?.nodeId;
+      const actionTarget = boundActionableNode(state, event.targets);
+      if (state.actionTarget && !actionTarget) return {...state, selectedIndex, selectedNodeId, mode: 'idle', rejectReason: '', actionTarget: undefined};
+      return {...state, selectedIndex, selectedNodeId, ...(actionTarget ? {actionTarget} : {})};
+    }
     case 'toggle-help':
       return state.mode === 'idle' ? {...state, helpVisible: !state.helpVisible} : state;
     case 'escape':
-      return state.mode === 'idle' ? state : {...state, mode: 'idle', rejectReason: ''};
+      return state.mode === 'idle' ? state : {...state, mode: 'idle', rejectReason: '', actionTarget: undefined};
     case 'begin-reject':
-      return state.mode === 'idle' ? {...state, mode: 'reject', rejectReason: ''} : state;
+      return state.mode === 'idle' && event.target.kind === 'approval' ? {...state, mode: 'reject', rejectReason: '', actionTarget: {...event.target}} : state;
     case 'begin-retry':
-      return state.mode === 'idle' ? {...state, mode: event.duplicateRisk ? 'retry-risk-confirm' : 'retry-confirm'} : state;
+      return state.mode === 'idle' && event.target.kind === 'retry' ? {...state, mode: event.target.duplicateRisk ? 'retry-risk-confirm' : 'retry-confirm', actionTarget: {...event.target}} : state;
     case 'begin-cancel':
-      return state.mode === 'idle' ? {...state, mode: 'cancel-confirm'} : state;
+      return state.mode === 'idle' ? {...state, mode: 'cancel-confirm', actionTarget: undefined} : state;
     case 'append-reason':
       return state.mode === 'reject' ? {...state, rejectReason: state.rejectReason + event.text.replace(/[\u0000-\u001f\u007f]/g, '')} : state;
     case 'backspace':
       return state.mode === 'reject' ? {...state, rejectReason: Array.from(state.rejectReason).slice(0, -1).join('')} : state;
     case 'submitted':
-      return {...state, mode: 'idle', rejectReason: ''};
+      return {...state, mode: 'idle', rejectReason: '', actionTarget: undefined};
   }
 }
 
-export function resumeActionForMode(state: ConsoleInteractionState, target: ActionableNode): ResumeAction | undefined {
+export function resumeActionForMode(state: ConsoleInteractionState, targets: readonly ActionableNode[]): ResumeAction | undefined {
+  const target = boundActionableNode(state, targets);
+  if (!target) return undefined;
   if (state.mode === 'reject' && target.kind === 'approval') return {type: 'reject', nodeId: target.nodeId, reason: state.rejectReason};
   if (state.mode === 'retry-confirm' && target.kind === 'retry') return {type: 'retry', nodeId: target.nodeId, acknowledgeDuplicateRisk: false};
   if (state.mode === 'retry-risk-confirm' && target.kind === 'retry') return {type: 'retry', nodeId: target.nodeId, acknowledgeDuplicateRisk: true};

@@ -39,7 +39,7 @@ run command
 
 `RunApp` 消费完整 `RunStatusView`，而不是只消费 `WorkflowSnapshot`。事件到达时界面立即更新 Run/Node phase；随后串行请求 `run.status`，补齐 active Attempts、waiting Approvals 和 diagnostics。串行刷新避免响应乱序覆盖较新的状态，最终停止前还会等待刷新链并读取一次权威状态。
 
-M3.2 在这条边界上增加了共享 `live-console.tsx` controller 与纯 `interaction.ts` 状态机。`run` 继续消费 `run.event`，`status --watch` 以 1 秒有界轮询重新接入；刷新 generation 会使较早响应失效，动作完成后无论成功或失败都重新读取完整 `RunStatusView`。React 只保存选择、帮助、输入/确认、pending 与临时 action message，不保存 Run/Node/diagnostic 业务副本。
+M3.2 在这条边界上增加了共享 `live-console.tsx` controller 与纯 `interaction.ts` 状态机。`run` 继续消费 `run.event`，`status --watch` 以 1 秒有界轮询重新接入；刷新 generation 会使较早响应失效，动作完成后无论成功或失败都重新读取完整 `RunStatusView`。React 只保存选择索引/节点身份、固定 action target、帮助、输入/确认、pending 与临时 action message，不保存 Run/Node/diagnostic 业务副本。确认提交会按固定 nodeId 在最新 actionable 列表中重新解析；Watch 成功 resume 后在 bridge 关闭前条件 detach，纯观察与终态不会隐式 detach。
 
 纯文本与 JSON 路径不经过 Ink：
 

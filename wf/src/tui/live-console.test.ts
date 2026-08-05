@@ -82,7 +82,7 @@ test('pending mutation lock suppresses duplicate submissions', async () => {
   await controller.close();
 });
 
-test('watch polling stops at terminal state and close removes timers and subscriptions', async () => {
+test('watch polling stops at terminal state and pure observation close does not detach', async () => {
   const terminal = new FakeClient(); terminal.statusViews = [view('completed')];
   const terminalController = new LiveConsoleController(terminal, 'run-1', {mode: 'watch', pollIntervalMs: 5, onView() {}}); await terminalController.start();
   await new Promise(resolve => setTimeout(resolve, 20));
@@ -93,8 +93,29 @@ test('watch polling stops at terminal state and close removes timers and subscri
   const activeController = new LiveConsoleController(active, 'run-1', {mode: 'watch', pollIntervalMs: 20, onView() {}}); await activeController.start(); await activeController.close();
   await new Promise(resolve => setTimeout(resolve, 30));
   assert.equal(active.calls.filter(call => call.method === 'run.status').length, 1);
+  assert.equal(active.calls.filter(call => call.method === 'run.detach').length, 0);
+});
+
+test('watch ownership after successful resume detaches on close while run mode keeps detach semantics', async () => {
+  const watchClient = new FakeClient(); watchClient.statusViews = [view('waiting'), view('running')];
+  const watchController = new LiveConsoleController(watchClient, 'run-1', {mode: 'watch', onView() {}}); await watchController.start();
+  assert.equal((await watchController.resume({type: 'approve', nodeId: 'approve'})).ok, true);
+  await watchController.close();
+  assert.deepEqual(watchClient.calls.filter(call => call.method === 'run.detach').map(call => call.params), [{runId: 'run-1'}]);
 
   const runClient = new FakeClient(); const runController = new LiveConsoleController(runClient, 'run-1', {mode: 'run', onView() {}}); await runController.start();
-  assert.ok(runClient.listener); await runController.detach(); await runController.close(); assert.equal(runClient.listener, undefined);
+  assert.ok(runClient.listener); await runController.close(); assert.equal(runClient.listener, undefined);
   assert.deepEqual(runClient.calls.find(call => call.method === 'run.detach')?.params, {runId: 'run-1'});
+});
+
+test('terminal views do not detach even when watch previously acquired controller ownership', async () => {
+  const watchClient = new FakeClient(); watchClient.statusViews = [view('waiting'), view('completed')];
+  const controller = new LiveConsoleController(watchClient, 'run-1', {mode: 'watch', onView() {}}); await controller.start();
+  assert.equal((await controller.resume({type: 'approve', nodeId: 'approve'})).ok, true);
+  await controller.close();
+  assert.equal(watchClient.calls.filter(call => call.method === 'run.detach').length, 0);
+
+  const runClient = new FakeClient(); runClient.statusViews = [view('completed')];
+  const runController = new LiveConsoleController(runClient, 'run-1', {mode: 'run', onView() {}}); await runController.start(); await runController.close();
+  assert.equal(runClient.calls.filter(call => call.method === 'run.detach').length, 0);
 });

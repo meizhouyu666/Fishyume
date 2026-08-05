@@ -23,17 +23,19 @@ export class LiveConsoleController {
   #view?: RunStatusView;
   #closed = false;
   #pendingMutation = false;
-  #detaching = false;
+  #mayOwnController: boolean;
   #revision = 0;
   #refreshChain: Promise<void> = Promise.resolve();
   #pollTimer?: NodeJS.Timeout;
   #unsubscribe?: () => void;
   #mutationTask?: Promise<ActionResult>;
+  #detachTask?: Promise<void>;
 
   constructor(client: EngineClient, runId: string, options: LiveConsoleControllerOptions) {
     this.#client = client;
     this.#runId = runId;
     this.#mode = options.mode;
+    this.#mayOwnController = options.mode === 'run';
     this.#pollIntervalMs = options.pollIntervalMs ?? 1000;
     this.#onView = options.onView;
   }
@@ -71,25 +73,36 @@ export class LiveConsoleController {
     return this.#mutate('run.cancel', {runId: this.#runId}, 'cancel run');
   }
 
-  async detach(): Promise<void> {
-    if (this.#mode !== 'run' || this.#detaching) return;
+  detach(): Promise<void> {
+    if (!this.#mayOwnController) return Promise.resolve();
+    if (this.#detachTask) return this.#detachTask;
+    const task = this.#performDetach();
+    this.#detachTask = task;
+    void task.then(
+      () => {if (this.#detachTask === task) this.#detachTask = undefined},
+      () => {if (this.#detachTask === task) this.#detachTask = undefined},
+    );
+    return task;
+  }
+
+  async #performDetach(): Promise<void> {
     await this.#mutationTask?.catch(() => undefined);
-    if (this.#view?.run?.phase === 'completed') return;
-    this.#detaching = true;
+    if (this.#view?.run?.phase === 'completed') {this.#mayOwnController = false; return}
     ++this.#revision;
     try {await this.#client.call<WorkflowSnapshot>('run.detach', {runId: this.#runId})}
-    finally {this.#detaching = false}
+    finally {this.#mayOwnController = false}
   }
 
   async close(): Promise<void> {
     if (this.#closed) return;
+    await this.#mutationTask?.catch(() => undefined);
+    await this.detach().catch(() => undefined);
     this.#closed = true;
     ++this.#revision;
     if (this.#pollTimer) clearTimeout(this.#pollTimer);
     this.#pollTimer = undefined;
     this.#unsubscribe?.();
     this.#unsubscribe = undefined;
-    await this.#mutationTask?.catch(() => undefined);
     await this.#refreshChain;
   }
 
@@ -106,6 +119,7 @@ export class LiveConsoleController {
     ++this.#revision;
     try {
       await this.#client.call<WorkflowSnapshot>(method, params);
+      if (method === 'run.resume') this.#mayOwnController = true;
       return {accepted: true, ok: true, message: `${label} submitted`};
     } catch (error) {
       return {accepted: true, ok: false, message: `${label} failed · ${error instanceof Error ? error.message : String(error)}`};
