@@ -55,14 +55,20 @@ func TestCCPanesCtlFixture(t *testing.T) {
 		fmt.Print(`{"ok":true}`)
 	case strings.Contains(command, "wait_for_session"):
 		state := "idle"
-		if scenario == "waiting-input" {
-			state = "waitingInput"
-		}
-		if scenario == "idle" {
-			state = "idle"
-		}
 		satisfied := true
-		if scenario == "active-then-idle" {
+		switch scenario {
+		case "waiting-input":
+			state = "waitingInput"
+		case "active":
+			state, satisfied = "active", false
+		case "exited":
+			state = "exited"
+		case "session-error":
+			state = "error"
+		case "session-not-found":
+			fmt.Fprint(os.Stderr, "session not found")
+			os.Exit(7)
+		case "active-then-idle":
 			counterPath := os.Getenv("WF_CTL_COUNTER")
 			data, _ := os.ReadFile(counterPath)
 			if len(data) == 0 {
@@ -80,7 +86,7 @@ func TestCCPanesCtlFixture(t *testing.T) {
 		if scenario == "failed-binding" {
 			status, summary, exitCode = "failed", "fixture failed", "2"
 		}
-		if scenario == "waiting-input" || scenario == "idle" {
+		if scenario == "waiting-input" || scenario == "idle" || scenario == "active" || scenario == "exited" || scenario == "session-error" || scenario == "session-not-found" {
 			status, summary, exitCode = "running", "", "null"
 		}
 		if scenario == "malformed-binding" {
@@ -250,6 +256,38 @@ func TestBackendStateMappingsWithExecutableFixture(t *testing.T) {
 						t.Fatalf("wait_for_session omitted real state %s: %s", allowed, line)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestReconcileStateMappingsWithExecutableFixture(t *testing.T) {
+	tests := []struct {
+		scenario string
+		want     backend.ObservationState
+	}{
+		{"success", backend.ObservationTerminal},
+		{"active", backend.ObservationActive},
+		{"waiting-input", backend.ObservationWaitingInput},
+		{"idle", backend.ObservationCompletionMissing},
+		{"exited", backend.ObservationExited},
+		{"session-error", backend.ObservationError},
+		{"session-not-found", backend.ObservationLost},
+	}
+	for _, test := range tests {
+		t.Run(test.scenario, func(t *testing.T) {
+			b, _ := fixtureBackend(t, test.scenario)
+			observation, err := b.Reconcile(context.Background(), backend.Session{ID: "session-1", Metadata: map[string]string{
+				"bindingId": "binding-1", "project": `C:\fixture-project`,
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if observation.State != test.want {
+				t.Fatalf("state=%q, want %q", observation.State, test.want)
+			}
+			if test.want == backend.ObservationTerminal && (observation.Result == nil || observation.Result.Status != "succeeded") {
+				t.Fatalf("terminal observation=%+v", observation)
 			}
 		})
 	}
