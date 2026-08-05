@@ -37,6 +37,7 @@ type InputDeclaration struct {
 }
 
 type Defaults struct {
+	Backend string `json:"backend,omitempty" yaml:"backend,omitempty"`
 	Tool    string `json:"tool,omitempty" yaml:"tool,omitempty"`
 	Runtime string `json:"runtime,omitempty" yaml:"runtime,omitempty"`
 }

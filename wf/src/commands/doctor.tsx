@@ -3,9 +3,9 @@ import {EngineBridge, type EngineClient} from '../bridge/engine.js';
 
 interface Writer { write(text: string): unknown }
 
-export async function runDoctor(client: EngineClient, project: string | undefined, output: Writer): Promise<number> {
+export async function runDoctor(client: EngineClient, project: string | undefined, backend: string | undefined, output: Writer): Promise<number> {
   try {
-    const hello = await client.hello(project);
+    const hello = await client.hello(project, backend);
     output.write(`ok engine ${hello.engineVersion} started\n`);
     output.write(`ok protocol ${hello.protocolVersion} compatible\n`);
     output.write(`${hello.backendReady ? 'ok' : 'fail'} backend ${hello.backendDiagnostic}\n`);
@@ -24,8 +24,9 @@ export async function runDoctor(client: EngineClient, project: string | undefine
 export class DoctorCommand extends Command {
   static paths = [['doctor']];
   project = Option.String('--project');
+  backend = Option.String('--backend');
 
   async execute(): Promise<number> {
-    return runDoctor(new EngineBridge(), this.project, this.context.stdout);
+    return runDoctor(new EngineBridge(), this.project, this.backend, this.context.stdout);
   }
 }

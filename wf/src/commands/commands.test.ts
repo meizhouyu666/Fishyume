@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import {mkdtemp, rm, writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import test from 'node:test';
 import type {EngineClient, EventListener} from '../bridge/engine.js';
 import type {Conclusion, EngineHello, RunEvent, RunStatusView, WorkflowSnapshot} from '../bridge/types.js';
@@ -7,11 +10,12 @@ import {parseInputValues, runWorkflow} from './run.js';
 import {showStatus} from './status.js';
 
 class FakeClient implements EngineClient {
-  listener?: EventListener; closed = false;
+  listener?: EventListener; closed = false; helloBackend?: string; calls: Array<{method: string; params?: unknown}> = [];
   constructor(private readonly conclusion: Conclusion = 'succeeded', private readonly ready = true, private readonly phase: WorkflowSnapshot['phase'] = 'completed') {}
-  async hello(project?: string): Promise<EngineHello> {return {engineVersion: 'fixture', protocolVersion: 2, supportedMethods: [], supportedBackends: ['ccpanes'], backendReady: this.ready, backendDiagnostic: this.ready ? 'ready' : 'not ready', projectChecked: Boolean(project), projectReady: this.ready, projectDiagnostic: this.ready ? 'registered' : 'missing'}}
-  async call<T>(method: string): Promise<T> {
-    if (method === 'run.start') {queueMicrotask(() => this.listener?.(this.event())); return {protocolVersion: 2, runId: 'run-1'} as T}
+  async hello(project?: string, backend?: string): Promise<EngineHello> {this.helloBackend = backend; return {engineVersion: 'fixture', protocolVersion: 2, supportedMethods: [], supportedBackends: ['ccpanes'], backendReady: this.ready, backendDiagnostic: this.ready ? 'ready' : 'not ready', projectChecked: Boolean(project), projectReady: this.ready, projectDiagnostic: this.ready ? 'registered' : 'missing'}}
+  async call<T>(method: string, params?: unknown): Promise<T> {
+    this.calls.push({method, params});
+    if (method === 'run.start' || method === 'run.startWorkflow') {queueMicrotask(() => this.listener?.(this.event())); return {protocolVersion: 2, runId: 'run-1'} as T}
     if (method === 'run.status') return this.view() as T;
     throw new Error(`unexpected method ${method}`);
   }
@@ -23,7 +27,7 @@ class FakeClient implements EngineClient {
   private event(): RunEvent {const snapshot = this.snapshot(); return {protocolVersion: 2, runId: snapshot.id, sequence: 4, type: 'run.completed', phase: snapshot.phase, conclusion: snapshot.conclusion, message: snapshot.summary, timestamp: snapshot.updatedAt}}
 }
 
-test('doctor returns non-zero for a failed required check', async () => {let output = ''; assert.equal(await runDoctor(new FakeClient('succeeded', false), 'p', {write(text) {output += text}}), 1); assert.match(output, /fail backend/)})
+test('doctor returns non-zero for a failed required check', async () => {let output = ''; assert.equal(await runDoctor(new FakeClient('succeeded', false), 'p', 'direct', {write(text) {output += text}}), 1); assert.match(output, /fail backend/)})
 
 test('run helper returns lifecycle-derived exit codes', async () => {
   for (const [conclusion, expected] of [['succeeded', 0], ['failed', 1], ['rejected', 2], ['cancelled', 3], ['indeterminate', 5]] as const) {
@@ -32,6 +36,28 @@ test('run helper returns lifecycle-derived exit codes', async () => {
     assert.equal(code, expected, conclusion); assert.equal(client.closed, true); assert.match(output, new RegExp(`conclusion=${conclusion}`));
   }
   assert.equal(await runWorkflow(new FakeClient('succeeded', true, 'waiting'), {project: 'p', tool: 'codex', runtime: 'local', task: 't', useTUI: false}, {write() {}}), 4);
+});
+
+test('run helper forwards an explicit Backend to Doctor and run creation', async () => {
+  const client = new FakeClient();
+  assert.equal(await runWorkflow(client, {project: 'p', backend: 'direct', tool: 'codex', runtime: 'local', task: 't', useTUI: false}, {write() {}}), 0);
+  assert.equal(client.helloBackend, 'direct');
+  assert.deepEqual(client.calls.find(call => call.method === 'run.start'), {method: 'run.start', params: {project: 'p', backend: 'direct', tool: 'codex', runtime: 'local', task: 't'}});
+});
+
+test('workflow Backend selection is left to the Engine when CLI has no override', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'fishyume-workflow-'));
+  const path = join(directory, 'workflow.yaml');
+  const content = 'apiVersion: fishyume/v1\nname: fixture\ndefaults: {backend: direct}\nexecution: {maxConcurrency: 1}\nnodes: {approve: {type: approval, prompt: approve}}\n';
+  await writeFile(path, content);
+  const client = new FakeClient('succeeded', false);
+  try {
+    assert.equal(await runWorkflow(client, {project: 'p', tool: 'codex', runtime: 'local', workflow: path, useTUI: false}, {write() {}}), 0);
+    assert.equal(client.helloBackend, undefined);
+    assert.deepEqual(client.calls.find(call => call.method === 'run.startWorkflow'), {method: 'run.startWorkflow', params: {project: 'p', backend: undefined, filename: 'workflow.yaml', content, inputs: undefined}});
+  } finally {
+    await rm(directory, {recursive: true, force: true});
+  }
 });
 
 test('status json emits one machine-readable object', async () => {let output = ''; assert.equal(await showStatus(new FakeClient(), 'run-1', true, {write(text) {output += text}}), 0); assert.equal(output.trim().split('\n').length, 1); assert.equal(JSON.parse(output).run.id, 'run-1')})

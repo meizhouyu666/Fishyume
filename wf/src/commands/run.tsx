@@ -11,13 +11,14 @@ import {exitCodeForSnapshot, TextReporter, type TextWriter} from '../tui/text-re
 
 const controllerStops = new Set(['waiting', 'paused', 'completed']);
 
-export interface RunOptions {project: string; tool: string; runtime: string; task?: string; workflow?: string; inputs?: Record<string, JsonScalar>; useTUI: boolean}
+export interface RunOptions {project: string; backend?: string; tool: string; runtime: string; task?: string; workflow?: string; inputs?: Record<string, JsonScalar>; useTUI: boolean}
 
 export async function runWorkflow(client: EngineClient, options: RunOptions, output: TextWriter): Promise<number> {
   const startedAt = Date.now();
   try {
-    const hello = await client.hello(options.project);
-    if (!hello.backendReady || (hello.projectChecked && !hello.projectReady)) {output.write(`fail backend ${hello.projectDiagnostic ?? hello.backendDiagnostic}\n`); return 1}
+    const workflowSelectsBackend = Boolean(options.workflow && !options.backend);
+    const hello = await client.hello(workflowSelectsBackend ? undefined : options.project, options.backend);
+    if (!workflowSelectsBackend && (!hello.backendReady || (hello.projectChecked && !hello.projectReady))) {output.write(`fail backend ${hello.projectDiagnostic ?? hello.backendDiagnostic}\n`); return 1}
     let current: WorkflowSnapshot | undefined; let ink: Instance | undefined; const reporter = new TextReporter(output);
     let settle!: () => void; const stopped = new Promise<void>(resolve => {settle = resolve});
     const unsubscribe = client.onRunEvent(event => {
@@ -30,8 +31,8 @@ export async function runWorkflow(client: EngineClient, options: RunOptions, out
       if (controllerStops.has(event.phase)) settle();
     });
     const started = options.workflow
-      ? await client.call<RunStartResult>('run.startWorkflow', {project: options.project, filename: basename(options.workflow), content: await readFile(options.workflow, 'utf8'), inputs: options.inputs})
-      : await client.call<RunStartResult>('run.start', {project: options.project, tool: options.tool, runtime: options.runtime, task: options.task});
+      ? await client.call<RunStartResult>('run.startWorkflow', {project: options.project, backend: options.backend, filename: basename(options.workflow), content: await readFile(options.workflow, 'utf8'), inputs: options.inputs})
+      : await client.call<RunStartResult>('run.start', {project: options.project, backend: options.backend, tool: options.tool, runtime: options.runtime, task: options.task});
     const initial = await client.call<RunStatusView>('run.status', {runId: started.runId});
     if (!initial.run) throw new Error('new run returned legacy or missing status');
     current = initial.run;
@@ -68,7 +69,7 @@ export function parseInputValues(values: string[] | undefined, fileValues: Recor
 
 export class RunCommand extends Command {
   static paths = [['run']];
-  project = Option.String('--project'); tool = Option.String('--tool', 'codex'); runtime = Option.String('--runtime', 'local');
+  project = Option.String('--project'); backend = Option.String('--backend'); tool = Option.String('--tool', 'codex'); runtime = Option.String('--runtime', 'local');
   workflow = Option.String('--workflow'); input = Option.Array('--input'); inputsFile = Option.String('--inputs'); task = Option.Rest();
   async execute(): Promise<number> {
     if (!['codex', 'claude', 'opencode'].includes(this.tool)) {this.context.stderr.write(`unsupported tool ${this.tool}\n`); return 6}
@@ -77,7 +78,7 @@ export class RunCommand extends Command {
     try {
       const fileValues = this.inputsFile ? JSON.parse(await readFile(this.inputsFile, 'utf8')) as Record<string, unknown> : {};
       const inputs = parseInputValues(this.input, fileValues); const useTUI = Boolean(process.stdout.isTTY && !process.env.NO_COLOR && !process.env.CI);
-      return runWorkflow(new EngineBridge(), {project: this.project ?? process.cwd(), tool: this.tool, runtime: this.runtime, task: this.task.join(' '), workflow: this.workflow, inputs, useTUI}, this.context.stdout);
+      return runWorkflow(new EngineBridge(), {project: this.project ?? process.cwd(), backend: this.backend, tool: this.tool, runtime: this.runtime, task: this.task.join(' '), workflow: this.workflow, inputs, useTUI}, this.context.stdout);
     } catch (error) {this.context.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`); return 6}
   }
 }

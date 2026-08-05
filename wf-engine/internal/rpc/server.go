@@ -84,9 +84,9 @@ func (s *Server) handle(ctx context.Context, request Request) {
 				return
 			}
 		}
-		doctor := s.service.Doctor(ctx, params.Project)
+		doctor := s.service.Doctor(ctx, params.Project, params.Backend)
 		s.writeResult(id, HelloResult{EngineVersion: EngineVersion, ProtocolVersion: ProtocolVersion,
-			SupportedMethods: supportedMethods, SupportedBackends: []string{"ccpanes"},
+			SupportedMethods: supportedMethods, SupportedBackends: s.service.SupportedBackends(),
 			BackendReady: doctor.BackendReady, BackendDiagnostic: doctor.BackendDiagnostic,
 			ProjectChecked: doctor.ProjectChecked, ProjectReady: doctor.ProjectReady,
 			ProjectDiagnostic: doctor.ProjectDiagnostic})

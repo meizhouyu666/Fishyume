@@ -15,19 +15,25 @@ import (
 )
 
 type fakeBackend struct {
+	name   string
 	result backend.AgentResult
 	wait   chan struct{}
 }
 
-func (*fakeBackend) Name() string { return "ccpanes" }
+func (f *fakeBackend) Name() string {
+	if f.name != "" {
+		return f.name
+	}
+	return "ccpanes"
+}
 func (*fakeBackend) Capabilities() backend.Capabilities {
 	return backend.Capabilities{Tools: []string{"codex"}, Runtimes: []string{"local"}, SupportsOutput: true}
 }
 func (f *fakeBackend) Doctor(context.Context, backend.DoctorRequest) backend.DoctorReport {
 	return backend.DoctorReport{Backend: f.Name(), Ready: true}
 }
-func (*fakeBackend) Start(context.Context, backend.AgentExecutionSpec) (*backend.ExecutionHandle, error) {
-	return &backend.ExecutionHandle{Backend: "ccpanes", SchemaVersion: 1, ID: "session-1"}, nil
+func (f *fakeBackend) Start(context.Context, backend.AgentExecutionSpec) (*backend.ExecutionHandle, error) {
+	return &backend.ExecutionHandle{Backend: f.Name(), SchemaVersion: 1, ID: "session-1"}, nil
 }
 func (f *fakeBackend) Observe(context.Context, backend.ExecutionHandle) (*backend.ExecutionObservation, error) {
 	if f.wait != nil {
@@ -82,6 +88,25 @@ func TestHandshakeV2(t *testing.T) {
 	output, _ := serve(t, request(1, "engine.hello", nil), &fakeBackend{})
 	if !strings.Contains(output.String(), `"engineVersion":"0.2.1-alpha.1"`) || !strings.Contains(output.String(), `"protocolVersion":2`) || !strings.Contains(output.String(), `"run.startWorkflow"`) {
 		t.Fatalf("response=%s", output.String())
+	}
+}
+
+func TestHandshakeReportsRegistryAndDoctorsSelectedBackend(t *testing.T) {
+	registry := backend.NewRegistry()
+	for _, candidate := range []*fakeBackend{{name: "direct"}, {name: "ccpanes"}} {
+		if err := registry.Register(candidate); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output := &safeBuffer{}
+	service := run.NewServiceWithRegistry(registry, "ccpanes", store.New(t.TempDir()))
+	server := NewServer(strings.NewReader(request(1, "engine.hello", map[string]any{"backend": "direct"})), output, service)
+	if err := server.Serve(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	if !strings.Contains(text, `"supportedBackends":["ccpanes","direct"]`) || !strings.Contains(text, `"backendDiagnostic":"backend direct is ready"`) {
+		t.Fatalf("response=%s", text)
 	}
 }
 

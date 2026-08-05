@@ -13,7 +13,7 @@ export type EventListener = (event: RunEvent) => void;
 export type DiagnosticListener = (message: string) => void;
 
 export interface EngineClient {
-  hello(project?: string): Promise<EngineHello>;
+  hello(project?: string, backend?: string): Promise<EngineHello>;
   call<T>(method: string, params?: unknown): Promise<T>;
   onRunEvent(listener: EventListener): () => void;
   onDiagnostic(listener: DiagnosticListener): () => void;
@@ -81,8 +81,9 @@ export class EngineBridge implements EngineClient {
     return () => this.#diagnosticListeners.delete(listener);
   }
 
-  async hello(project?: string): Promise<EngineHello> {
-    const hello = await this.call<EngineHello>('engine.hello', project ? {project} : undefined);
+  async hello(project?: string, backend?: string): Promise<EngineHello> {
+    const params = project || backend ? {...(project ? {project} : {}), ...(backend ? {backend} : {})} : undefined;
+    const hello = await this.call<EngineHello>('engine.hello', params);
     if (hello.protocolVersion !== protocolVersion) {
       throw new Error(`incompatible protocol version ${hello.protocolVersion}`);
     }

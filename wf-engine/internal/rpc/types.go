@@ -47,6 +47,7 @@ type HelloResult struct {
 
 type helloParams struct {
 	Project string `json:"project"`
+	Backend string `json:"backend,omitempty"`
 }
 
 type StartResult struct {

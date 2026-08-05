@@ -34,6 +34,7 @@ const (
 
 type StartRequest struct {
 	Project string `json:"project"`
+	Backend string `json:"backend,omitempty"`
 	Tool    string `json:"tool"`
 	Runtime string `json:"runtime"`
 	Task    string `json:"task"`
@@ -41,6 +42,7 @@ type StartRequest struct {
 
 type StartWorkflowRequest struct {
 	Project    string               `json:"project"`
+	Backend    string               `json:"backend,omitempty"`
 	Filename   string               `json:"filename"`
 	Content    string               `json:"content"`
 	Inputs     map[string]any       `json:"inputs,omitempty"`
@@ -95,10 +97,12 @@ type serviceTestHooks struct {
 }
 
 type Service struct {
-	backend backend.AgentBackend
-	store   *store.Store
-	leases  *store.LeaseManager
-	now     func() time.Time
+	registry       *backend.Registry
+	defaultBackend string
+	store          *store.Store
+	leases         *store.LeaseManager
+	now            func() time.Time
+	getenv         func(string) string
 
 	mu             sync.Mutex
 	controllers    map[string]*controller
@@ -110,17 +114,40 @@ type Service struct {
 }
 
 func NewService(b backend.AgentBackend, stores ...*store.Store) *Service {
+	registry := backend.NewRegistry()
+	if err := registry.Register(b); err != nil {
+		panic(err)
+	}
+	service := NewServiceWithRegistry(registry, b.Name(), stores...)
+	// The single-Backend constructor is a deterministic compatibility/test
+	// entry point; production composition uses NewServiceWithRegistry.
+	service.getenv = func(string) string { return "" }
+	return service
+}
+
+func NewServiceWithRegistry(registry *backend.Registry, defaultBackend string, stores ...*store.Store) *Service {
 	var state *store.Store
 	if len(stores) > 0 {
 		state = stores[0]
 	} else if defaultStore, err := store.NewDefault(); err == nil {
 		state = defaultStore
 	}
-	service := &Service{backend: b, store: state, now: time.Now, controllers: make(map[string]*controller)}
+	if registry == nil {
+		registry = backend.NewRegistry()
+	}
+	defaultBackend = strings.TrimSpace(defaultBackend)
+	if defaultBackend == "" {
+		defaultBackend = "ccpanes"
+	}
+	service := &Service{registry: registry, defaultBackend: defaultBackend, store: state, now: time.Now, getenv: os.Getenv, controllers: make(map[string]*controller)}
 	if state != nil {
 		service.leases = store.NewLeaseManager(state)
 	}
 	return service
+}
+
+func (s *Service) SupportedBackends() []string {
+	return s.registry.Names()
 }
 
 func (s *Service) SetEventSink(sink EventSink) {
@@ -129,9 +156,13 @@ func (s *Service) SetEventSink(sink EventSink) {
 	s.eventSink = sink
 }
 
-func (s *Service) Doctor(ctx context.Context, project string) DoctorReport {
+func (s *Service) Doctor(ctx context.Context, project, requestedBackend string) DoctorReport {
 	project = strings.TrimSpace(project)
-	backendReport := s.backend.Doctor(ctx, backend.DoctorRequest{Workspace: project})
+	candidate, _, err := s.selectBackend(requestedBackend, "")
+	if err != nil {
+		return DoctorReport{BackendDiagnostic: err.Error()}
+	}
+	backendReport := candidate.Doctor(ctx, backend.DoctorRequest{Workspace: project})
 	report := DoctorReport{BackendReady: backendReport.Ready, BackendDiagnostic: doctorDiagnostic(backendReport)}
 	if project == "" {
 		return report
@@ -143,6 +174,24 @@ func (s *Service) Doctor(ctx context.Context, project string) DoctorReport {
 		report.ProjectDiagnostic = report.BackendDiagnostic
 	}
 	return report
+}
+
+func (s *Service) selectBackend(explicit, workflowDefault string) (backend.AgentBackend, string, error) {
+	name := strings.TrimSpace(explicit)
+	if name == "" {
+		name = strings.TrimSpace(workflowDefault)
+	}
+	if name == "" && s.getenv != nil {
+		name = strings.TrimSpace(s.getenv("FISHYUME_BACKEND"))
+	}
+	if name == "" {
+		name = s.defaultBackend
+	}
+	candidate, err := s.registry.Get(name)
+	if err != nil {
+		return nil, "", err
+	}
+	return candidate, name, nil
 }
 
 func doctorDiagnostic(report backend.DoctorReport) string {
@@ -190,7 +239,19 @@ func (s *Service) Start(ctx context.Context, request StartRequest) (WorkflowSnap
 	if err != nil {
 		return WorkflowSnapshot{}, err
 	}
-	return s.startNormalized(ctx, request.Project, workflow.Normalized{Document: doc, Inputs: map[string]any{}, TopologicalOrder: order}, "run")
+	candidate, backendName, err := s.selectBackend(request.Backend, "")
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	doc.Defaults.Backend = backendName
+	normalized := workflow.Normalized{Document: doc, Inputs: map[string]any{}, TopologicalOrder: order}
+	if err := validateBackendCapabilities(candidate, normalized); err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	if err := ensureBackendReady(ctx, candidate, request.Project); err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	return s.startNormalized(ctx, request.Project, normalized, "run", backendName)
 }
 
 func (s *Service) StartWorkflow(ctx context.Context, request StartWorkflowRequest) (WorkflowSnapshot, error) {
@@ -225,10 +286,69 @@ func (s *Service) StartWorkflow(ctx context.Context, request StartWorkflowReques
 	if err != nil {
 		return WorkflowSnapshot{}, err
 	}
-	return s.startNormalized(ctx, request.Project, normalized, "run")
+	candidate, backendName, err := s.selectBackend(request.Backend, normalized.Document.Defaults.Backend)
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	normalized.Document.Defaults.Backend = backendName
+	if err := validateBackendCapabilities(candidate, normalized); err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	if err := ensureBackendReady(ctx, candidate, request.Project); err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	return s.startNormalized(ctx, request.Project, normalized, "run", backendName)
 }
 
-func (s *Service) startNormalized(_ context.Context, project string, normalized workflow.Normalized, command string) (WorkflowSnapshot, error) {
+func ensureBackendReady(ctx context.Context, candidate backend.AgentBackend, project string) error {
+	report := candidate.Doctor(ctx, backend.DoctorRequest{Workspace: project})
+	if report.Ready {
+		return nil
+	}
+	return fmt.Errorf("Backend %q is not ready: %s", candidate.Name(), doctorDiagnostic(report))
+}
+
+func validateBackendCapabilities(candidate backend.AgentBackend, normalized workflow.Normalized) error {
+	capabilities := candidate.Capabilities()
+	for _, nodeID := range normalized.TopologicalOrder {
+		node := normalized.Document.Nodes[nodeID]
+		if node.Type != "agent" {
+			continue
+		}
+		tool := node.Tool
+		if tool == "" {
+			tool = normalized.Document.Defaults.Tool
+		}
+		if tool == "" {
+			tool = "codex"
+		}
+		runtimeKind := node.Runtime
+		if runtimeKind == "" {
+			runtimeKind = normalized.Document.Defaults.Runtime
+		}
+		if runtimeKind == "" {
+			runtimeKind = "local"
+		}
+		if !containsCapability(capabilities.Tools, tool) {
+			return fmt.Errorf("Backend %q does not support tool %q required by node %q", candidate.Name(), tool, nodeID)
+		}
+		if !containsCapability(capabilities.Runtimes, runtimeKind) {
+			return fmt.Errorf("Backend %q does not support runtime %q required by node %q", candidate.Name(), runtimeKind, nodeID)
+		}
+	}
+	return nil
+}
+
+func containsCapability(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) startNormalized(_ context.Context, project string, normalized workflow.Normalized, command, backendName string) (WorkflowSnapshot, error) {
 	if s.store == nil || s.leases == nil {
 		return WorkflowSnapshot{}, errors.New("workflow state directory is unavailable")
 	}
@@ -253,7 +373,7 @@ func (s *Service) startNormalized(_ context.Context, project string, normalized 
 		nodeSummaries[nodeID] = summarizeNode(node)
 	}
 	run := WorkflowSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, ID: id, WorkflowName: normalized.Document.Name, Project: project,
-		Backend: s.backend.Name(), Phase: PhaseCreated, Inputs: normalized.Inputs, TopologicalOrder: normalized.TopologicalOrder,
+		Backend: backendName, Phase: PhaseCreated, Inputs: normalized.Inputs, TopologicalOrder: normalized.TopologicalOrder,
 		Nodes: nodeSummaries, StateDir: s.store.RunDir(id), CreatedAt: now, UpdatedAt: now}
 	if err := s.persistRun(&run, nil, "run.created", "workflow run created"); err != nil {
 		return WorkflowSnapshot{}, err
@@ -544,7 +664,11 @@ func (s *Service) handleCancellationRequest(ctx context.Context, runID string) (
 		}
 		alreadyCancelled := attempt.Phase == NodePhaseCompleted && attempt.Conclusion == ConclusionCancelled
 		if !alreadyCancelled && handle != nil {
-			result, err := s.backend.Cancel(ctx, *handle)
+			candidate, err := s.registry.Get(attempt.Backend)
+			if err != nil {
+				return s.persistCancelFailure(runID, activeNodeID, err.Error())
+			}
+			result, err := candidate.Cancel(ctx, *handle)
 			if err != nil {
 				message := "cancel Backend execution: " + err.Error()
 				return s.persistCancelFailure(runID, activeNodeID, message)
@@ -598,7 +722,11 @@ func (s *Service) waitForCancellationHandle(ctx context.Context, runID, nodeID s
 			}
 			continue
 		}
-		if handle, err := s.executionHandle(attempt); err != nil {
+		candidate, err := s.registry.Get(attempt.Backend)
+		if err != nil {
+			return attempt, nil, err
+		}
+		if handle, err := s.executionHandle(candidate, attempt); err != nil {
 			return attempt, nil, err
 		} else if handle != nil {
 			return attempt, handle, nil
@@ -843,6 +971,7 @@ type pendingLaunch struct {
 	runID      string
 	nodeID     string
 	attempt    int
+	backend    string
 	launchSpec backend.AgentExecutionSpec
 }
 
@@ -956,7 +1085,7 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			number, now := node.CurrentAttempt+1, s.now().UTC()
 			hash := sha256.Sum256([]byte(prompt))
 			attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: run.ID, NodeID: node.ID, Number: number, Phase: NodePhaseRunning, LaunchState: LaunchPrepared,
-				Backend: s.backend.Name(), PromptHash: hex.EncodeToString(hash[:]), StartedAt: now, UpdatedAt: now}
+				Backend: run.Backend, PromptHash: hex.EncodeToString(hash[:]), StartedAt: now, UpdatedAt: now}
 			if err := s.writeAttempt(attempt, true); err != nil {
 				return err
 			}
@@ -982,7 +1111,7 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			if runtimeKind == "" {
 				runtimeKind = "local"
 			}
-			launch = &pendingLaunch{runID: run.ID, nodeID: node.ID, attempt: number,
+			launch = &pendingLaunch{runID: run.ID, nodeID: node.ID, attempt: number, backend: run.Backend,
 				launchSpec: backend.AgentExecutionSpec{RunID: run.ID, NodeID: node.ID, Attempt: number, Workspace: run.Project, Tool: tool, Runtime: runtimeKind,
 					Instructions: prompt, RequiredSkills: append([]string(nil), definition.RequiredSkills...), ResultContract: backend.ResultContract{MaxBytes: workflow.MaxResultBytes}}}
 			progressed = true
@@ -1023,7 +1152,11 @@ func (s *Service) launchAgent(ctx context.Context, generation uint64, launch pen
 	if err := s.beginBackendLaunch(launch, generation); err != nil {
 		return false, err
 	}
-	handle, launchErr := s.backend.Start(ctx, launch.launchSpec)
+	candidate, err := s.registry.Get(launch.backend)
+	if err != nil {
+		return false, err
+	}
+	handle, launchErr := candidate.Start(ctx, launch.launchSpec)
 	if hook := s.testHooks.afterLaunch; hook != nil {
 		hook()
 	}
@@ -1049,7 +1182,7 @@ func (s *Service) launchAgent(ctx context.Context, generation uint64, launch pen
 	if ctx.Err() != nil {
 		return false, errControllerInactive
 	}
-	return s.waitAttempt(ctx, launch.runID, launch.nodeID, launch.attempt, generation, *handle)
+	return s.waitAttempt(ctx, launch.runID, launch.nodeID, launch.attempt, generation, candidate, *handle)
 }
 
 func (s *Service) beginBackendLaunch(launch pendingLaunch, generation uint64) error {
@@ -1094,8 +1227,8 @@ func (s *Service) persistExecutionHandle(launch pendingLaunch, handle backend.Ex
 	if err := backend.ValidateExecutionHandle(handle); err != nil {
 		return err
 	}
-	if handle.Backend != s.backend.Name() {
-		return fmt.Errorf("Backend %q returned a handle for %q", s.backend.Name(), handle.Backend)
+	if handle.Backend != launch.backend {
+		return fmt.Errorf("Backend %q returned a handle for %q", launch.backend, handle.Backend)
 	}
 	var attempt AttemptSnapshot
 	if err := s.store.ReadAttempt(launch.runID, launch.nodeID, launch.attempt, &attempt); err != nil {
@@ -1110,7 +1243,7 @@ func (s *Service) persistExecutionHandle(launch pendingLaunch, handle backend.Ex
 	return s.writeAttempt(attempt, false)
 }
 
-func (s *Service) executionHandle(attempt AttemptSnapshot) (*backend.ExecutionHandle, error) {
+func (s *Service) executionHandle(candidate backend.AgentBackend, attempt AttemptSnapshot) (*backend.ExecutionHandle, error) {
 	if attempt.Execution != nil {
 		handle := *attempt.Execution
 		if err := backend.ValidateExecutionHandle(handle); err != nil {
@@ -1124,9 +1257,9 @@ func (s *Service) executionHandle(attempt AttemptSnapshot) (*backend.ExecutionHa
 	if attempt.legacyExecution == nil || attempt.legacyExecution.SessionID == "" {
 		return nil, nil
 	}
-	decoder, ok := s.backend.(backend.LegacySessionDecoder)
+	decoder, ok := candidate.(backend.LegacySessionDecoder)
 	if !ok {
-		return nil, fmt.Errorf("Backend %q cannot decode a legacy M2.1.1 session", s.backend.Name())
+		return nil, fmt.Errorf("Backend %q cannot decode a legacy M2.1.1 session", candidate.Name())
 	}
 	metadata := make(map[string]string, len(attempt.legacyExecution.Metadata))
 	for key, value := range attempt.legacyExecution.Metadata {
@@ -1140,20 +1273,24 @@ func (s *Service) reconcileAttempt(ctx context.Context, runID, nodeID string, at
 	if err := s.store.ReadAttempt(runID, nodeID, attemptNumber, &attempt); err != nil {
 		return false, err
 	}
-	handle, err := s.executionHandle(attempt)
+	candidate, err := s.registry.Get(attempt.Backend)
+	if err != nil {
+		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Could not select persisted Backend: "+err.Error())
+	}
+	handle, err := s.executionHandle(candidate, attempt)
 	if err != nil {
 		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Could not decode persisted execution handle: "+err.Error())
 	}
 	if handle == nil {
 		return true, s.finishIndeterminate(runID, nodeID, attemptNumber, generation, "Attempt exists without a persisted execution handle; refusing duplicate launch")
 	}
-	return s.waitAttempt(ctx, runID, nodeID, attemptNumber, generation, *handle)
+	return s.waitAttempt(ctx, runID, nodeID, attemptNumber, generation, candidate, *handle)
 }
 
-func (s *Service) waitAttempt(ctx context.Context, runID, nodeID string, attemptNumber int, generation uint64, handle backend.ExecutionHandle) (bool, error) {
+func (s *Service) waitAttempt(ctx context.Context, runID, nodeID string, attemptNumber int, generation uint64, candidate backend.AgentBackend, handle backend.ExecutionHandle) (bool, error) {
 	for {
-		observation, err := s.backend.Observe(ctx, handle)
-		if output, outputErr := s.backend.Output(context.Background(), handle, 200); outputErr == nil {
+		observation, err := candidate.Observe(ctx, handle)
+		if output, outputErr := candidate.Output(context.Background(), handle, 200); outputErr == nil {
 			if writeErr := s.store.WriteNodeOutput(runID, nodeID, attemptNumber, output); writeErr != nil {
 				return false, writeErr
 			}
@@ -1176,7 +1313,7 @@ func (s *Service) waitAttempt(ctx context.Context, runID, nodeID string, attempt
 		case backend.ObservationWaitingInput:
 			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonAgentWaitingInput, "Agent is waiting for input")
 		case backend.ObservationResultPending:
-			return s.reconcileResultPending(ctx, runID, nodeID, attemptNumber, generation, handle)
+			return s.reconcileResultPending(ctx, runID, nodeID, attemptNumber, generation, candidate, handle)
 		case backend.ObservationLost, backend.ObservationExited:
 			return true, s.finishIndeterminate(runID, nodeID, attemptNumber, generation, "Agent execution was lost without a valid terminal result")
 		case backend.ObservationError:
@@ -1191,12 +1328,12 @@ func (s *Service) waitAttempt(ctx context.Context, runID, nodeID string, attempt
 	}
 }
 
-func (s *Service) reconcileResultPending(ctx context.Context, runID, nodeID string, attemptNumber int, generation uint64, handle backend.ExecutionHandle) (bool, error) {
+func (s *Service) reconcileResultPending(ctx context.Context, runID, nodeID string, attemptNumber int, generation uint64, candidate backend.AgentBackend, handle backend.ExecutionHandle) (bool, error) {
 	for check := 0; check < startupIdleReconcileChecks; check++ {
 		if err := s.waitStartupIdleReconcile(ctx); err != nil {
 			return false, err
 		}
-		observation, err := s.backend.Observe(ctx, handle)
+		observation, err := candidate.Observe(ctx, handle)
 		if err != nil {
 			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend result reconciliation failed: "+err.Error())
 		}
@@ -1210,7 +1347,7 @@ func (s *Service) reconcileResultPending(ctx context.Context, runID, nodeID stri
 			}
 			return s.finishResult(runID, nodeID, attemptNumber, generation, observation.Result)
 		case backend.ObservationActive:
-			return s.waitAttempt(ctx, runID, nodeID, attemptNumber, generation, handle)
+			return s.waitAttempt(ctx, runID, nodeID, attemptNumber, generation, candidate, handle)
 		case backend.ObservationWaitingInput:
 			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonAgentWaitingInput, "Agent is waiting for input")
 		case backend.ObservationResultPending:

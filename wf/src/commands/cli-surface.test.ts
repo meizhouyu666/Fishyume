@@ -24,3 +24,11 @@ test('command help remains available', () => {
     assert.match(result.stdout, new RegExp(`fishyume ${command}`));
   }
 });
+
+test('run and doctor expose Backend selection', () => {
+  for (const command of ['run', 'doctor']) {
+    const result = invoke(command, '--help');
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /--backend/);
+  }
+});

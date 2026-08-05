@@ -390,8 +390,9 @@ func TestLegacyM211AttemptDecodesThroughBackendAdapter(t *testing.T) {
     }`), &attempt); err != nil {
 		t.Fatal(err)
 	}
-	service := NewService(&fakeWorkflowBackend{}, store.New(t.TempDir()))
-	handle, err := service.executionHandle(attempt)
+	candidate := &fakeWorkflowBackend{}
+	service := NewService(candidate, store.New(t.TempDir()))
+	handle, err := service.executionHandle(candidate, attempt)
 	if err != nil {
 		t.Fatal(err)
 	}

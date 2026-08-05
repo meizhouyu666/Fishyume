@@ -6,8 +6,8 @@ export interface RpcError {code: number; message: string; data?: unknown}
 export interface RpcResponse<T = unknown> {jsonrpc: '2.0'; protocolVersion: 2; id: JsonRpcId | null; result?: T; error?: RpcError}
 export interface RpcNotification<T = unknown> {jsonrpc: '2.0'; protocolVersion: 2; method: 'run.event' | 'engine.log'; params: T}
 
-export interface RunStartParams {project: string; tool?: 'codex' | 'claude' | 'opencode'; runtime?: 'local' | 'wsl' | 'ssh'; task: string}
-export interface WorkflowStartParams {project: string; filename: string; content: string; inputs?: Record<string, JsonScalar>}
+export interface RunStartParams {project: string; backend?: string; tool?: 'codex' | 'claude' | 'opencode'; runtime?: 'local' | 'wsl' | 'ssh'; task: string}
+export interface WorkflowStartParams {project: string; backend?: string; filename: string; content: string; inputs?: Record<string, JsonScalar>}
 export interface RunStartResult {protocolVersion: 2; runId: string}
 export type JsonScalar = string | number | boolean;
 
