@@ -22,11 +22,18 @@ func main() {
 	case strings.Contains(command, "update_task_binding"):
 		fmt.Print(`{"ok":true}`)
 	case strings.Contains(command, "wait_for_session"):
-		fmt.Print(`{"satisfied":true,"finalStatus":"idle","sessionId":"session-e2e"}`)
+		status := os.Getenv("WF_FAKE_SESSION_STATUS")
+		if status == "" {
+			status = "idle"
+		}
+		fmt.Printf(`{"satisfied":true,"finalStatus":%q,"sessionId":"session-e2e"}`, status)
 	case strings.Contains(command, "query_task_bindings"):
-		if os.Getenv("WF_FAKE_BINDING_STATUS") == "failed" {
+		switch os.Getenv("WF_FAKE_BINDING_STATUS") {
+		case "failed":
 			fmt.Print(`{"items":[{"id":"binding-e2e","status":"failed","exitCode":1,"completionSummary":"fixture integration failed","metadata":{"artifacts":[],"warnings":["fixture failure"],"checks":[],"usage":{"inputTokensEstimated":1,"outputTokensEstimated":2}}}]}`)
-		} else {
+		case "running":
+			fmt.Print(`{"items":[{"id":"binding-e2e","status":"running","progress":20}]}`)
+		default:
 			fmt.Print(`{"items":[{"id":"binding-e2e","status":"completed","exitCode":0,"completionSummary":"fixture integration completed","metadata":{"artifacts":["fixture.txt"],"warnings":[],"checks":["fake ctl integration"],"usage":{"inputTokensEstimated":1,"outputTokensEstimated":2}}}]}`)
 		}
 	case strings.Contains(command, "sessions read"):

@@ -43,10 +43,67 @@ nodes:
     task: "Implement {{ nodes.plan.result.summary }}"
 `
 
+const parallelBackendWorkflow = `apiVersion: wf/v1
+name: parallel-backend-integration
+defaults: {tool: codex, runtime: local}
+execution: {maxConcurrency: 2}
+nodes:
+  a: {type: agent, task: a}
+  b: {type: agent, task: b}
+  approve: {type: approval, dependsOn: [a, b], prompt: approve}
+  finish: {type: agent, dependsOn: [approve], task: finish}
+`
+
+const parallelCancelWorkflow = `apiVersion: wf/v1
+name: parallel-cancel-integration
+defaults: {tool: codex, runtime: local}
+execution: {maxConcurrency: 2}
+nodes:
+  a:
+    type: agent
+    task: |-
+      scenario:active
+      a
+  b:
+    type: agent
+    task: |-
+      scenario:active
+      b
+`
+
+type startBarrier struct {
+	mu       sync.Mutex
+	expected int
+	count    int
+	reached  chan struct{}
+	once     sync.Once
+}
+
+func (b *startBarrier) wait(ctx context.Context) error {
+	b.mu.Lock()
+	b.count++
+	if b.count == b.expected {
+		b.once.Do(func() { close(b.reached) })
+	}
+	reached, shouldWait := b.reached, b.count <= b.expected
+	b.mu.Unlock()
+	if !shouldWait {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-reached:
+		return nil
+	}
+}
+
 type recordingBackend struct {
 	delegate backend.AgentBackend
 	mu       sync.Mutex
 	starts   []backend.AgentExecutionSpec
+	cancels  []backend.ExecutionHandle
+	barrier  *startBarrier
 }
 
 func (b *recordingBackend) Name() string { return b.delegate.Name() }
@@ -66,6 +123,11 @@ func (b *recordingBackend) Start(ctx context.Context, spec backend.AgentExecutio
 	b.mu.Lock()
 	b.starts = append(b.starts, copy)
 	b.mu.Unlock()
+	if b.barrier != nil {
+		if err := b.barrier.wait(ctx); err != nil {
+			return nil, err
+		}
+	}
 	return b.delegate.Start(ctx, spec)
 }
 
@@ -78,6 +140,9 @@ func (b *recordingBackend) Output(ctx context.Context, handle backend.ExecutionH
 }
 
 func (b *recordingBackend) Cancel(ctx context.Context, handle backend.ExecutionHandle) (*backend.CancelResult, error) {
+	b.mu.Lock()
+	b.cancels = append(b.cancels, handle)
+	b.mu.Unlock()
 	return b.delegate.Cancel(ctx, handle)
 }
 
@@ -85,6 +150,12 @@ func (b *recordingBackend) startSpecs() []backend.AgentExecutionSpec {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]backend.AgentExecutionSpec(nil), b.starts...)
+}
+
+func (b *recordingBackend) cancelHandles() []backend.ExecutionHandle {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]backend.ExecutionHandle(nil), b.cancels...)
 }
 
 func TestAgentApprovalAgentWorkflowMatchesAcrossBackends(t *testing.T) {
@@ -207,6 +278,187 @@ func TestAgentApprovalAgentWorkflowMatchesAcrossBackends(t *testing.T) {
 	removeFixtureDirectory(t, fixtureDir)
 }
 
+func TestParallelWorkflowMatchesAcrossBackends(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
+		t.Skip("Direct Backend process recovery is currently supported on Windows and Linux")
+	}
+	moduleRoot := moduleDirectory(t)
+	fixtureDir := t.TempDir()
+	extension := ""
+	if runtime.GOOS == "windows" {
+		extension = ".exe"
+	}
+	ccpanesCTL := filepath.Join(fixtureDir, "fake-cc-panes-ctl"+extension)
+	directAgent := filepath.Join(fixtureDir, "fake-codex"+extension)
+	directSupervisor := filepath.Join(fixtureDir, "fishyume-engine"+extension)
+	buildFixture(t, moduleRoot, ccpanesCTL, "./internal/backend/ccpanes/testdata/fake-cc-panes-ctl")
+	buildFixture(t, moduleRoot, directAgent, "./internal/backend/directcli/testdata/fake-agent")
+	buildFixture(t, moduleRoot, directSupervisor, "./cmd/wf-engine")
+
+	tests := []struct {
+		name string
+		make func(*testing.T, string, string) backend.AgentBackend
+	}{
+		{name: "ccpanes", make: func(t *testing.T, _, workspace string) backend.AgentBackend {
+			t.Setenv(ccpanes.ProfileIDEnv, "fishyume-parallel-profile")
+			t.Setenv("WF_FAKE_PROJECT", workspace)
+			t.Setenv("WF_FAKE_BINDING_STATUS", "")
+			t.Setenv("WF_FAKE_SESSION_STATUS", "idle")
+			return ccpanes.NewAdapterWithBackend(ccpanes.NewWithClient(ccpanes.NewClient(ccpanesCTL)))
+		}},
+		{name: "direct", make: func(_ *testing.T, stateRoot, _ string) backend.AgentBackend {
+			return directcli.New(directcli.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond})
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			stateRoot, workspace := t.TempDir(), t.TempDir()
+			state := store.New(stateRoot)
+			barrier := &startBarrier{expected: 2, reached: make(chan struct{})}
+			recorded := &recordingBackend{delegate: test.make(t, stateRoot, workspace), barrier: barrier}
+			service := run.NewService(recorded, state)
+			started, err := service.StartWorkflow(context.Background(), run.StartWorkflowRequest{Project: workspace, Backend: test.name, Content: parallelBackendWorkflow})
+			if err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-barrier.reached:
+			case <-time.After(5 * time.Second):
+				t.Fatal("Backend Start calls did not overlap")
+			}
+			waiting := waitForRun(t, service, started.ID, func(value run.WorkflowSnapshot) bool {
+				return value.Phase == run.PhaseWaiting && value.Reason == run.ReasonApprovalRequired
+			})
+			if waiting.EffectiveConcurrency != 2 {
+				t.Fatalf("effective concurrency=%d", waiting.EffectiveConcurrency)
+			}
+			starts := recorded.startSpecs()
+			if len(starts) != 2 || !sameNodeSet(starts, []string{"a", "b"}) {
+				t.Fatalf("parallel starts=%+v", starts)
+			}
+			resumer := run.NewService(recorded, state)
+			if _, err := resumer.Resume(context.Background(), run.ResumeRequest{RunID: started.ID, Action: &run.ResumeAction{Type: "approve", NodeID: "approve"}}); err != nil {
+				t.Fatal(err)
+			}
+			final := waitForRun(t, resumer, started.ID, func(value run.WorkflowSnapshot) bool { return value.Phase == run.PhaseCompleted })
+			if final.Conclusion != run.ConclusionSucceeded {
+				t.Fatalf("final=%+v", final)
+			}
+			starts = recorded.startSpecs()
+			if len(starts) != 3 || starts[2].NodeID != "finish" {
+				t.Fatalf("all starts=%+v", starts)
+			}
+			if test.name == "direct" {
+				attempts := readAttempts(t, state, started.ID, []string{"a", "b", "finish"})
+				waitForDirectProcesses(t, state, attempts)
+			}
+		})
+	}
+	removeFixtureDirectory(t, fixtureDir)
+}
+
+func TestConcurrentCancelMatchesAcrossBackends(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
+		t.Skip("Direct Backend process recovery is currently supported on Windows and Linux")
+	}
+	moduleRoot := moduleDirectory(t)
+	fixtureDir := t.TempDir()
+	extension := ""
+	if runtime.GOOS == "windows" {
+		extension = ".exe"
+	}
+	ccpanesCTL := filepath.Join(fixtureDir, "fake-cc-panes-ctl"+extension)
+	directAgent := filepath.Join(fixtureDir, "fake-codex"+extension)
+	directSupervisor := filepath.Join(fixtureDir, "fishyume-engine"+extension)
+	buildFixture(t, moduleRoot, ccpanesCTL, "./internal/backend/ccpanes/testdata/fake-cc-panes-ctl")
+	buildFixture(t, moduleRoot, directAgent, "./internal/backend/directcli/testdata/fake-agent")
+	buildFixture(t, moduleRoot, directSupervisor, "./cmd/wf-engine")
+	tests := []struct {
+		name string
+		make func(*testing.T, string, string) backend.AgentBackend
+	}{
+		{name: "ccpanes", make: func(t *testing.T, _, workspace string) backend.AgentBackend {
+			t.Setenv(ccpanes.ProfileIDEnv, "fishyume-cancel-profile")
+			t.Setenv("WF_FAKE_PROJECT", workspace)
+			t.Setenv("WF_FAKE_BINDING_STATUS", "running")
+			t.Setenv("WF_FAKE_SESSION_STATUS", "active")
+			return ccpanes.NewAdapterWithBackend(ccpanes.NewWithClient(ccpanes.NewClient(ccpanesCTL)))
+		}},
+		{name: "direct", make: func(_ *testing.T, stateRoot, _ string) backend.AgentBackend {
+			return directcli.New(directcli.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond})
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			stateRoot, workspace := t.TempDir(), t.TempDir()
+			state := store.New(stateRoot)
+			recorded := &recordingBackend{delegate: test.make(t, stateRoot, workspace)}
+			service := run.NewService(recorded, state)
+			started, err := service.StartWorkflow(context.Background(), run.StartWorkflowRequest{Project: workspace, Backend: test.name, Content: parallelCancelWorkflow})
+			if err != nil {
+				t.Fatal(err)
+			}
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				view, viewErr := service.Status(started.ID)
+				if viewErr == nil && len(view.ActiveAttempts) == 2 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("active Attempts not ready: view=%+v err=%v", view, viewErr)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			cancelled, err := service.Cancel(context.Background(), started.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cancelled.Conclusion != run.ConclusionCancelled || len(recorded.cancelHandles()) != 2 {
+				t.Fatalf("cancelled=%+v handles=%+v", cancelled, recorded.cancelHandles())
+			}
+			attempts := readAttempts(t, state, started.ID, []string{"a", "b"})
+			for _, attempt := range attempts {
+				if attempt.Conclusion != run.ConclusionCancelled {
+					t.Fatalf("attempt=%+v", attempt)
+				}
+			}
+			if test.name == "direct" {
+				waitForDirectProcessesStopped(t, attempts)
+			}
+		})
+	}
+	removeFixtureDirectory(t, fixtureDir)
+}
+
+func sameNodeSet(starts []backend.AgentExecutionSpec, want []string) bool {
+	set := map[string]bool{}
+	for _, start := range starts {
+		set[start.NodeID] = true
+	}
+	if len(set) != len(want) {
+		return false
+	}
+	for _, nodeID := range want {
+		if !set[nodeID] {
+			return false
+		}
+	}
+	return true
+}
+
+func readAttempts(t *testing.T, state *store.Store, runID string, nodeIDs []string) []run.AttemptSnapshot {
+	t.Helper()
+	attempts := make([]run.AttemptSnapshot, 0, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		var attempt run.AttemptSnapshot
+		if err := state.ReadAttempt(runID, nodeID, 1, &attempt); err != nil {
+			t.Fatal(err)
+		}
+		attempts = append(attempts, attempt)
+	}
+	return attempts
+}
+
 func moduleDirectory(t *testing.T) string {
 	t.Helper()
 	_, filename, _, ok := runtime.Caller(0)
@@ -278,6 +530,38 @@ func waitForDirectProcesses(t *testing.T, state *store.Store, attempts []run.Att
 			if time.Now().After(deadline) {
 				t.Fatalf("Direct processes did not exit: supervisor=%d alive=%t err=%v child=%d alive=%t err=%v exitErr=%v",
 					data.Supervisor.PID, supervisorAlive, supervisorErr, data.Child.PID, childAlive, childErr, exitErr)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+}
+
+func waitForDirectProcessesStopped(t *testing.T, attempts []run.AttemptSnapshot) {
+	t.Helper()
+	type process struct {
+		PID int `json:"pid"`
+	}
+	type handle struct {
+		Supervisor process `json:"supervisor"`
+		Child      process `json:"child"`
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for _, attempt := range attempts {
+		if attempt.Execution == nil {
+			t.Fatalf("Direct attempt has no execution handle: %+v", attempt)
+		}
+		var data handle
+		if err := json.Unmarshal(attempt.Execution.Data, &data); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			supervisorAlive, supervisorErr := processAlive(data.Supervisor.PID)
+			childAlive, childErr := processAlive(data.Child.PID)
+			if supervisorErr == nil && childErr == nil && !supervisorAlive && !childAlive {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("Direct cancelled processes did not exit: supervisor=%d alive=%t err=%v child=%d alive=%t err=%v", data.Supervisor.PID, supervisorAlive, supervisorErr, data.Child.PID, childAlive, childErr)
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
