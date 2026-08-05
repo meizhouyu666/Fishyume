@@ -188,8 +188,9 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 			progressed = true
 		}
 		if len(launches) == 0 {
+			before := *run
 			eventType, shouldStop := aggregateRunState(run, nodes, normalized.Document, s.now().UTC())
-			if eventType != "" {
+			if eventType != "" && aggregateRunStateChanged(before, *run) {
 				if err := s.persistRun(run, nil, eventType, run.Summary); err != nil {
 					return err
 				}

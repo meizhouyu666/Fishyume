@@ -148,3 +148,62 @@ nodes:
 		t.Fatalf("waiting=%+v", waiting)
 	}
 }
+
+func TestUnchangedActiveObservationDoesNotAppendAggregateEvents(t *testing.T) {
+	b := &aggregateBackend{release: make(chan struct{})}
+	state := store.New(t.TempDir())
+	service := NewService(b, state)
+	cycles := make(chan struct{})
+	advance := make(chan struct{})
+	service.testHooks.idleReconcileDelay = func(ctx context.Context) error {
+		select {
+		case cycles <- struct{}{}:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		select {
+		case <-advance:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	started, err := service.StartWorkflow(context.Background(), StartWorkflowRequest{Project: "p", Content: parallelWorkflow(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-cycles:
+	case <-time.After(3 * time.Second):
+		t.Fatal("first active observation cycle did not complete")
+	}
+	first := countRunEvents(t, state, started.ID)
+	advance <- struct{}{}
+	select {
+	case <-cycles:
+	case <-time.After(3 * time.Second):
+		t.Fatal("second active observation cycle did not complete")
+	}
+	second := countRunEvents(t, state, started.ID)
+	if second != first {
+		t.Fatalf("unchanged active observation appended events: first=%d second=%d", first, second)
+	}
+	close(b.release)
+	advance <- struct{}{}
+	final := waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	if final.Conclusion != ConclusionSucceeded {
+		t.Fatalf("final=%+v", final)
+	}
+}
+
+func countRunEvents(t *testing.T, state *store.Store, runID string) int {
+	t.Helper()
+	count := 0
+	if err := state.ReadEvents(runID, func(json.RawMessage) error {
+		count++
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}

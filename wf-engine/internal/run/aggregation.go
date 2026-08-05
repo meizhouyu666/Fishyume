@@ -6,6 +6,14 @@ import (
 	"wf.local/wf-engine/internal/workflow"
 )
 
+func aggregateRunStateChanged(before, after WorkflowSnapshot) bool {
+	return before.Phase != after.Phase ||
+		before.Conclusion != after.Conclusion ||
+		before.Reason != after.Reason ||
+		before.Summary != after.Summary ||
+		before.ActiveNodeID != after.ActiveNodeID
+}
+
 func aggregateRunState(run *WorkflowSnapshot, nodes []NodeSnapshot, doc workflow.Document, now time.Time) (string, bool) {
 	activeRunning := 0
 	waitingAgents := make([]NodeSnapshot, 0)
