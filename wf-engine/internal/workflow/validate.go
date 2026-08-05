@@ -18,8 +18,8 @@ func Validate(doc Document) ([]string, error) {
 	if strings.TrimSpace(doc.Name) == "" {
 		return nil, fmt.Errorf("workflow name is required")
 	}
-	if doc.Execution.MaxConcurrency != MaxConcurrency {
-		return nil, fmt.Errorf("M2.1 requires maxConcurrency to be 1")
+	if doc.Execution.MaxConcurrency < 1 || doc.Execution.MaxConcurrency > MaxAllowedConcurrency {
+		return nil, fmt.Errorf("maxConcurrency must be between 1 and %d", MaxAllowedConcurrency)
 	}
 	if len(doc.Nodes) == 0 {
 		return nil, fmt.Errorf("workflow must contain at least one node")

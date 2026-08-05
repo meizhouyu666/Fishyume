@@ -86,7 +86,7 @@ func TestWorkflowValidationFailures(t *testing.T) {
 		{"duplicate key", strings.Replace(validYAML, "name: sample", "name: sample\nname: duplicate", 1), "duplicate YAML key"},
 		{"cycle", strings.Replace(validYAML, "type: agent\n    task: \"Plan", "type: agent\n    dependsOn: [implement]\n    task: \"Plan", 1), "dependency cycle"},
 		{"missing dependency", strings.Replace(validYAML, "dependsOn: [plan]", "dependsOn: [missing]", 1), "missing node"},
-		{"concurrency", strings.Replace(validYAML, "maxConcurrency: 1", "maxConcurrency: 2", 1), "maxConcurrency"},
+		{"concurrency", strings.Replace(validYAML, "maxConcurrency: 1", "maxConcurrency: 33", 1), "maxConcurrency"},
 		{"missing concurrency", strings.Replace(validYAML, "execution:\n  maxConcurrency: 1\n", "", 1), "maxConcurrency"},
 		{"invalid tool", strings.Replace(validYAML, "tool: codex", "tool: unknown", 1), "unsupported tool"},
 		{"non ancestor reference", strings.Replace(validYAML, "Plan {{ inputs.goal }}", "Plan {{ nodes.implement.result.summary }}", 1), "not an ancestor"},
@@ -102,6 +102,17 @@ func TestWorkflowValidationFailures(t *testing.T) {
 				t.Fatalf("error = %v, want substring %q", err, test.wantErr)
 			}
 		})
+	}
+}
+
+func TestWorkflowAcceptsBoundedParallelConcurrency(t *testing.T) {
+	doc := strings.Replace(validYAML, "maxConcurrency: 1", "maxConcurrency: 2", 1)
+	parsed, err := Parse([]byte(doc), "workflow.yaml", map[string]any{"goal": "parallel"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Document.Execution.MaxConcurrency != 2 {
+		t.Fatalf("maxConcurrency=%d", parsed.Document.Execution.MaxConcurrency)
 	}
 }
 

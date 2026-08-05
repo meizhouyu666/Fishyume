@@ -10,14 +10,15 @@ import (
 )
 
 const (
-	APIVersion       = "fishyume/v1"
-	LegacyAPIVersion = "wf/v1"
-	MaxConcurrency   = 1
-	MaxSummaryBytes  = 16 * 1024
-	MaxPromptBytes   = 128 * 1024
-	MaxResultBytes   = 64 * 1024
-	MaxResultItems   = 256
-	MaxArtifactBytes = 4096
+	APIVersion            = "fishyume/v1"
+	LegacyAPIVersion      = "wf/v1"
+	MaxConcurrency        = 1
+	MaxAllowedConcurrency = 32
+	MaxSummaryBytes       = 16 * 1024
+	MaxPromptBytes        = 128 * 1024
+	MaxResultBytes        = 64 * 1024
+	MaxResultItems        = 256
+	MaxArtifactBytes      = 4096
 )
 
 var nodeIDPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)

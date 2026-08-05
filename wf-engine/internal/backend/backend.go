@@ -84,10 +84,12 @@ type CancelResult struct {
 }
 
 type Capabilities struct {
-	Tools                []string `json:"tools,omitempty"`
-	Runtimes             []string `json:"runtimes,omitempty"`
-	SupportsOutput       bool     `json:"supportsOutput"`
-	SupportsWaitingInput bool     `json:"supportsWaitingInput"`
+	Tools                    []string `json:"tools,omitempty"`
+	Runtimes                 []string `json:"runtimes,omitempty"`
+	SupportsOutput           bool     `json:"supportsOutput"`
+	SupportsWaitingInput     bool     `json:"supportsWaitingInput"`
+	MaxConcurrentAgents      int      `json:"maxConcurrentAgents,omitempty"`
+	SupportsConcurrentCancel bool     `json:"supportsConcurrentCancel"`
 }
 
 type DoctorRequest struct {

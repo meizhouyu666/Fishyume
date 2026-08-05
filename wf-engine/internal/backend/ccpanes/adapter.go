@@ -40,7 +40,7 @@ func (a *Adapter) Name() string { return "ccpanes" }
 func (*Adapter) Capabilities() backend.Capabilities {
 	return backend.Capabilities{
 		Tools: []string{"codex", "claude", "opencode"}, Runtimes: []string{"local", "wsl", "ssh"},
-		SupportsOutput: true, SupportsWaitingInput: true,
+		SupportsOutput: true, SupportsWaitingInput: true, MaxConcurrentAgents: 0, SupportsConcurrentCancel: true,
 	}
 }
 
