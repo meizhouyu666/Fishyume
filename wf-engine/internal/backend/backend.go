@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"wf.local/wf-engine/internal/agent"
 )
 
 const MaxExecutionHandleDataSize = 64 * 1024
@@ -24,13 +26,63 @@ type AgentExecutionSpec struct {
 	Instructions   string
 	RequiredSkills []string
 	ResultContract ResultContract
+	// Envelope carries the M4 headless protocol. The flattened fields above are
+	// retained for the bounded backend compatibility window.
+	Envelope *agent.AttemptEnvelope
 }
 
 type ExecutionHandle struct {
-	Backend       string          `json:"backend"`
+	Driver        string          `json:"driver,omitempty"`
+	Target        string          `json:"target,omitempty"`
+	Backend       string          `json:"-"`
 	SchemaVersion int             `json:"schemaVersion"`
 	ID            string          `json:"id"`
 	Data          json.RawMessage `json:"data,omitempty"`
+}
+
+func (handle ExecutionHandle) DriverName() string {
+	if strings.TrimSpace(handle.Driver) != "" {
+		return handle.Driver
+	}
+	return handle.Backend
+}
+
+func (handle ExecutionHandle) MarshalJSON() ([]byte, error) {
+	target := handle.Target
+	if target == "" {
+		target = "local"
+	}
+	return json.Marshal(struct {
+		Driver        string          `json:"driver"`
+		Target        string          `json:"target"`
+		SchemaVersion int             `json:"schemaVersion"`
+		ID            string          `json:"id"`
+		Data          json.RawMessage `json:"data,omitempty"`
+	}{Driver: handle.DriverName(), Target: target, SchemaVersion: handle.SchemaVersion, ID: handle.ID, Data: handle.Data})
+}
+
+func (handle *ExecutionHandle) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Driver        string          `json:"driver"`
+		Target        string          `json:"target"`
+		Backend       string          `json:"backend"`
+		SchemaVersion int             `json:"schemaVersion"`
+		ID            string          `json:"id"`
+		Data          json.RawMessage `json:"data,omitempty"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	driver := wire.Driver
+	if driver == "" {
+		driver = wire.Backend
+	}
+	target := wire.Target
+	if target == "" {
+		target = "local"
+	}
+	*handle = ExecutionHandle{Driver: driver, Target: target, Backend: driver, SchemaVersion: wire.SchemaVersion, ID: wire.ID, Data: wire.Data}
+	return nil
 }
 
 type Usage struct {
@@ -39,12 +91,20 @@ type Usage struct {
 }
 
 type AgentResult struct {
-	Status    string   `json:"status"`
-	Summary   string   `json:"summary,omitempty"`
-	Artifacts []string `json:"artifacts,omitempty"`
-	Warnings  []string `json:"warnings,omitempty"`
-	Checks    []string `json:"checks,omitempty"`
-	Usage     Usage    `json:"usage"`
+	Status    string          `json:"status"`
+	Summary   string          `json:"summary,omitempty"`
+	Artifacts []string        `json:"artifacts,omitempty"`
+	Warnings  []string        `json:"warnings,omitempty"`
+	Checks    []string        `json:"checks,omitempty"`
+	Questions []InputQuestion `json:"questions,omitempty"`
+	Usage     Usage           `json:"usage"`
+}
+
+type InputQuestion struct {
+	ID       string   `json:"id"`
+	Prompt   string   `json:"prompt"`
+	Choices  []string `json:"choices,omitempty"`
+	Required bool     `json:"required"`
 }
 
 type ObservationState string
@@ -166,7 +226,7 @@ func ValidateAgentExecutionSpec(spec AgentExecutionSpec) error {
 }
 
 func ValidateExecutionHandle(handle ExecutionHandle) error {
-	if strings.TrimSpace(handle.Backend) == "" {
+	if strings.TrimSpace(handle.DriverName()) == "" {
 		return fmt.Errorf("handle backend is required")
 	}
 	if handle.SchemaVersion < 1 {
@@ -193,12 +253,18 @@ func ValidateExecutionHandle(handle ExecutionHandle) error {
 
 func ValidateAgentResult(result AgentResult) error {
 	switch result.Status {
-	case "succeeded", "failed", "indeterminate":
+	case "succeeded", "failed", "needs_input", "indeterminate":
 	default:
 		return fmt.Errorf("unsupported Agent result status %q", result.Status)
 	}
 	if strings.TrimSpace(result.Summary) == "" {
 		return fmt.Errorf("Agent result summary is required")
+	}
+	if result.Status == "needs_input" && len(result.Questions) == 0 {
+		return fmt.Errorf("needs_input result requires at least one question")
+	}
+	if result.Status != "needs_input" && len(result.Questions) > 0 {
+		return fmt.Errorf("only needs_input result may carry questions")
 	}
 	if result.Usage.InputTokensEstimated < 0 || result.Usage.OutputTokensEstimated < 0 {
 		return fmt.Errorf("Agent result usage cannot be negative")

@@ -74,7 +74,7 @@ func New(config Config) *Backend {
 func (*Backend) Name() string { return "direct" }
 
 func (*Backend) Capabilities() backend.Capabilities {
-	return backend.Capabilities{Tools: []string{"codex"}, Runtimes: []string{"local"}, SupportsOutput: true, MaxConcurrentAgents: 0, SupportsConcurrentCancel: true}
+	return backend.Capabilities{Tools: []string{"codex"}, Runtimes: []string{"local"}, SupportsOutput: true, SupportsWaitingInput: true, MaxConcurrentAgents: 0, SupportsConcurrentCancel: true}
 }
 
 func (b *Backend) Doctor(ctx context.Context, request backend.DoctorRequest) backend.DoctorReport {

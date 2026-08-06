@@ -128,6 +128,10 @@ type resultEnvelope struct {
 
 func resultSchema(spec backend.AgentExecutionSpec, executionID string) map[string]any {
 	stringArray := map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "maxItems": 256}
+	questions := map[string]any{"type": "array", "maxItems": 32, "items": map[string]any{
+		"type": "object", "additionalProperties": false, "required": []string{"id", "prompt", "choices", "required"},
+		"properties": map[string]any{"id": map[string]any{"type": "string"}, "prompt": map[string]any{"type": "string"}, "choices": stringArray, "required": map[string]any{"type": "boolean"}},
+	}}
 	return map[string]any{
 		"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false,
 		"required": []string{"executionId", "runId", "nodeId", "attempt", "result"},
@@ -138,11 +142,12 @@ func resultSchema(spec backend.AgentExecutionSpec, executionID string) map[strin
 			"attempt":     map[string]any{"type": "integer", "const": spec.Attempt},
 			"result": map[string]any{
 				"type": "object", "additionalProperties": false,
-				"required": []string{"status", "summary", "artifacts", "warnings", "checks"},
+				"required": []string{"status", "summary", "artifacts", "warnings", "checks", "questions"},
 				"properties": map[string]any{
-					"status":    map[string]any{"type": "string", "enum": []string{"succeeded", "failed", "indeterminate"}},
+					"status":    map[string]any{"type": "string", "enum": []string{"succeeded", "failed", "needs_input", "indeterminate"}},
 					"summary":   map[string]any{"type": "string", "minLength": 1, "maxLength": 16384},
 					"artifacts": stringArray, "warnings": stringArray, "checks": stringArray,
+					"questions": questions,
 				},
 			},
 		},
@@ -153,8 +158,8 @@ func completionPrompt(spec backend.AgentExecutionSpec, executionID string) strin
 	identity, _ := json.Marshal(map[string]any{"executionId": executionID, "runId": spec.RunID, "nodeId": spec.NodeID, "attempt": spec.Attempt})
 	return spec.Instructions + "\n\nFishyume completion protocol:\n" +
 		"Return exactly one JSON object matching the provided output schema. Preserve every identity field exactly. " +
-		"Put the task outcome in result; status must be succeeded, failed, or indeterminate. " +
-		"Use empty arrays when there are no artifacts, warnings, or checks.\n" +
+		"Put the task outcome in result; status must be succeeded, failed, needs_input, or indeterminate. " +
+		"needs_input must include structured questions and end this one-shot process. Use empty arrays when there are no artifacts, warnings, checks, or questions.\n" +
 		"FISHYUME_RESULT_IDENTITY=" + string(identity)
 }
 

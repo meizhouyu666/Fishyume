@@ -32,6 +32,12 @@ func main() {
 	if first := strings.SplitN(prompt, "\n", 2)[0]; strings.HasPrefix(first, "scenario:") {
 		scenario = strings.TrimSpace(strings.TrimPrefix(first, "scenario:"))
 	}
+	for _, candidate := range []string{"terminal-succeeded", "terminal-failed", "terminal-indeterminate", "terminal-needs-input", "malformed-result", "wrong-identity", "oversized-result", "conflict-result", "premature-result", "nonzero-missing", "result-pending", "waiting-input", "active", "large-output"} {
+		if strings.Contains(prompt, "scenario:"+candidate) {
+			scenario = candidate
+			break
+		}
+	}
 	var id identity
 	marker := "FISHYUME_RESULT_IDENTITY="
 	if index := strings.LastIndex(prompt, marker); index >= 0 {
@@ -49,6 +55,10 @@ func main() {
 	case "terminal-succeeded", "terminal-failed", "terminal-indeterminate":
 		status := strings.TrimPrefix(scenario, "terminal-")
 		writeResult(resultPath, id, status, status+" fixture in "+mustWorkingDirectory())
+		emitCompleted()
+	case "terminal-needs-input":
+		writeNeedsInput(resultPath, id)
+		emit(map[string]any{"type": "fishyume.waiting_input"})
 		emitCompleted()
 	case "malformed-result":
 		_ = os.WriteFile(resultPath, []byte("{not-json"), 0o600)
@@ -94,7 +104,20 @@ func valueAfter(name string) string {
 func writeResult(path string, id identity, status, summary string) {
 	value := map[string]any{
 		"executionId": id.ExecutionID, "runId": id.RunID, "nodeId": id.NodeID, "attempt": id.Attempt,
-		"result": map[string]any{"status": status, "summary": summary, "artifacts": []string{}, "warnings": []string{}, "checks": []string{}},
+		"result": map[string]any{"status": status, "summary": summary, "artifacts": []string{}, "warnings": []string{}, "checks": []string{}, "questions": []map[string]any{}},
+	}
+	data, _ := json.Marshal(value)
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	_ = os.WriteFile(path, data, 0o600)
+}
+
+func writeNeedsInput(path string, id identity) {
+	value := map[string]any{
+		"executionId": id.ExecutionID, "runId": id.RunID, "nodeId": id.NodeID, "attempt": id.Attempt,
+		"result": map[string]any{
+			"status": "needs_input", "summary": "fixture needs approval", "artifacts": []string{}, "warnings": []string{}, "checks": []string{},
+			"questions": []map[string]any{{"id": "approval", "prompt": "Proceed?", "choices": []string{"yes", "no"}, "required": true}},
+		},
 	}
 	data, _ := json.Marshal(value)
 	_ = os.MkdirAll(filepath.Dir(path), 0o700)

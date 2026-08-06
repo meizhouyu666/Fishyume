@@ -270,6 +270,18 @@ func TestDirectBackendUsesExitCodeOnlyForConfirmedFailure(t *testing.T) {
 	}
 }
 
+func TestDirectBackendReturnsStructuredNeedsInput(t *testing.T) {
+	candidate, spec := newFixtureBackend(t)
+	handle := startScenario(t, candidate, spec, "terminal-needs-input")
+	observation := awaitObservation(t, candidate, handle, func(value *backend.ExecutionObservation) bool { return value.State == backend.ObservationTerminal })
+	if observation.Result == nil || observation.Result.Status != "needs_input" || len(observation.Result.Questions) != 1 || observation.Result.Questions[0].ID != "approval" {
+		t.Fatalf("observation=%+v", observation)
+	}
+	if err := backend.ValidateExecutionObservation(*observation); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDirectCancelStopsMatchedSupervisorWhenChildIdentityMismatches(t *testing.T) {
 	candidate, spec := newFixtureBackend(t)
 	handle := startScenario(t, candidate, spec, "active")
