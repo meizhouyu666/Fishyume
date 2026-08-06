@@ -1,5 +1,7 @@
 # Workflow Engine (`wf`) — Architecture Plan v0.2
 
+> 历史基线：本文记录 M1 初始架构，其中 CC-Panes/TaskBinding 结论已被 M4 正式决策取代。当前目标架构见 [`fishyume-m4-agent-native-control-plane.md`](./fishyume-m4-agent-native-control-plane.md)。
+
 > 状态：已批准，等待 M1 实现  
 > 日期：2026-08-04
 

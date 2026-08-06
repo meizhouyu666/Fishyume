@@ -1,5 +1,7 @@
 # Workflow Engine (`wf`) — M2 Architecture v0.1
 
+> 历史基线：本文保留 M2 DAG 与状态机设计记录。Backend 产品语义和 CC-Panes 执行链已被 M4 正式决策取代，当前目标架构见 [`fishyume-m4-agent-native-control-plane.md`](./fishyume-m4-agent-native-control-plane.md)。
+
 > 状态：已确认核心方向，进入实现
 > 日期：2026-08-04
 > 前置里程碑：M1（单 Agent 垂直链路）已完成

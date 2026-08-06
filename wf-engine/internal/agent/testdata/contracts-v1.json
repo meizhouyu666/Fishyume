@@ -1,0 +1,30 @@
+{
+  "attemptEnvelope": {
+    "protocolVersion": 1,
+    "identity": {"runId": "run-fixture", "nodeId": "implement", "attempt": 1},
+    "workspace": "workspace",
+    "task": "implement the approved change",
+    "context": {"upstreamResults": [], "requiredSkills": ["go"]},
+    "constraints": {"interaction": "none", "pty": "disabled"},
+    "budget": {},
+    "resultContract": {"schema": {"type": "object"}, "maxBytes": 65536}
+  },
+  "driverEvents": [
+    {"type": "attempt.started"},
+    {"type": "attempt.progress", "message": "working"},
+    {"type": "attempt.diagnostic", "diagnostic": "bounded diagnostic"},
+    {"type": "attempt.needs_input", "message": "approval required"},
+    {"type": "attempt.result_pending"},
+    {"type": "attempt.completed", "result": {"status": "succeeded", "summary": "done", "usage": {"inputTokensEstimated": 0, "outputTokensEstimated": 0}}}
+  ],
+  "agentResults": [
+    {"status": "succeeded", "summary": "done", "usage": {"inputTokensEstimated": 0, "outputTokensEstimated": 0}},
+    {"status": "failed", "summary": "failed", "usage": {"inputTokensEstimated": 0, "outputTokensEstimated": 0}},
+    {"status": "needs_input", "summary": "approval required", "questions": [{"id": "approval", "prompt": "Proceed?", "required": true}], "usage": {"inputTokensEstimated": 0, "outputTokensEstimated": 0}},
+    {"status": "indeterminate", "summary": "outcome unknown", "usage": {"inputTokensEstimated": 0, "outputTokensEstimated": 0}}
+  ],
+  "executionHandle": {"driver": "codex", "target": "local", "schemaVersion": 1, "id": "exec-fixture", "data": {}},
+  "cancelResults": [{"state": "confirmed"}, {"state": "not_confirmed", "diagnostic": "PID fingerprint mismatch"}],
+  "ipcHandshake": {"protocolVersion": 1, "stateSchema": 3, "ownerId": "owner-fixture", "stateDirHash": "sha256-fixture"},
+  "apiError": {"code": "CAPABILITY_UNAVAILABLE", "message": "requested Driver target is unavailable", "data": {"driver": "codex", "target": "wsl"}}
+}
