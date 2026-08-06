@@ -18,6 +18,7 @@ type observedAttempt struct {
 	ref         activeAttemptRef
 	observation *backend.ExecutionObservation
 	err         error
+	settled     bool
 }
 
 func findActiveAttempts(nodes []NodeSnapshot) []activeAttemptRef {
@@ -50,6 +51,9 @@ func (s *Service) reconcileAttempts(ctx context.Context, runID string, generatio
 		return err
 	}
 	for _, result := range results {
+		if result.settled {
+			continue
+		}
 		if result.err != nil {
 			if errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded) {
 				return progressed, false, result.err
@@ -133,6 +137,10 @@ func (s *Service) observeAttempt(ctx context.Context, runID string, ref activeAt
 	var attempt AttemptSnapshot
 	if err := s.store.ReadAttempt(runID, ref.nodeID, ref.attempt, &attempt); err != nil {
 		result.err = err
+		return result
+	}
+	if attempt.ResultConsumed && attempt.Phase == NodePhaseWaiting && attempt.Reason == ReasonAgentWaitingInput {
+		result.settled = true
 		return result
 	}
 	candidate, err := s.registry.Get(attemptDriver(attempt))

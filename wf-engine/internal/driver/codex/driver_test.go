@@ -49,6 +49,7 @@ func envelopeForScenario(t *testing.T, scenario string) agent.AttemptEnvelope {
 		ProtocolVersion: agent.ProtocolVersion,
 		Identity:        agent.AttemptIdentity{RunID: "run-driver-" + scenario, NodeID: "agent-1", Attempt: 1},
 		Workspace:       t.TempDir(),
+		Target:          "local",
 		Task:            "driver contract fixture",
 		Context:         agent.AttemptContext{UpstreamResults: []agent.UpstreamResult{}, RequiredSkills: []string{}},
 		Constraints:     map[string]string{"interaction": "none"},

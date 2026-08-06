@@ -641,12 +641,21 @@ func (s *Service) Resume(_ context.Context, request ResumeRequest) (WorkflowSnap
 	if _, err := s.resetEventSequence(request.RunID); err != nil {
 		return WorkflowSnapshot{}, fmt.Errorf("invalid event history: %w", err)
 	}
-	run, _, err := s.loadRun(request.RunID)
+	run, nodes, err := s.loadRun(request.RunID)
 	if err != nil {
 		return WorkflowSnapshot{}, err
 	}
 	if run.Phase == PhaseCompleted && request.Action == nil {
 		return run, nil
+	}
+	if request.Action == nil && run.Phase == PhaseWaiting && run.Reason == ReasonAgentWaitingInput {
+		settled, err := s.hasSettledNeedsInput(nodes)
+		if err != nil {
+			return WorkflowSnapshot{}, err
+		}
+		if settled {
+			return run, nil
+		}
 	}
 	lease, err := s.acquireLease(request.RunID, "resume", time.Second)
 	if err != nil {
@@ -686,6 +695,36 @@ func (s *Service) Resume(_ context.Context, request ResumeRequest) (WorkflowSnap
 		return WorkflowSnapshot{}, err
 	}
 	return updated, nil
+}
+
+func (s *Service) hasSettledNeedsInput(nodes []NodeSnapshot) (bool, error) {
+	found := false
+	for _, node := range nodes {
+		if node.Type != "agent" {
+			continue
+		}
+		if node.Phase == NodePhaseRunning {
+			return false, nil
+		}
+		if node.Phase != NodePhaseWaiting {
+			continue
+		}
+		if node.Reason != ReasonAgentWaitingInput {
+			return false, nil
+		}
+		found = true
+		if node.CurrentAttempt < 1 || node.Result == nil || len(node.Result.Questions) == 0 {
+			return false, nil
+		}
+		var attempt AttemptSnapshot
+		if err := s.store.ReadAttempt(node.RunID, node.ID, node.CurrentAttempt, &attempt); err != nil {
+			return false, err
+		}
+		if !attempt.ResultConsumed || attempt.Phase != NodePhaseWaiting || attempt.Reason != ReasonAgentWaitingInput {
+			return false, nil
+		}
+	}
+	return found, nil
 }
 
 func (s *Service) Detach(runID string) (WorkflowSnapshot, error) {
@@ -1238,6 +1277,10 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			if len([]byte(renderedTask)) > workflow.MaxPromptBytes {
 				return fmt.Errorf("rendered prompt exceeds %d bytes", workflow.MaxPromptBytes)
 			}
+			driver, target, err := workflow.ResolveAgent(normalized.Document.Defaults, definition)
+			if err != nil {
+				return err
+			}
 			number, now := node.CurrentAttempt+1, s.now().UTC()
 			ancestorResults := make(map[string]workflow.Result)
 			for ancestorID := range ancestorSet(normalized.Document, node.ID) {
@@ -1246,7 +1289,7 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 				}
 			}
 			compiled, err := contextcompiler.Compile(contextcompiler.Input{
-				Identity: agent.AttemptIdentity{RunID: run.ID, NodeID: node.ID, Attempt: number}, Workspace: run.Project, Task: renderedTask,
+				Identity: agent.AttemptIdentity{RunID: run.ID, NodeID: node.ID, Attempt: number}, Workspace: run.Project, Target: target, Task: renderedTask,
 				AncestorResults: ancestorResults, RequiredSkills: definition.RequiredSkills,
 				Constraints: map[string]string{"interaction": "none", "processMode": "one-shot", "pty": "disabled"}, Budget: map[string]int64{},
 				ResultSchema: agentResultContractSchema(), ResultMaxBytes: workflow.MaxResultBytes,
@@ -1255,7 +1298,7 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 				return err
 			}
 			attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: run.ID, NodeID: node.ID, Number: number, Phase: NodePhaseRunning, LaunchState: LaunchPrepared,
-				ResolvedDriver: runDriver(*run), ResolvedTarget: runTarget(*run), Backend: runDriver(*run),
+				ResolvedDriver: driver, ResolvedTarget: target, Backend: driver,
 				ContextCompilerVersion: compiled.Manifest.CompilerVersion, ContextManifest: compiled.Manifest, ContextHash: compiled.Hash, PromptHash: compiled.Hash, StartedAt: now, UpdatedAt: now}
 			if err := s.writeAttempt(attempt, true); err != nil {
 				return err
@@ -1267,10 +1310,6 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			}
 			run.Nodes[node.ID] = summarizeNode(*node)
 			if err := s.persistRun(run, node, "node.running", "launching Agent attempt"); err != nil {
-				return err
-			}
-			driver, target, err := workflow.ResolveAgent(normalized.Document.Defaults, definition)
-			if err != nil {
 				return err
 			}
 			launch = &pendingLaunch{runID: run.ID, nodeID: node.ID, attempt: number, backend: driver,
@@ -1414,6 +1453,9 @@ func (s *Service) executionHandle(candidate backend.AgentBackend, attempt Attemp
 		if handle.DriverName() != attemptDriver(attempt) {
 			return nil, fmt.Errorf("Attempt Driver %q does not match execution handle Driver %q", attemptDriver(attempt), handle.DriverName())
 		}
+		if executionTarget(handle) != attemptTarget(attempt) {
+			return nil, fmt.Errorf("Attempt Target %q does not match execution handle Target %q", attemptTarget(attempt), executionTarget(handle))
+		}
 		return &handle, nil
 	}
 	if attempt.legacyExecution == nil || attempt.legacyExecution.SessionID == "" {
@@ -1543,7 +1585,7 @@ func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generati
 	if result == nil {
 		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend returned no result")
 	}
-	normalized := workflow.Result{Summary: result.Summary, Artifacts: result.Artifacts, Warnings: result.Warnings, Checks: result.Checks,
+	normalized := workflow.Result{Summary: result.Summary, Artifacts: result.Artifacts, Warnings: result.Warnings, Checks: result.Checks, Questions: workflowQuestions(result.Questions),
 		Usage: workflow.Usage{InputTokensEstimated: result.Usage.InputTokensEstimated, OutputTokensEstimated: result.Usage.OutputTokensEstimated}}
 	switch strings.ToLower(result.Status) {
 	case "succeeded", "completed":
@@ -1602,7 +1644,13 @@ func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generati
 		})
 		return err == nil, err
 	case "needs_input", "waiting_input", "blocked", "waitinginput":
-		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonAgentWaitingInput, result.Summary)
+		if len(normalized.Questions) == 0 {
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonInvalidResult, "needs_input result requires at least one question")
+		}
+		if err := workflow.ValidateResult(normalized); err != nil {
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonInvalidResult, err.Error())
+		}
+		return false, s.waitingWithResult(runID, nodeID, attemptNumber, generation, ReasonAgentWaitingInput, result.Summary, normalized)
 	case "completion_missing", "idle":
 		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, result.Summary)
 	case "invalid_result":
@@ -1612,6 +1660,62 @@ func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generati
 	default:
 		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "unrecognized Backend result status "+result.Status)
 	}
+}
+
+func workflowQuestions(questions []backend.InputQuestion) []workflow.InputQuestion {
+	result := make([]workflow.InputQuestion, len(questions))
+	for index, question := range questions {
+		result[index] = workflow.InputQuestion{ID: question.ID, Prompt: question.Prompt, Choices: append([]string(nil), question.Choices...), Required: question.Required}
+	}
+	return result
+}
+
+func (s *Service) waitingWithResult(runID, nodeID string, attemptNumber int, generation uint64, reason Reason, message string, result workflow.Result) error {
+	var normalized workflow.Normalized
+	if err := s.store.ReadWorkflow(runID, &normalized); err != nil {
+		return err
+	}
+	return s.controllerMutation(runID, generation, "node.waiting_result", func(run *WorkflowSnapshot, nodes []NodeSnapshot) error {
+		node, err := findNode(nodes, nodeID)
+		if err != nil {
+			return err
+		}
+		var attempt AttemptSnapshot
+		if err := s.store.ReadAttempt(runID, nodeID, attemptNumber, &attempt); err != nil {
+			return err
+		}
+		resultChanged := node.Result == nil || !workflowResultsEqual(*node.Result, result)
+		nodeChanged := resultChanged || !attempt.ResultConsumed || attempt.Phase != NodePhaseWaiting || attempt.Reason != reason || node.Phase != NodePhaseWaiting || node.Reason != reason || node.Diagnostic != message
+		before := *run
+		now := s.now().UTC()
+		attempt.Phase, attempt.Reason, attempt.ResultConsumed, attempt.UpdatedAt = NodePhaseWaiting, reason, true, now
+		node.Phase, node.Reason, node.Diagnostic, node.Result, node.UpdatedAt = NodePhaseWaiting, reason, message, &result, now
+		aggregateRunState(run, nodes, normalized.Document, now)
+		if !nodeChanged && !aggregateRunStateChanged(before, *run) {
+			return nil
+		}
+		eventType := "run.waiting"
+		if nodeChanged {
+			if err := s.store.WriteResult(run.ID, node.ID, attemptNumber, result); err != nil {
+				return err
+			}
+			if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
+				return err
+			}
+			if err := s.writeAttempt(attempt, false); err != nil {
+				return err
+			}
+			run.Nodes[node.ID] = summarizeNode(*node)
+			eventType = "node.waiting"
+		}
+		return s.persistRun(run, node, eventType, message)
+	})
+}
+
+func workflowResultsEqual(left, right workflow.Result) bool {
+	leftJSON, leftErr := json.Marshal(left)
+	rightJSON, rightErr := json.Marshal(right)
+	return leftErr == nil && rightErr == nil && string(leftJSON) == string(rightJSON)
 }
 
 func (s *Service) waiting(runID, nodeID string, attemptNumber int, generation uint64, reason Reason, message string) error {

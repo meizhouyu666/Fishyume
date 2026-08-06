@@ -68,6 +68,22 @@ func TestValidateAgentResultAndObservation(t *testing.T) {
 	if err := ValidateAgentResult(result); err == nil {
 		t.Fatal("accepted platform waiting state as Agent result")
 	}
+	result = AgentResult{Status: "succeeded", Summary: "done", Questions: []InputQuestion{{ID: "approval", Prompt: "Proceed?", Required: true}}}
+	if err := ValidateAgentResult(result); err == nil || !strings.Contains(err.Error(), "only needs_input") {
+		t.Fatalf("accepted questions on succeeded result: %v", err)
+	}
+	result.Status = "needs_input"
+	if err := ValidateAgentResult(result); err != nil {
+		t.Fatal(err)
+	}
+	result.Questions[0].ID = ""
+	if err := ValidateAgentResult(result); err == nil || !strings.Contains(err.Error(), "identity") {
+		t.Fatalf("accepted malformed question: %v", err)
+	}
+	result.Questions = []InputQuestion{{ID: "approval", Prompt: "Proceed?", Required: true}, {ID: "approval", Prompt: "Really proceed?", Required: true}}
+	if err := ValidateAgentResult(result); err == nil || !strings.Contains(err.Error(), "duplicated") {
+		t.Fatalf("accepted duplicate question IDs: %v", err)
+	}
 }
 
 func TestValidateCancelResult(t *testing.T) {

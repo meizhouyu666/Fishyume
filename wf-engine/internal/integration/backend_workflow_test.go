@@ -159,6 +159,55 @@ func (b *recordingBackend) cancelHandles() []backend.ExecutionHandle {
 	return append([]backend.ExecutionHandle(nil), b.cancels...)
 }
 
+func TestCodexNeedsInputQuestionsSurviveServiceRestart(t *testing.T) {
+	if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
+		t.Skip("Codex process recovery is currently supported on Windows and Linux")
+	}
+	moduleRoot := moduleDirectory(t)
+	fixtureDir := t.TempDir()
+	extension := ""
+	if runtime.GOOS == "windows" {
+		extension = ".exe"
+	}
+	agentPath := filepath.Join(fixtureDir, "fake-codex"+extension)
+	supervisorPath := filepath.Join(fixtureDir, "fishyume-engine"+extension)
+	buildFixture(t, moduleRoot, agentPath, "./internal/backend/directcli/testdata/fake-agent")
+	buildFixture(t, moduleRoot, supervisorPath, "./cmd/wf-engine")
+
+	stateRoot, workspace := t.TempDir(), t.TempDir()
+	state := store.New(stateRoot)
+	candidate := driveradapter.New(codex.New(codex.Config{StateRoot: stateRoot, Executable: agentPath, SupervisorExecutable: supervisorPath, Sandbox: "read-only", PollInterval: 10 * time.Millisecond}))
+	first := run.NewService(candidate, state)
+	started, err := first.Start(context.Background(), run.StartRequest{Project: workspace, Driver: "codex", Target: "local", Task: "scenario:terminal-needs-input\nrequest approval"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, first, started.ID, func(value run.WorkflowSnapshot) bool {
+		return value.Phase == run.PhaseWaiting && value.Reason == run.ReasonAgentWaitingInput
+	})
+	waitForControllers(t, first)
+
+	second := run.NewService(candidate, state)
+	view, err := second.Status(started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Nodes) != 1 || view.Nodes[0].Result == nil || len(view.Nodes[0].Result.Questions) != 1 {
+		t.Fatalf("status after restart=%+v", view)
+	}
+	question := view.Nodes[0].Result.Questions[0]
+	if question.ID != "approval" || question.Prompt != "Proceed?" || !question.Required || strings.Join(question.Choices, ",") != "yes,no" {
+		t.Fatalf("question=%+v", question)
+	}
+	var attempt run.AttemptSnapshot
+	if err := state.ReadAttempt(started.ID, "agent-1", 1, &attempt); err != nil {
+		t.Fatal(err)
+	}
+	if !attempt.ResultConsumed {
+		t.Fatalf("needs_input attempt was not consumed: %+v", attempt)
+	}
+}
+
 func TestAgentApprovalAgentWorkflowMatchesAcrossBackends(t *testing.T) {
 	if runtime.GOOS != "windows" && runtime.GOOS != "linux" {
 		t.Skip("Direct Backend process recovery is currently supported on Windows and Linux")

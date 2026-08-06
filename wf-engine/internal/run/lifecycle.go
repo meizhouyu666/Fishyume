@@ -247,6 +247,9 @@ func ValidateAttemptSnapshot(snapshot AttemptSnapshot) error {
 		if snapshot.Execution.DriverName() != attemptDriver(snapshot) {
 			return fmt.Errorf("attempt Driver %q does not match execution handle Driver %q", attemptDriver(snapshot), snapshot.Execution.DriverName())
 		}
+		if executionTarget(*snapshot.Execution) != attemptTarget(snapshot) {
+			return fmt.Errorf("attempt Target %q does not match execution handle Target %q", attemptTarget(snapshot), executionTarget(*snapshot.Execution))
+		}
 	}
 	if snapshot.LaunchState != "" && snapshot.LaunchState != LaunchPrepared && snapshot.LaunchState != LaunchDispatching && snapshot.LaunchState != LaunchHandlePersisted && snapshot.LaunchState != LaunchFinishedWithoutHandle && snapshot.LaunchState != LaunchSessionPersisted && snapshot.LaunchState != LaunchFinishedWithoutSession {
 		return fmt.Errorf("attempt has invalid launch state %q", snapshot.LaunchState)

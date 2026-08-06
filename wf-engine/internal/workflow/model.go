@@ -75,13 +75,21 @@ type Condition struct {
 }
 
 type Result struct {
-	Summary   string   `json:"summary,omitempty"`
-	Artifacts []string `json:"artifacts,omitempty"`
-	Warnings  []string `json:"warnings,omitempty"`
-	Checks    []string `json:"checks,omitempty"`
-	Usage     Usage    `json:"usage,omitempty"`
-	Decision  string   `json:"decision,omitempty"`
-	Reason    string   `json:"reason,omitempty"`
+	Summary   string          `json:"summary,omitempty"`
+	Artifacts []string        `json:"artifacts,omitempty"`
+	Warnings  []string        `json:"warnings,omitempty"`
+	Checks    []string        `json:"checks,omitempty"`
+	Questions []InputQuestion `json:"questions,omitempty"`
+	Usage     Usage           `json:"usage,omitempty"`
+	Decision  string          `json:"decision,omitempty"`
+	Reason    string          `json:"reason,omitempty"`
+}
+
+type InputQuestion struct {
+	ID       string   `json:"id"`
+	Prompt   string   `json:"prompt"`
+	Choices  []string `json:"choices,omitempty"`
+	Required bool     `json:"required"`
 }
 
 type Usage struct {
@@ -294,6 +302,22 @@ func ValidateResult(result Result) error {
 	}
 	if len(result.Artifacts) > MaxResultItems || len(result.Warnings) > MaxResultItems || len(result.Checks) > MaxResultItems {
 		return fmt.Errorf("result list exceeds %d items", MaxResultItems)
+	}
+	if len(result.Questions) > 32 {
+		return fmt.Errorf("result questions exceed 32 items")
+	}
+	questionIDs := make(map[string]struct{}, len(result.Questions))
+	for _, question := range result.Questions {
+		if strings.TrimSpace(question.ID) == "" || strings.TrimSpace(question.Prompt) == "" {
+			return fmt.Errorf("result question identity is incomplete")
+		}
+		if _, exists := questionIDs[question.ID]; exists {
+			return fmt.Errorf("result question ID %q is duplicated", question.ID)
+		}
+		questionIDs[question.ID] = struct{}{}
+		if len(question.Choices) > MaxResultItems {
+			return fmt.Errorf("result question choices exceed %d items", MaxResultItems)
+		}
 	}
 	for _, artifact := range result.Artifacts {
 		if len([]byte(artifact)) > MaxArtifactBytes {

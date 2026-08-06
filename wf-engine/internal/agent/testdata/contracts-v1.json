@@ -3,6 +3,7 @@
     "protocolVersion": 1,
     "identity": {"runId": "run-fixture", "nodeId": "implement", "attempt": 1},
     "workspace": "workspace",
+    "target": "local",
     "task": "implement the approved change",
     "context": {"upstreamResults": [], "requiredSkills": ["go"]},
     "constraints": {"interaction": "none", "pty": "disabled"},

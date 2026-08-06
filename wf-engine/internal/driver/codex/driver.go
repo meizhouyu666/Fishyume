@@ -44,20 +44,23 @@ func (d *Driver) Start(ctx context.Context, envelope agent.AttemptEnvelope) (*ag
 	if err := agent.ValidateAttemptEnvelope(envelope); err != nil {
 		return nil, err
 	}
+	if envelope.Target != "local" {
+		return nil, fmt.Errorf("Codex Driver does not support target %q", envelope.Target)
+	}
 	prompt := envelope.Prompt
 	if prompt == "" {
 		prompt = envelope.Task
 	}
 	handle, err := d.legacy.Start(ctx, backend.AgentExecutionSpec{
 		RunID: envelope.Identity.RunID, NodeID: envelope.Identity.NodeID, Attempt: envelope.Identity.Attempt,
-		Workspace: envelope.Workspace, Tool: "codex", Runtime: "local", Instructions: prompt,
+		Workspace: envelope.Workspace, Tool: "codex", Runtime: envelope.Target, Instructions: prompt,
 		RequiredSkills: append([]string(nil), envelope.Context.RequiredSkills...),
 		ResultContract: backend.ResultContract{Schema: append(json.RawMessage(nil), envelope.ResultContract.Schema...), MaxBytes: envelope.ResultContract.MaxBytes},
 	})
 	if handle == nil {
 		return nil, err
 	}
-	return &agent.ExecutionHandle{Driver: d.Name(), Target: "local", SchemaVersion: handle.SchemaVersion, ID: handle.ID, Data: append(json.RawMessage(nil), handle.Data...)}, err
+	return &agent.ExecutionHandle{Driver: d.Name(), Target: envelope.Target, SchemaVersion: handle.SchemaVersion, ID: handle.ID, Data: append(json.RawMessage(nil), handle.Data...)}, err
 }
 
 func (d *Driver) Observe(ctx context.Context, handle agent.ExecutionHandle) (*agent.ExecutionObservation, error) {

@@ -152,6 +152,10 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 			if len([]byte(renderedTask)) > workflow.MaxPromptBytes {
 				return fmt.Errorf("rendered prompt exceeds %d bytes", workflow.MaxPromptBytes)
 			}
+			driver, target, err := workflow.ResolveAgent(normalized.Document.Defaults, definition)
+			if err != nil {
+				return err
+			}
 			number, now := node.CurrentAttempt+1, s.now().UTC()
 			ancestorResults := make(map[string]workflow.Result)
 			for ancestorID := range ancestorSet(normalized.Document, node.ID) {
@@ -160,7 +164,7 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 				}
 			}
 			compiled, err := contextcompiler.Compile(contextcompiler.Input{
-				Identity: agent.AttemptIdentity{RunID: run.ID, NodeID: node.ID, Attempt: number}, Workspace: run.Project, Task: renderedTask,
+				Identity: agent.AttemptIdentity{RunID: run.ID, NodeID: node.ID, Attempt: number}, Workspace: run.Project, Target: target, Task: renderedTask,
 				AncestorResults: ancestorResults, RequiredSkills: definition.RequiredSkills,
 				Constraints: map[string]string{"interaction": "none", "processMode": "one-shot", "pty": "disabled"}, Budget: map[string]int64{},
 				ResultSchema: agentResultContractSchema(), ResultMaxBytes: workflow.MaxResultBytes,
@@ -169,7 +173,7 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 				return err
 			}
 			attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: run.ID, NodeID: node.ID, Number: number, Phase: NodePhaseRunning, LaunchState: LaunchPrepared,
-				ResolvedDriver: runDriver(*run), ResolvedTarget: runTarget(*run), Backend: runDriver(*run), ContextCompilerVersion: compiled.Manifest.CompilerVersion,
+				ResolvedDriver: driver, ResolvedTarget: target, Backend: driver, ContextCompilerVersion: compiled.Manifest.CompilerVersion,
 				ContextManifest: compiled.Manifest, ContextHash: compiled.Hash, PromptHash: compiled.Hash, StartedAt: now, UpdatedAt: now}
 			if err := s.writeAttempt(attempt, true); err != nil {
 				return err
@@ -181,10 +185,6 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 			run.Nodes[node.ID] = summarizeNode(*node)
 			run.Phase, run.Reason, run.Conclusion, run.Summary, run.UpdatedAt = PhaseRunning, "", "", "launching Agents", now
 			if err := s.persistRun(run, node, "node.running", "launching Agent attempt"); err != nil {
-				return err
-			}
-			driver, target, err := workflow.ResolveAgent(normalized.Document.Defaults, definition)
-			if err != nil {
 				return err
 			}
 			launches = append(launches, pendingLaunch{runID: run.ID, nodeID: node.ID, attempt: number, backend: driver,

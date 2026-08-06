@@ -26,7 +26,8 @@ export interface WorkflowSnapshot {
 }
 export type RunSnapshot = WorkflowSnapshot;
 
-export interface NodeResult {summary?: string; artifacts?: string[]; warnings?: string[]; checks?: string[]; usage?: {inputTokensEstimated?: number; outputTokensEstimated?: number}; decision?: 'approved' | 'rejected'; reason?: string}
+export interface InputQuestion {id: string; prompt: string; choices?: string[]; required: boolean}
+export interface NodeResult {summary?: string; artifacts?: string[]; warnings?: string[]; checks?: string[]; questions?: InputQuestion[]; usage?: {inputTokensEstimated?: number; outputTokensEstimated?: number}; decision?: 'approved' | 'rejected'; reason?: string}
 export interface NodeSnapshot extends NodeSummary {protocolVersion: 2; stateSchemaVersion?: number; runId: string; result?: NodeResult; createdAt: string; updatedAt: string}
 export interface ExecutionHandle {driver?: string; target?: string; backend?: string; schemaVersion: number; id: string; data?: Record<string, unknown>}
 export interface AttemptSnapshot {

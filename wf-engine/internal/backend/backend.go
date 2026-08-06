@@ -266,6 +266,22 @@ func ValidateAgentResult(result AgentResult) error {
 	if result.Status != "needs_input" && len(result.Questions) > 0 {
 		return fmt.Errorf("only needs_input result may carry questions")
 	}
+	if len(result.Questions) > 32 {
+		return fmt.Errorf("Agent result questions exceed 32 items")
+	}
+	questionIDs := make(map[string]struct{}, len(result.Questions))
+	for _, question := range result.Questions {
+		if strings.TrimSpace(question.ID) == "" || strings.TrimSpace(question.Prompt) == "" {
+			return fmt.Errorf("Agent input question identity is incomplete")
+		}
+		if _, exists := questionIDs[question.ID]; exists {
+			return fmt.Errorf("Agent input question ID %q is duplicated", question.ID)
+		}
+		questionIDs[question.ID] = struct{}{}
+		if len(question.Choices) > 256 {
+			return fmt.Errorf("Agent input question choices exceed 256 items")
+		}
+	}
 	if result.Usage.InputTokensEstimated < 0 || result.Usage.OutputTokensEstimated < 0 {
 		return fmt.Errorf("Agent result usage cannot be negative")
 	}

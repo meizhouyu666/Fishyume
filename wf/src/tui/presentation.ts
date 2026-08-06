@@ -162,6 +162,10 @@ function appendResult(lines: string[], snapshot: NodeSnapshot | undefined, separ
   if (result.warnings?.length) lines.push(`warnings${separator}${result.warnings.join(separator)}`);
   if (result.checks?.length) lines.push(`checks${separator}${result.checks.join(separator)}`);
   if (result.artifacts?.length) lines.push(`artifacts${separator}${result.artifacts.join(separator)}`);
+  for (const question of result.questions ?? []) {
+    lines.push(`question ${question.id}${separator}${question.required ? 'required' : 'optional'}${separator}${question.prompt}`);
+    if (question.choices?.length) lines.push(`choices${separator}${question.choices.join(separator)}`);
+  }
 }
 
 function nodeDetail(

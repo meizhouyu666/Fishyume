@@ -49,13 +49,32 @@ func TestCompileIsDeterministicAndHashesCanonicalComponents(t *testing.T) {
 	}
 }
 
-func TestCompileRejectsOversizedContext(t *testing.T) {
-	_, err := Compile(Input{
-		Identity: agent.AttemptIdentity{RunID: "run-1", NodeID: "n", Attempt: 1}, Workspace: "workspace", Task: strings.Repeat("x", MaxCompiledContextBytes),
+func TestCompileLimitsFinalWrappedPromptAtExactBoundary(t *testing.T) {
+	input := Input{
+		Identity: agent.AttemptIdentity{RunID: "run-1", NodeID: "n", Attempt: 1}, Workspace: "workspace", Task: "x",
 		AncestorResults: map[string]workflow.Result{}, RequiredSkills: []string{}, Constraints: map[string]string{}, Budget: map[string]int64{}, ResultMaxBytes: agent.MaxResultBytes,
-	})
+	}
+	base, err := Compile(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Task = strings.Repeat("x", 1+MaxCompiledContextBytes-len(base.Prompt))
+	boundary, err := Compile(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(boundary.Prompt) != MaxCompiledContextBytes {
+		t.Fatalf("prompt bytes=%d want=%d", len(boundary.Prompt), MaxCompiledContextBytes)
+	}
+
+	input.Task += "x"
+	_, err = Compile(input)
 	if err == nil || !strings.Contains(err.Error(), "compiled context exceeds") {
 		t.Fatalf("error=%v", err)
+	}
+	wrapperBytes := len(promptPrefix) + len(promptSuffix)
+	if wrapperBytes < 2 || len(boundary.Prompt)-wrapperBytes+1 > MaxCompiledContextBytes {
+		t.Fatalf("overflow must be caused by wrapper bytes=%d", wrapperBytes)
 	}
 }
 

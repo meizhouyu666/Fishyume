@@ -63,6 +63,7 @@ type AttemptEnvelope struct {
 	ProtocolVersion int               `json:"protocolVersion"`
 	Identity        AttemptIdentity   `json:"identity"`
 	Workspace       string            `json:"workspace"`
+	Target          string            `json:"target"`
 	Task            string            `json:"task"`
 	Context         AttemptContext    `json:"context"`
 	Constraints     map[string]string `json:"constraints"`
@@ -221,6 +222,9 @@ func ValidateAttemptEnvelope(envelope AttemptEnvelope) error {
 	if strings.TrimSpace(envelope.Workspace) == "" || strings.TrimSpace(envelope.Task) == "" {
 		return fmt.Errorf("workspace and task are required")
 	}
+	if strings.TrimSpace(envelope.Target) == "" || envelope.Target != strings.TrimSpace(envelope.Target) {
+		return fmt.Errorf("Attempt target is empty or contains surrounding whitespace")
+	}
 	if envelope.Context.UpstreamResults == nil || envelope.Context.RequiredSkills == nil || envelope.Constraints == nil || envelope.Budget == nil {
 		return fmt.Errorf("Attempt envelope collections must be explicit")
 	}
@@ -278,10 +282,15 @@ func ValidateAgentResult(result AgentResult) error {
 	if result.Usage.InputTokensEstimated < 0 || result.Usage.OutputTokensEstimated < 0 {
 		return fmt.Errorf("Agent result usage cannot be negative")
 	}
+	questionIDs := make(map[string]struct{}, len(result.Questions))
 	for _, question := range result.Questions {
 		if strings.TrimSpace(question.ID) == "" || strings.TrimSpace(question.Prompt) == "" {
 			return fmt.Errorf("Agent input question identity is incomplete")
 		}
+		if _, exists := questionIDs[question.ID]; exists {
+			return fmt.Errorf("Agent input question ID %q is duplicated", question.ID)
+		}
+		questionIDs[question.ID] = struct{}{}
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {

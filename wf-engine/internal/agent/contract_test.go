@@ -11,6 +11,7 @@ func validEnvelope() AttemptEnvelope {
 		ProtocolVersion: ProtocolVersion,
 		Identity:        AttemptIdentity{RunID: "run-1", NodeID: "implement", Attempt: 1},
 		Workspace:       "workspace",
+		Target:          "local",
 		Task:            "implement the approved change",
 		Context:         AttemptContext{UpstreamResults: []UpstreamResult{}, RequiredSkills: []string{}},
 		Constraints:     map[string]string{},
@@ -56,6 +57,10 @@ func TestAgentResultNeedsInputContract(t *testing.T) {
 	result.Questions = nil
 	if err := ValidateAgentResult(result); err == nil {
 		t.Fatal("needs_input without questions was accepted")
+	}
+	result.Questions = []InputQuestion{{ID: "risk", Prompt: "Proceed?", Required: true}, {ID: "risk", Prompt: "Really proceed?", Required: true}}
+	if err := ValidateAgentResult(result); err == nil || !strings.Contains(err.Error(), "duplicated") {
+		t.Fatalf("duplicate question IDs were accepted: %v", err)
 	}
 	oversized := AgentResult{Status: "failed", Summary: strings.Repeat("x", 17*1024)}
 	if err := ValidateAgentResult(oversized); err == nil {

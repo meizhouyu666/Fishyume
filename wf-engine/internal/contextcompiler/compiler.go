@@ -14,6 +14,9 @@ import (
 const (
 	Version                 = "context-compiler/v1"
 	MaxCompiledContextBytes = 128 * 1024
+	promptPrefix            = "Fishyume headless Attempt envelope (protocol v1):\n"
+	promptSuffix            = "\n\nExecute the task with the declared constraints. Return exactly one structured result matching resultContract. " +
+		"Use status succeeded, failed, needs_input, or indeterminate. needs_input must include at least one structured question and must end this one-shot process."
 )
 
 type Component struct {
@@ -30,6 +33,7 @@ type Manifest struct {
 type Input struct {
 	Identity        agent.AttemptIdentity
 	Workspace       string
+	Target          string
 	Task            string
 	AncestorResults map[string]workflow.Result
 	RequiredSkills  []string
@@ -66,10 +70,15 @@ func Compile(input Input) (Compilation, error) {
 	sort.Strings(skills)
 	constraints := copyStrings(input.Constraints)
 	budget := copyInts(input.Budget)
+	target := input.Target
+	if target == "" {
+		target = "local"
+	}
 	envelope := agent.AttemptEnvelope{
 		ProtocolVersion: agent.ProtocolVersion,
 		Identity:        input.Identity,
 		Workspace:       input.Workspace,
+		Target:          target,
 		Task:            input.Task,
 		Context: agent.AttemptContext{
 			UpstreamResults: upstream,
@@ -101,13 +110,11 @@ func Compile(input Input) (Compilation, error) {
 	if err != nil {
 		return Compilation{}, err
 	}
-	if len(canonical) > MaxCompiledContextBytes {
+	prompt := promptPrefix + string(canonical) + promptSuffix
+	if len(prompt) > MaxCompiledContextBytes {
 		return Compilation{}, fmt.Errorf("compiled context exceeds %d bytes", MaxCompiledContextBytes)
 	}
 	hash := sha256.Sum256(canonical)
-	prompt := "Fishyume headless Attempt envelope (protocol v1):\n" + string(canonical) +
-		"\n\nExecute the task with the declared constraints. Return exactly one structured result matching resultContract. " +
-		"Use status succeeded, failed, needs_input, or indeterminate. needs_input must include at least one structured question and must end this one-shot process."
 	envelope.Prompt = prompt
 	return Compilation{Envelope: envelope, Manifest: manifest, Hash: hex.EncodeToString(hash[:]), Prompt: prompt}, nil
 }

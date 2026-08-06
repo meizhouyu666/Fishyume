@@ -83,6 +83,16 @@ test('canonical scenes expose their defining operator evidence', () => {
   assert.match(terminal, /summary.*Release stopped/); assert.match(terminal, /next.*fishyume status/); assert.match(terminal, /q exit/); assert.doesNotMatch(terminal, /c cancel|a approve|R retry/);
 });
 
+test('waiting Agent detail exposes structured needs_input questions and choices', () => {
+  const fixture = structuredClone(canonicalFixture('retryable'));
+  const selected = fixture.view.nodes?.find(node => node.id === fixture.selectedNodeId);
+  assert.ok(selected);
+  selected.result = {summary: 'approval required', questions: [{id: 'approval', prompt: 'Proceed with deployment?', choices: ['yes', 'no'], required: true}]};
+  const text = renderRunText(fixture.view, 120, 138_000, optionsFor(fixture));
+  assert.match(text, /question approval.*required.*Proceed with deployment\?/);
+  assert.match(text, /choices.*yes.*no/);
+});
+
 test('Focus Detail folds locally while action detail overrides the folded node view', () => {
   const fixture = canonicalFixture('retryable');
   const folded = buildRunTextPresentation(fixture.view, 80, 138_000, {...optionsFor(fixture), detailExpanded: false});

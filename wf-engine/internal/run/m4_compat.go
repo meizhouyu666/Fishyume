@@ -1,6 +1,10 @@
 package run
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"wf.local/wf-engine/internal/backend"
+)
 
 func legacyDriverName(name string) string {
 	if name == "direct" {
@@ -33,6 +37,13 @@ func attemptDriver(snapshot AttemptSnapshot) string {
 func attemptTarget(snapshot AttemptSnapshot) string {
 	if snapshot.ResolvedTarget != "" {
 		return snapshot.ResolvedTarget
+	}
+	return "local"
+}
+
+func executionTarget(handle backend.ExecutionHandle) string {
+	if handle.Target != "" {
+		return handle.Target
 	}
 	return "local"
 }

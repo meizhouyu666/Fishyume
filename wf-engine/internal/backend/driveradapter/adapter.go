@@ -42,10 +42,15 @@ func (a *Adapter) Doctor(ctx context.Context, request backend.DoctorRequest) bac
 }
 
 func (a *Adapter) Start(ctx context.Context, spec backend.AgentExecutionSpec) (*backend.ExecutionHandle, error) {
+	target := spec.Runtime
+	if target == "" {
+		target = "local"
+	}
 	envelope := agent.AttemptEnvelope{
 		ProtocolVersion: agent.ProtocolVersion,
 		Identity:        agent.AttemptIdentity{RunID: spec.RunID, NodeID: spec.NodeID, Attempt: spec.Attempt},
 		Workspace:       spec.Workspace,
+		Target:          target,
 		Task:            spec.Instructions,
 		Context:         agent.AttemptContext{UpstreamResults: []agent.UpstreamResult{}, RequiredSkills: append([]string(nil), spec.RequiredSkills...)},
 		Constraints:     map[string]string{},
@@ -55,6 +60,9 @@ func (a *Adapter) Start(ctx context.Context, spec backend.AgentExecutionSpec) (*
 	}
 	if spec.Envelope != nil {
 		envelope = *spec.Envelope
+		if envelope.Target == "" {
+			envelope.Target = target
+		}
 	}
 	handle, err := a.driver.Start(ctx, envelope)
 	if handle == nil {
