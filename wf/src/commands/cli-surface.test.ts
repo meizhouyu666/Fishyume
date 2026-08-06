@@ -25,10 +25,11 @@ test('command help remains available', () => {
   }
 });
 
-test('run and doctor expose Backend selection', () => {
+test('run and doctor expose Driver selection with legacy compatibility flags', () => {
   for (const command of ['run', 'doctor']) {
     const result = invoke(command, '--help');
     assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /--driver/);
     assert.match(result.stdout, /--backend/);
   }
 });

@@ -30,11 +30,11 @@ export function writeStatus(view: RunStatusView, output: TextWriter): void {
   const conclusion = run.conclusion ? ` conclusion=${run.conclusion}` : '';
   const reason = run.reason ? ` reason=${run.reason}` : '';
   const capacity = run.effectiveConcurrency ? ` capacity=${run.effectiveConcurrency}` : '';
-  output.write(`run=${run.id} workflow=${run.workflowName} backend=${run.backend}${capacity} phase=${run.phase}${conclusion}${reason}\n`);
+  output.write(`run=${run.id} workflow=${run.workflowName} driver=${run.resolvedDriver ?? run.backend ?? 'unknown'} target=${run.resolvedTarget ?? 'local'}${capacity} phase=${run.phase}${conclusion}${reason}\n`);
   for (const node of view.nodes ?? []) {
     output.write(`node=${node.id} type=${node.type} phase=${node.phase}${node.conclusion ? ` conclusion=${node.conclusion}` : ''}${node.reason ? ` reason=${node.reason}` : ''}${node.currentAttempt ? ` attempt=${node.currentAttempt}` : ''}${node.diagnostic ? ` diagnostic=${node.diagnostic}` : ''}\n`);
   }
-  for (const attempt of view.activeAttempts ?? (view.activeAttempt ? [view.activeAttempt] : [])) output.write(`active node=${attempt.nodeId} attempt=${attempt.number} backend=${attempt.backend}\n`);
+  for (const attempt of view.activeAttempts ?? (view.activeAttempt ? [view.activeAttempt] : [])) output.write(`active node=${attempt.nodeId} attempt=${attempt.number} driver=${attempt.resolvedDriver ?? attempt.backend ?? 'unknown'}\n`);
   for (const approval of view.waitingApprovals ?? []) output.write(`approval node=${approval.id} phase=${approval.phase}${approval.diagnostic ? ` prompt=${approval.diagnostic}` : ''}\n`);
   for (const diagnostic of view.diagnostics ?? []) if (diagnostic.message) output.write(`diagnostic node=${diagnostic.nodeId}${diagnostic.reason ? ` reason=${diagnostic.reason}` : ''} message=${diagnostic.message}\n`);
 }

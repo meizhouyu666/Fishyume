@@ -13,8 +13,9 @@ import (
 	"time"
 
 	"wf.local/wf-engine/internal/backend"
-	"wf.local/wf-engine/internal/backend/ccpanes"
 	"wf.local/wf-engine/internal/backend/directcli"
+	"wf.local/wf-engine/internal/backend/driveradapter"
+	"wf.local/wf-engine/internal/driver/codex"
 	"wf.local/wf-engine/internal/run"
 	"wf.local/wf-engine/internal/store"
 )
@@ -168,10 +169,8 @@ func TestAgentApprovalAgentWorkflowMatchesAcrossBackends(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		extension = ".exe"
 	}
-	ccpanesCTL := filepath.Join(fixtureDir, "fake-cc-panes-ctl"+extension)
 	directAgent := filepath.Join(fixtureDir, "fake-codex"+extension)
 	directSupervisor := filepath.Join(fixtureDir, "fishyume-engine"+extension)
-	buildFixture(t, moduleRoot, ccpanesCTL, "./internal/backend/ccpanes/testdata/fake-cc-panes-ctl")
 	buildFixture(t, moduleRoot, directAgent, "./internal/backend/directcli/testdata/fake-agent")
 	buildFixture(t, moduleRoot, directSupervisor, "./cmd/wf-engine")
 
@@ -179,15 +178,9 @@ func TestAgentApprovalAgentWorkflowMatchesAcrossBackends(t *testing.T) {
 		name string
 		make func(*testing.T, string, string) backend.AgentBackend
 	}{
-		{
-			name: "ccpanes",
-			make: func(t *testing.T, _, workspace string) backend.AgentBackend {
-				t.Setenv(ccpanes.ProfileIDEnv, "fishyume-integration-profile")
-				t.Setenv("WF_FAKE_PROJECT", workspace)
-				legacy := ccpanes.NewWithClient(ccpanes.NewClient(ccpanesCTL))
-				return ccpanes.NewAdapterWithBackend(legacy)
-			},
-		},
+		{name: "codex", make: func(_ *testing.T, stateRoot, _ string) backend.AgentBackend {
+			return driveradapter.New(codex.New(codex.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond}))
+		}},
 		{
 			name: "direct",
 			make: func(_ *testing.T, stateRoot, _ string) backend.AgentBackend {
@@ -254,8 +247,8 @@ func TestAgentApprovalAgentWorkflowMatchesAcrossBackends(t *testing.T) {
 			if len(starts) != 2 || starts[0].NodeID != "plan" || starts[1].NodeID != "implement" {
 				t.Fatalf("Backend Start calls = %+v, want plan then implement exactly once", starts)
 			}
-			if !strings.Contains(starts[1].Instructions, planNode.Result.Summary) {
-				t.Fatalf("implement prompt %q does not contain plan summary %q", starts[1].Instructions, planNode.Result.Summary)
+			if starts[1].Envelope == nil || starts[1].Envelope.Task != "Implement "+planNode.Result.Summary || len(starts[1].Envelope.Context.UpstreamResults) != 2 {
+				t.Fatalf("implement envelope %+v does not contain deterministic ancestor context", starts[1].Envelope)
 			}
 
 			attempts := make([]run.AttemptSnapshot, 0, 2)
@@ -288,10 +281,8 @@ func TestParallelWorkflowMatchesAcrossBackends(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		extension = ".exe"
 	}
-	ccpanesCTL := filepath.Join(fixtureDir, "fake-cc-panes-ctl"+extension)
 	directAgent := filepath.Join(fixtureDir, "fake-codex"+extension)
 	directSupervisor := filepath.Join(fixtureDir, "fishyume-engine"+extension)
-	buildFixture(t, moduleRoot, ccpanesCTL, "./internal/backend/ccpanes/testdata/fake-cc-panes-ctl")
 	buildFixture(t, moduleRoot, directAgent, "./internal/backend/directcli/testdata/fake-agent")
 	buildFixture(t, moduleRoot, directSupervisor, "./cmd/wf-engine")
 
@@ -299,12 +290,8 @@ func TestParallelWorkflowMatchesAcrossBackends(t *testing.T) {
 		name string
 		make func(*testing.T, string, string) backend.AgentBackend
 	}{
-		{name: "ccpanes", make: func(t *testing.T, _, workspace string) backend.AgentBackend {
-			t.Setenv(ccpanes.ProfileIDEnv, "fishyume-parallel-profile")
-			t.Setenv("WF_FAKE_PROJECT", workspace)
-			t.Setenv("WF_FAKE_BINDING_STATUS", "")
-			t.Setenv("WF_FAKE_SESSION_STATUS", "idle")
-			return ccpanes.NewAdapterWithBackend(ccpanes.NewWithClient(ccpanes.NewClient(ccpanesCTL)))
+		{name: "codex", make: func(_ *testing.T, stateRoot, _ string) backend.AgentBackend {
+			return driveradapter.New(codex.New(codex.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond}))
 		}},
 		{name: "direct", make: func(_ *testing.T, stateRoot, _ string) backend.AgentBackend {
 			return directcli.New(directcli.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond})
@@ -367,22 +354,16 @@ func TestConcurrentCancelMatchesAcrossBackends(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		extension = ".exe"
 	}
-	ccpanesCTL := filepath.Join(fixtureDir, "fake-cc-panes-ctl"+extension)
 	directAgent := filepath.Join(fixtureDir, "fake-codex"+extension)
 	directSupervisor := filepath.Join(fixtureDir, "fishyume-engine"+extension)
-	buildFixture(t, moduleRoot, ccpanesCTL, "./internal/backend/ccpanes/testdata/fake-cc-panes-ctl")
 	buildFixture(t, moduleRoot, directAgent, "./internal/backend/directcli/testdata/fake-agent")
 	buildFixture(t, moduleRoot, directSupervisor, "./cmd/wf-engine")
 	tests := []struct {
 		name string
 		make func(*testing.T, string, string) backend.AgentBackend
 	}{
-		{name: "ccpanes", make: func(t *testing.T, _, workspace string) backend.AgentBackend {
-			t.Setenv(ccpanes.ProfileIDEnv, "fishyume-cancel-profile")
-			t.Setenv("WF_FAKE_PROJECT", workspace)
-			t.Setenv("WF_FAKE_BINDING_STATUS", "running")
-			t.Setenv("WF_FAKE_SESSION_STATUS", "active")
-			return ccpanes.NewAdapterWithBackend(ccpanes.NewWithClient(ccpanes.NewClient(ccpanesCTL)))
+		{name: "codex", make: func(_ *testing.T, stateRoot, _ string) backend.AgentBackend {
+			return driveradapter.New(codex.New(codex.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond}))
 		}},
 		{name: "direct", make: func(_ *testing.T, stateRoot, _ string) backend.AgentBackend {
 			return directcli.New(directcli.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond})

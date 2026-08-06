@@ -135,7 +135,7 @@ func (s *Service) observeAttempt(ctx context.Context, runID string, ref activeAt
 		result.err = err
 		return result
 	}
-	candidate, err := s.registry.Get(attempt.Backend)
+	candidate, err := s.registry.Get(attemptDriver(attempt))
 	if err != nil {
 		result.err = fmt.Errorf("select persisted Backend: %w", err)
 		return result

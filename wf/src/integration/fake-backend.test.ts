@@ -53,18 +53,16 @@ test('CLI bridge fake integration closes completed, waiting, failed, and error-p
   const engineRoot = join(projectRoot, 'wf-engine');
   const temporary = await mkdtemp(join(tmpdir(), 'wf-e2e-'));
   const enginePath = join(temporary, process.platform === 'win32' ? 'wf-engine.exe' : 'wf-engine');
-  const ctlPath = join(temporary, process.platform === 'win32' ? 'cc-panes-ctl.exe' : 'cc-panes-ctl');
+  const codexPath = join(temporary, process.platform === 'win32' ? 'fake-codex.exe' : 'fake-codex');
   const stateDir = join(temporary, 'state');
   const bridges: EngineBridge[] = [];
   const environment = {
-    WF_CCPANES_CTL: ctlPath,
-    FISHYUME_CCPANES_PROFILE_ID: 'fishyume-test-profile',
+    FISHYUME_CODEX_PATH: codexPath,
     WF_STATE_DIR: stateDir,
-    WF_FAKE_PROJECT: projectRoot,
   };
   let testError: unknown;
   try {
-    for (const [output, target] of [[enginePath, './cmd/wf-engine'], [ctlPath, './internal/backend/ccpanes/testdata/fake-cc-panes-ctl']] as const) {
+    for (const [output, target] of [[enginePath, './cmd/wf-engine'], [codexPath, './internal/backend/directcli/testdata/fake-agent']] as const) {
       const built = spawnSync('go', ['build', '-o', output, target], {cwd: engineRoot, encoding: 'utf8'});
       assert.equal(built.status, 0, built.stderr);
     }
@@ -92,7 +90,7 @@ test('CLI bridge fake integration closes completed, waiting, failed, and error-p
     assert.equal(persistedSnapshot.conclusion, 'succeeded');
     const events = (await readFile(join(snapshot.stateDir, 'events.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
     assert.ok(events.length >= 4);
-    assert.match(await readFile(join(snapshot.stateDir, 'nodes', 'agent-1', 'attempts', '1', 'output.log'), 'utf8'), /fixture agent output/);
+    assert.match(await readFile(join(snapshot.stateDir, 'nodes', 'agent-1', 'attempts', '1', 'output.log'), 'utf8'), /turn.completed/);
     await closeAndAssert(bridge);
 
     const workflow = `apiVersion: wf/v1
@@ -136,11 +134,11 @@ nodes:
     assert.equal((await readFile(join(workflowView.run!.stateDir, 'workflow.json'), 'utf8')).includes('topologicalOrder'), true);
     await closeAndAssert(resumeBridge);
 
-    const failedBridge = bridgeWithEnvironment(enginePath, {...environment, WF_FAKE_BINDING_STATUS: 'failed'}, bridges);
+    const failedBridge = bridgeWithEnvironment(enginePath, environment, bridges);
     let resolveFailure!: () => void;
     const failure = new Promise<void>(resolve => {resolveFailure = resolve});
     failedBridge.onRunEvent(event => {if (event.phase === 'completed') resolveFailure()});
-    const failedRun = await failedBridge.call<{runId: string}>('run.start', {project: projectRoot, tool: 'codex', runtime: 'local', task: 'fixture failure'});
+    const failedRun = await failedBridge.call<{runId: string}>('run.start', {project: projectRoot, driver: 'codex', target: 'local', task: 'scenario:terminal-failed'});
     await withTimeout(failure, 'failure terminal');
     const failedView = await failedBridge.call<RunStatusView>('run.status', {runId: failedRun.runId});
     assert.equal(failedView.run?.conclusion, 'failed');

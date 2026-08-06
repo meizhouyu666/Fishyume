@@ -98,7 +98,7 @@ export function headerLines(run: WorkflowSnapshot, width: number, elapsedMs: num
   const runStatus = statusForRun(run); const status = headerStatusText(runStatus); const semanticRole = designTokens.status[runStatus].role;
   const statusRole = semanticRole === 'danger' || semanticRole === 'approval' ? semanticRole : undefined; const settled = settledText(run);
   const capacity = run.effectiveConcurrency ? `capacity ${run.effectiveConcurrency}` : undefined;
-  const identity = [`run ${run.id}`, run.backend, ...(size === 'narrow' ? [] : [capacity])].filter((value): value is string => Boolean(value)).join(separator);
+  const identity = [`run ${run.id}`, run.resolvedDriver ?? run.backend, ...(size === 'narrow' ? [] : [capacity])].filter((value): value is string => Boolean(value)).join(separator);
   if (size === 'narrow') {
     const brandLine = fitText(`${designTokens.emphasis.brand} / ${run.workflowName}`, width);
     const statusLine = fitText([status, formatElapsed(elapsedMs), settled, capacity].filter((value): value is string => Boolean(value)).join(separator), width);
@@ -128,7 +128,7 @@ function settledText(run: WorkflowSnapshot): string {
 
 function nodeTail(node: NodeSummary, attempt: AttemptSnapshot | undefined, size: TerminalSize, separator: string): string[] {
   const attemptText = attempt ? `a${attempt.number}` : node.currentAttempt ? `a${node.currentAttempt}` : undefined;
-  const backend = attempt?.backend;
+  const backend = attempt?.resolvedDriver ?? attempt?.backend;
   const execution = attempt?.execution?.id ? `exec ${attempt.execution.id}` : undefined;
   const launch = attempt?.launchState?.replaceAll('_', ' ');
   const primary = size === 'narrow' ? [attemptText, backend] : [node.type, attemptText, backend, launch, execution];
@@ -176,7 +176,7 @@ function nodeDetail(
   lines.push([node.type, node.phase, node.conclusion, node.reason].filter(Boolean).join(separator));
   if (attempt) {
     lines.push([
-      `attempt ${attempt.number}`, attempt.backend, attempt.launchState?.replaceAll('_', ' '), attempt.execution ? `execution ${attempt.execution.id}` : undefined,
+      `attempt ${attempt.number}`, attempt.resolvedDriver ?? attempt.backend, attempt.launchState?.replaceAll('_', ' '), attempt.execution ? `execution ${attempt.execution.id}` : undefined,
     ].filter((value): value is string => Boolean(value)).join(separator));
   }
   for (const diagnostic of diagnosticsFor(view, node)) {

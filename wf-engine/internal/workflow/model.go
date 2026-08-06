@@ -38,9 +38,15 @@ type InputDeclaration struct {
 }
 
 type Defaults struct {
-	Backend string `json:"backend,omitempty" yaml:"backend,omitempty"`
-	Tool    string `json:"tool,omitempty" yaml:"tool,omitempty"`
-	Runtime string `json:"runtime,omitempty" yaml:"runtime,omitempty"`
+	Agent   AgentSelection `json:"agent,omitempty" yaml:"agent,omitempty"`
+	Backend string         `json:"backend,omitempty" yaml:"backend,omitempty"`
+	Tool    string         `json:"tool,omitempty" yaml:"tool,omitempty"`
+	Runtime string         `json:"runtime,omitempty" yaml:"runtime,omitempty"`
+}
+
+type AgentSelection struct {
+	Driver string `json:"driver,omitempty" yaml:"driver,omitempty"`
+	Target string `json:"target,omitempty" yaml:"target,omitempty"`
 }
 
 type Execution struct {
@@ -48,14 +54,15 @@ type Execution struct {
 }
 
 type Node struct {
-	Type           string     `json:"type" yaml:"type"`
-	DependsOn      []string   `json:"dependsOn,omitempty" yaml:"dependsOn,omitempty"`
-	When           *Condition `json:"when,omitempty" yaml:"when,omitempty"`
-	Task           string     `json:"task,omitempty" yaml:"task,omitempty"`
-	Prompt         string     `json:"prompt,omitempty" yaml:"prompt,omitempty"`
-	Tool           string     `json:"tool,omitempty" yaml:"tool,omitempty"`
-	Runtime        string     `json:"runtime,omitempty" yaml:"runtime,omitempty"`
-	RequiredSkills []string   `json:"requiredSkills,omitempty" yaml:"requiredSkills,omitempty"`
+	Type           string         `json:"type" yaml:"type"`
+	DependsOn      []string       `json:"dependsOn,omitempty" yaml:"dependsOn,omitempty"`
+	When           *Condition     `json:"when,omitempty" yaml:"when,omitempty"`
+	Task           string         `json:"task,omitempty" yaml:"task,omitempty"`
+	Prompt         string         `json:"prompt,omitempty" yaml:"prompt,omitempty"`
+	Agent          AgentSelection `json:"agent,omitempty" yaml:"agent,omitempty"`
+	Tool           string         `json:"tool,omitempty" yaml:"tool,omitempty"`
+	Runtime        string         `json:"runtime,omitempty" yaml:"runtime,omitempty"`
+	RequiredSkills []string       `json:"requiredSkills,omitempty" yaml:"requiredSkills,omitempty"`
 }
 
 type Condition struct {
@@ -86,6 +93,54 @@ type Normalized struct {
 	Document         Document       `json:"document"`
 	Inputs           map[string]any `json:"inputs,omitempty"`
 	TopologicalOrder []string       `json:"topologicalOrder"`
+	Warnings         []string       `json:"warnings,omitempty"`
+}
+
+func ResolveAgent(defaults Defaults, node Node) (string, string, error) {
+	driver := strings.TrimSpace(node.Agent.Driver)
+	if driver == "" {
+		driver = strings.TrimSpace(defaults.Agent.Driver)
+	}
+	legacyTool := strings.TrimSpace(node.Tool)
+	if legacyTool == "" {
+		legacyTool = strings.TrimSpace(defaults.Tool)
+	}
+	if legacyTool != "" && legacyTool != "codex" && legacyTool != "claude" && legacyTool != "opencode" {
+		return "", "", fmt.Errorf("unsupported tool %q", legacyTool)
+	}
+	legacyBackend := strings.TrimSpace(defaults.Backend)
+	legacyDriver := legacyBackend
+	if legacyDriver == "direct" {
+		legacyDriver = "codex"
+	}
+	if legacyDriver == "" {
+		legacyDriver = legacyTool
+	}
+	if driver == "" {
+		driver = legacyDriver
+	} else if legacyDriver != "" && driver != legacyDriver {
+		return "", "", fmt.Errorf("agent driver %q conflicts with deprecated backend/tool selection %q", driver, legacyDriver)
+	}
+	target := strings.TrimSpace(node.Agent.Target)
+	if target == "" {
+		target = strings.TrimSpace(defaults.Agent.Target)
+	}
+	legacyTarget := strings.TrimSpace(node.Runtime)
+	if legacyTarget == "" {
+		legacyTarget = strings.TrimSpace(defaults.Runtime)
+	}
+	if legacyTarget != "" && legacyTarget != "local" && legacyTarget != "wsl" && legacyTarget != "ssh" {
+		return "", "", fmt.Errorf("unsupported runtime %q", legacyTarget)
+	}
+	if target == "" {
+		target = legacyTarget
+	} else if legacyTarget != "" && target != legacyTarget {
+		return "", "", fmt.Errorf("agent target %q conflicts with deprecated runtime %q", target, legacyTarget)
+	}
+	if target == "" {
+		target = "local"
+	}
+	return driver, target, nil
 }
 
 func (d Document) CanonicalJSON() ([]byte, error) {

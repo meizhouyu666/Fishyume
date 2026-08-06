@@ -26,7 +26,8 @@ func Parse(data []byte, filename string, provided map[string]any) (Normalized, e
 	if err := ensureJSONEOF(decoder); err != nil {
 		return Normalized{}, err
 	}
-	if err := normalizeDocument(&doc); err != nil {
+	warnings, err := normalizeDocument(&doc)
+	if err != nil {
 		return Normalized{}, err
 	}
 	order, err := Validate(doc)
@@ -37,7 +38,7 @@ func Parse(data []byte, filename string, provided map[string]any) (Normalized, e
 	if err != nil {
 		return Normalized{}, err
 	}
-	return Normalized{Document: doc, Inputs: inputs, TopologicalOrder: order}, nil
+	return Normalized{Document: doc, Inputs: inputs, TopologicalOrder: order, Warnings: warnings}, nil
 }
 
 func documentJSON(data []byte, filename string) ([]byte, error) {
@@ -149,26 +150,36 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 	return nil
 }
 
-func normalizeDocument(doc *Document) error {
+func normalizeDocument(doc *Document) ([]string, error) {
 	if doc.APIVersion != APIVersion && doc.APIVersion != LegacyAPIVersion {
-		return fmt.Errorf("unsupported apiVersion %q", doc.APIVersion)
+		return nil, fmt.Errorf("unsupported apiVersion %q", doc.APIVersion)
 	}
+	warnings := make([]string, 0, 2)
 	doc.APIVersion = APIVersion
 	if doc.Inputs == nil {
 		doc.Inputs = map[string]InputDeclaration{}
 	}
 	for name, declaration := range doc.Inputs {
 		if !nodeIDPattern.MatchString(name) {
-			return fmt.Errorf("invalid input name %q", name)
+			return nil, fmt.Errorf("invalid input name %q", name)
 		}
 		if declaration.Default != nil {
 			value, err := normalizeScalar(declaration.Default)
 			if err != nil {
-				return fmt.Errorf("input %q default: %w", name, err)
+				return nil, fmt.Errorf("input %q default: %w", name, err)
 			}
 			declaration.Default = value
 			doc.Inputs[name] = declaration
 		}
+	}
+	if doc.Defaults.Backend != "" || doc.Defaults.Tool != "" || doc.Defaults.Runtime != "" {
+		driver, target, err := ResolveAgent(doc.Defaults, Node{})
+		if err != nil {
+			return nil, err
+		}
+		doc.Defaults.Agent = AgentSelection{Driver: driver, Target: target}
+		doc.Defaults.Backend, doc.Defaults.Tool, doc.Defaults.Runtime = "", "", ""
+		warnings = append(warnings, "defaults.backend/tool/runtime are deprecated; use defaults.agent.driver/target")
 	}
 	for id, node := range doc.Nodes {
 		if node.DependsOn == nil {
@@ -177,7 +188,16 @@ func normalizeDocument(doc *Document) error {
 		if node.RequiredSkills == nil {
 			node.RequiredSkills = []string{}
 		}
+		if node.Tool != "" || node.Runtime != "" {
+			driver, target, err := ResolveAgent(doc.Defaults, node)
+			if err != nil {
+				return nil, fmt.Errorf("node %q: %w", id, err)
+			}
+			node.Agent = AgentSelection{Driver: driver, Target: target}
+			node.Tool, node.Runtime = "", ""
+			warnings = append(warnings, fmt.Sprintf("node %q tool/runtime are deprecated; use agent.driver/target", id))
+		}
 		doc.Nodes[id] = node
 	}
-	return nil
+	return warnings, nil
 }

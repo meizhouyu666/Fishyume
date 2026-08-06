@@ -2,13 +2,12 @@ package run
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"strings"
 	"sync"
 
+	"wf.local/wf-engine/internal/agent"
 	"wf.local/wf-engine/internal/backend"
+	"wf.local/wf-engine/internal/contextcompiler"
 	"wf.local/wf-engine/internal/workflow"
 )
 
@@ -40,7 +39,7 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 		}
 	}
 	err := s.controllerMutation(runID, generation, point, func(run *WorkflowSnapshot, nodes []NodeSnapshot) error {
-		candidate, err := s.registry.Get(run.Backend)
+		candidate, err := s.registry.Get(runDriver(*run))
 		if err != nil {
 			return err
 		}
@@ -146,19 +145,32 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 			if err != nil {
 				return err
 			}
-			prompt, err := template.Render(normalized.Inputs, results)
+			renderedTask, err := template.Render(normalized.Inputs, results)
 			if err != nil {
 				return err
 			}
-			if len(definition.RequiredSkills) > 0 {
-				prompt = "Required skills: " + strings.Join(definition.RequiredSkills, ", ") + "\n\n" + prompt
-			}
-			if len([]byte(prompt)) > workflow.MaxPromptBytes {
+			if len([]byte(renderedTask)) > workflow.MaxPromptBytes {
 				return fmt.Errorf("rendered prompt exceeds %d bytes", workflow.MaxPromptBytes)
 			}
 			number, now := node.CurrentAttempt+1, s.now().UTC()
-			hash := sha256.Sum256([]byte(prompt))
-			attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: run.ID, NodeID: node.ID, Number: number, Phase: NodePhaseRunning, LaunchState: LaunchPrepared, Backend: run.Backend, PromptHash: hex.EncodeToString(hash[:]), StartedAt: now, UpdatedAt: now}
+			ancestorResults := make(map[string]workflow.Result)
+			for ancestorID := range ancestorSet(normalized.Document, node.ID) {
+				if result, ok := results[ancestorID]; ok {
+					ancestorResults[ancestorID] = result
+				}
+			}
+			compiled, err := contextcompiler.Compile(contextcompiler.Input{
+				Identity: agent.AttemptIdentity{RunID: run.ID, NodeID: node.ID, Attempt: number}, Workspace: run.Project, Task: renderedTask,
+				AncestorResults: ancestorResults, RequiredSkills: definition.RequiredSkills,
+				Constraints: map[string]string{"interaction": "none", "processMode": "one-shot", "pty": "disabled"}, Budget: map[string]int64{},
+				ResultSchema: agentResultContractSchema(), ResultMaxBytes: workflow.MaxResultBytes,
+			})
+			if err != nil {
+				return err
+			}
+			attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: run.ID, NodeID: node.ID, Number: number, Phase: NodePhaseRunning, LaunchState: LaunchPrepared,
+				ResolvedDriver: runDriver(*run), ResolvedTarget: runTarget(*run), Backend: runDriver(*run), ContextCompilerVersion: compiled.Manifest.CompilerVersion,
+				ContextManifest: compiled.Manifest, ContextHash: compiled.Hash, PromptHash: compiled.Hash, StartedAt: now, UpdatedAt: now}
 			if err := s.writeAttempt(attempt, true); err != nil {
 				return err
 			}
@@ -171,20 +183,13 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 			if err := s.persistRun(run, node, "node.running", "launching Agent attempt"); err != nil {
 				return err
 			}
-			tool, runtimeKind := definition.Tool, definition.Runtime
-			if tool == "" {
-				tool = normalized.Document.Defaults.Tool
+			driver, target, err := workflow.ResolveAgent(normalized.Document.Defaults, definition)
+			if err != nil {
+				return err
 			}
-			if tool == "" {
-				tool = "codex"
-			}
-			if runtimeKind == "" {
-				runtimeKind = normalized.Document.Defaults.Runtime
-			}
-			if runtimeKind == "" {
-				runtimeKind = "local"
-			}
-			launches = append(launches, pendingLaunch{runID: run.ID, nodeID: node.ID, attempt: number, backend: run.Backend, launchSpec: backend.AgentExecutionSpec{RunID: run.ID, NodeID: node.ID, Attempt: number, Workspace: run.Project, Tool: tool, Runtime: runtimeKind, Instructions: prompt, RequiredSkills: append([]string(nil), definition.RequiredSkills...), ResultContract: backend.ResultContract{MaxBytes: workflow.MaxResultBytes}}})
+			launches = append(launches, pendingLaunch{runID: run.ID, nodeID: node.ID, attempt: number, backend: driver,
+				launchSpec: backend.AgentExecutionSpec{RunID: run.ID, NodeID: node.ID, Attempt: number, Workspace: run.Project, Tool: legacyToolForDriver(s.registry, driver), Runtime: target,
+					Instructions: compiled.Prompt, RequiredSkills: append([]string(nil), definition.RequiredSkills...), ResultContract: backend.ResultContract{Schema: compiled.Envelope.ResultContract.Schema, MaxBytes: workflow.MaxResultBytes}, Envelope: &compiled.Envelope}})
 			progressed = true
 		}
 		if len(launches) == 0 {

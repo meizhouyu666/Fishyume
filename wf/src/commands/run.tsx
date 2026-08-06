@@ -9,7 +9,15 @@ import {exitCodeForSnapshot, TextReporter, type TextWriter} from '../tui/text-re
 
 const controllerStops = new Set(['waiting', 'paused', 'completed']);
 
-export interface RunOptions {project: string; backend?: string; tool: string; runtime: string; task?: string; workflow?: string; inputs?: Record<string, JsonScalar>; useTUI: boolean}
+export interface RunOptions {project: string; driver?: 'codex'; target?: 'local'; backend?: string; tool?: 'codex' | 'claude' | 'opencode'; runtime?: 'local' | 'wsl' | 'ssh'; task?: string; workflow?: string; inputs?: Record<string, JsonScalar>; useTUI: boolean}
+
+export function resolveRunSelection(workflow: string | undefined, driver: string | undefined, target: string | undefined, legacy: boolean): Pick<RunOptions, 'driver' | 'target'> {
+  const useAdHocDefaults = !workflow && !legacy;
+  return {
+    driver: (driver ?? (useAdHocDefaults ? 'codex' : undefined)) as RunOptions['driver'],
+    target: (target ?? (useAdHocDefaults ? 'local' : undefined)) as RunOptions['target'],
+  };
+}
 
 export function shouldUseTUI(isTTY: boolean | undefined, environment: NodeJS.ProcessEnv = process.env): boolean {
   return Boolean(isTTY && !environment.CI);
@@ -18,12 +26,13 @@ export function shouldUseTUI(isTTY: boolean | undefined, environment: NodeJS.Pro
 export async function runWorkflow(client: EngineClient, options: RunOptions, output: TextWriter): Promise<number> {
   const startedAt = Date.now();
   try {
-    const workflowSelectsBackend = Boolean(options.workflow && !options.backend);
-    const hello = await client.hello(workflowSelectsBackend ? undefined : options.project, options.backend);
-    if (!workflowSelectsBackend && (!hello.backendReady || (hello.projectChecked && !hello.projectReady))) {output.write(`fail backend ${hello.projectDiagnostic ?? hello.backendDiagnostic}\n`); return 1}
+    const workflowSelectsDriver = Boolean(options.workflow && !options.driver && !options.backend);
+    const selectedDriver = options.driver ?? (options.backend === 'direct' ? 'codex' : options.backend);
+    const hello = await client.hello(workflowSelectsDriver ? undefined : options.project, selectedDriver);
+    if (!workflowSelectsDriver && (!hello.backendReady || (hello.projectChecked && !hello.projectReady))) {output.write(`fail driver ${hello.projectDiagnostic ?? hello.backendDiagnostic}\n`); return 1}
     const start = (): Promise<RunStartResult> => options.workflow
-      ? readFile(options.workflow, 'utf8').then(content => client.call<RunStartResult>('run.startWorkflow', {project: options.project, backend: options.backend, filename: basename(options.workflow!), content, inputs: options.inputs}))
-      : client.call<RunStartResult>('run.start', {project: options.project, backend: options.backend, tool: options.tool, runtime: options.runtime, task: options.task});
+      ? readFile(options.workflow, 'utf8').then(content => client.call<RunStartResult>('run.startWorkflow', {project: options.project, driver: options.driver, target: options.target, backend: options.backend, filename: basename(options.workflow!), content, inputs: options.inputs}))
+      : client.call<RunStartResult>('run.start', {project: options.project, driver: options.driver, target: options.target, backend: options.backend, tool: options.tool, runtime: options.runtime, task: options.task});
     if (options.useTUI) {
       const started = await start();
       const view = await runLiveConsole(client, {runId: started.runId, mode: 'run', startedAt});
@@ -76,16 +85,22 @@ export function parseInputValues(values: string[] | undefined, fileValues: Recor
 
 export class RunCommand extends Command {
   static paths = [['run']];
-  project = Option.String('--project'); backend = Option.String('--backend'); tool = Option.String('--tool', 'codex'); runtime = Option.String('--runtime', 'local');
+  project = Option.String('--project'); driver = Option.String('--driver'); target = Option.String('--target');
+  backend = Option.String('--backend'); tool = Option.String('--tool'); runtime = Option.String('--runtime');
   workflow = Option.String('--workflow'); input = Option.Array('--input'); inputsFile = Option.String('--inputs'); task = Option.Rest();
   async execute(): Promise<number> {
-    if (!['codex', 'claude', 'opencode'].includes(this.tool)) {this.context.stderr.write(`unsupported tool ${this.tool}\n`); return 6}
-    if (!['local', 'wsl', 'ssh'].includes(this.runtime)) {this.context.stderr.write(`unsupported runtime ${this.runtime}\n`); return 6}
+    if (this.driver && this.driver !== 'codex') {this.context.stderr.write(`unsupported driver ${this.driver}\n`); return 6}
+    if (this.target && this.target !== 'local') {this.context.stderr.write(`unsupported target ${this.target}\n`); return 6}
+    if (this.tool && !['codex', 'claude', 'opencode'].includes(this.tool)) {this.context.stderr.write(`unsupported tool ${this.tool}\n`); return 6}
+    if (this.runtime && !['local', 'wsl', 'ssh'].includes(this.runtime)) {this.context.stderr.write(`unsupported runtime ${this.runtime}\n`); return 6}
     if (Boolean(this.workflow) === Boolean(this.task.length)) {this.context.stderr.write('provide exactly one of --workflow or an ad-hoc task\n'); return 6}
     try {
       const fileValues = this.inputsFile ? JSON.parse(await readFile(this.inputsFile, 'utf8')) as Record<string, unknown> : {};
+      const legacy = Boolean(this.backend || this.tool || this.runtime);
+      if (legacy) this.context.stderr.write('warning: --backend/--tool/--runtime are deprecated; use --driver/--target\n');
       const inputs = parseInputValues(this.input, fileValues); const useTUI = shouldUseTUI(process.stdout.isTTY);
-      return runWorkflow(new EngineBridge(), {project: this.project ?? process.cwd(), backend: this.backend, tool: this.tool, runtime: this.runtime, task: this.task.join(' '), workflow: this.workflow, inputs, useTUI}, this.context.stdout);
+      const {driver, target} = resolveRunSelection(this.workflow, this.driver, this.target, legacy);
+      return runWorkflow(new EngineBridge(), {project: this.project ?? process.cwd(), driver, target, backend: this.backend, tool: this.tool as RunOptions['tool'], runtime: this.runtime as RunOptions['runtime'], task: this.task.join(' '), workflow: this.workflow, inputs, useTUI}, this.context.stdout);
     } catch (error) {this.context.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`); return 6}
   }
 }

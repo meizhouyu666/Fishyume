@@ -267,7 +267,7 @@ func TestStatusDerivesMultipleActiveNodesAndAttempts(t *testing.T) {
 	if err := state.ReadAttempt(runID, "b", 1, &malformed); err != nil {
 		t.Fatal(err)
 	}
-	malformed.Backend = "other"
+	malformed.ResolvedDriver = "other"
 	if err := state.UpdateAttempt(runID, "b", 1, malformed); err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +339,7 @@ func TestWorkflowApprovalResumeContextAndConditionalSkip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if started.StateSchemaVersion != 2 || started.ProtocolVersion != 2 {
+	if started.StateSchemaVersion != 3 || started.ProtocolVersion != 2 {
 		t.Fatalf("state schema and protocol must be independent: %+v", started)
 	}
 	var normalized workflow.Normalized
@@ -381,11 +381,11 @@ func TestWorkflowApprovalResumeContextAndConditionalSkip(t *testing.T) {
 	if launches != 2 {
 		t.Fatalf("launches=%d", launches)
 	}
-	if !strings.Contains(prompts[1], "Required skills: go-testing") || !strings.Contains(prompts[1], "safe plan") {
+	if !strings.Contains(prompts[1], `"requiredSkills":["go-testing"]`) || !strings.Contains(prompts[1], "safe plan") {
 		t.Fatalf("downstream prompt=%q", prompts[1])
 	}
-	if strings.Contains(prompts[1], "recent output") || strings.Contains(prompts[1], "plan.md") {
-		t.Fatalf("prompt leaked unreferenced context=%q", prompts[1])
+	if strings.Contains(prompts[1], "recent output") || !strings.Contains(prompts[1], "plan.md") {
+		t.Fatalf("prompt omitted explicit ancestor context or leaked diagnostics=%q", prompts[1])
 	}
 }
 

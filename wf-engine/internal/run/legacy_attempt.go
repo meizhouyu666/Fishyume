@@ -20,6 +20,9 @@ func (snapshot *AttemptSnapshot) UnmarshalJSON(data []byte) error {
 	type attemptAlias AttemptSnapshot
 	var wire struct {
 		attemptAlias
+		Backend         string                 `json:"backend,omitempty"`
+		Runtime         string                 `json:"runtime,omitempty"`
+		PromptHash      string                 `json:"promptHash,omitempty"`
 		Session         *legacySessionSnapshot `json:"session,omitempty"`
 		TaskBindingID   string                 `json:"taskBindingId,omitempty"`
 		LaunchMetadata  map[string]string      `json:"launchMetadata,omitempty"`
@@ -29,6 +32,23 @@ func (snapshot *AttemptSnapshot) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*snapshot = AttemptSnapshot(wire.attemptAlias)
+	if snapshot.ResolvedDriver == "" {
+		snapshot.ResolvedDriver = legacyDriverName(wire.Backend)
+	}
+	if snapshot.ResolvedTarget == "" {
+		snapshot.ResolvedTarget = wire.Runtime
+	}
+	if snapshot.ResolvedTarget == "" {
+		snapshot.ResolvedTarget = "local"
+	}
+	snapshot.Backend = snapshot.ResolvedDriver
+	if snapshot.ContextHash == "" {
+		snapshot.ContextHash = wire.PromptHash
+	}
+	snapshot.PromptHash = snapshot.ContextHash
+	if snapshot.Execution != nil && snapshot.Execution.DriverName() == "direct" && snapshot.ResolvedDriver == "codex" {
+		snapshot.Execution.Driver, snapshot.Execution.Backend = "codex", "codex"
+	}
 	switch snapshot.LaunchState {
 	case LaunchSessionPersisted:
 		snapshot.LaunchState = LaunchHandlePersisted
@@ -53,4 +73,17 @@ func (snapshot *AttemptSnapshot) UnmarshalJSON(data []byte) error {
 	}
 	snapshot.legacyExecution = &legacyExecutionSnapshot{SessionID: wire.Session.ID, Metadata: metadata}
 	return nil
+}
+
+func (snapshot AttemptSnapshot) MarshalJSON() ([]byte, error) {
+	type attemptAlias AttemptSnapshot
+	copy := snapshot
+	copy.ResolvedDriver = attemptDriver(snapshot)
+	copy.ResolvedTarget = attemptTarget(snapshot)
+	copy.Backend = ""
+	if copy.ContextHash == "" {
+		copy.ContextHash = copy.PromptHash
+	}
+	copy.PromptHash = ""
+	return json.Marshal(attemptAlias(copy))
 }

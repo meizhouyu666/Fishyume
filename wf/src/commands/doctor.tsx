@@ -3,12 +3,12 @@ import {EngineBridge, type EngineClient} from '../bridge/engine.js';
 
 interface Writer { write(text: string): unknown }
 
-export async function runDoctor(client: EngineClient, project: string | undefined, backend: string | undefined, output: Writer): Promise<number> {
+export async function runDoctor(client: EngineClient, project: string | undefined, driver: string | undefined, output: Writer): Promise<number> {
   try {
-    const hello = await client.hello(project, backend);
+    const hello = await client.hello(project, driver);
     output.write(`ok engine ${hello.engineVersion} started\n`);
     output.write(`ok protocol ${hello.protocolVersion} compatible\n`);
-    output.write(`${hello.backendReady ? 'ok' : 'fail'} backend ${hello.backendDiagnostic}\n`);
+    output.write(`${hello.backendReady ? 'ok' : 'fail'} driver ${hello.backendDiagnostic}\n`);
     if (hello.projectChecked) {
       output.write(`${hello.projectReady ? 'ok' : 'fail'} project ${hello.projectDiagnostic ?? project}\n`);
     }
@@ -24,9 +24,15 @@ export async function runDoctor(client: EngineClient, project: string | undefine
 export class DoctorCommand extends Command {
   static paths = [['doctor']];
   project = Option.String('--project');
+  driver = Option.String('--driver');
   backend = Option.String('--backend');
 
   async execute(): Promise<number> {
-    return runDoctor(new EngineBridge(), this.project, this.backend, this.context.stdout);
+    if (this.driver && this.backend && this.driver !== (this.backend === 'direct' ? 'codex' : this.backend)) {
+      this.context.stderr.write('--driver conflicts with deprecated --backend\n');
+      return 6;
+    }
+    if (this.backend) this.context.stderr.write('warning: --backend is deprecated; use --driver\n');
+    return runDoctor(new EngineBridge(), this.project, this.driver ?? (this.backend === 'direct' ? 'codex' : this.backend), this.context.stdout);
   }
 }

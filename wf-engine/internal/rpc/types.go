@@ -37,7 +37,8 @@ type HelloResult struct {
 	EngineVersion     string   `json:"engineVersion"`
 	ProtocolVersion   int      `json:"protocolVersion"`
 	SupportedMethods  []string `json:"supportedMethods"`
-	SupportedBackends []string `json:"supportedBackends"`
+	SupportedDrivers  []string `json:"supportedDrivers"`
+	SupportedBackends []string `json:"supportedBackends,omitempty"`
 	BackendReady      bool     `json:"backendReady"`
 	BackendDiagnostic string   `json:"backendDiagnostic"`
 	ProjectChecked    bool     `json:"projectChecked"`
@@ -47,6 +48,7 @@ type HelloResult struct {
 
 type helloParams struct {
 	Project string `json:"project"`
+	Driver  string `json:"driver,omitempty"`
 	Backend string `json:"backend,omitempty"`
 }
 

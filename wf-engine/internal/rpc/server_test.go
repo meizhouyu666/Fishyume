@@ -24,7 +24,7 @@ func (f *fakeBackend) Name() string {
 	if f.name != "" {
 		return f.name
 	}
-	return "ccpanes"
+	return "codex"
 }
 func (*fakeBackend) Capabilities() backend.Capabilities {
 	return backend.Capabilities{Tools: []string{"codex"}, Runtimes: []string{"local"}, SupportsOutput: true}
@@ -93,19 +93,19 @@ func TestHandshakeV2(t *testing.T) {
 
 func TestHandshakeReportsRegistryAndDoctorsSelectedBackend(t *testing.T) {
 	registry := backend.NewRegistry()
-	for _, candidate := range []*fakeBackend{{name: "direct"}, {name: "ccpanes"}} {
+	for _, candidate := range []*fakeBackend{{name: "codex"}, {name: "fixture"}} {
 		if err := registry.Register(candidate); err != nil {
 			t.Fatal(err)
 		}
 	}
 	output := &safeBuffer{}
-	service := run.NewServiceWithRegistry(registry, "ccpanes", store.New(t.TempDir()))
-	server := NewServer(strings.NewReader(request(1, "engine.hello", map[string]any{"backend": "direct"})), output, service)
+	service := run.NewServiceWithRegistry(registry, "codex", store.New(t.TempDir()))
+	server := NewServer(strings.NewReader(request(1, "engine.hello", map[string]any{"backend": "codex"})), output, service)
 	if err := server.Serve(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	text := output.String()
-	if !strings.Contains(text, `"supportedBackends":["ccpanes","direct"]`) || !strings.Contains(text, `"backendDiagnostic":"backend direct is ready"`) {
+	if !strings.Contains(text, `"supportedBackends":["codex","fixture"]`) || !strings.Contains(text, `"backendDiagnostic":"backend codex is ready"`) {
 		t.Fatalf("response=%s", text)
 	}
 }

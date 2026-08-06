@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"wf.local/wf-engine/internal/backend"
+	"wf.local/wf-engine/internal/contextcompiler"
 	"wf.local/wf-engine/internal/workflow"
 )
 
@@ -62,7 +63,10 @@ type WorkflowSnapshot struct {
 	ID                   string                 `json:"id"`
 	WorkflowName         string                 `json:"workflowName"`
 	Project              string                 `json:"project"`
-	Backend              string                 `json:"backend"`
+	ResolvedDriver       string                 `json:"resolvedDriver"`
+	ResolvedTarget       string                 `json:"resolvedTarget"`
+	DeprecationWarnings  []string               `json:"deprecationWarnings,omitempty"`
+	Backend              string                 `json:"-"`
 	EffectiveConcurrency int                    `json:"effectiveConcurrency,omitempty"`
 	Phase                Phase                  `json:"phase"`
 	Conclusion           Conclusion             `json:"conclusion,omitempty"`
@@ -118,22 +122,27 @@ const (
 )
 
 type AttemptSnapshot struct {
-	ProtocolVersion    int                      `json:"protocolVersion"`
-	StateSchemaVersion int                      `json:"stateSchemaVersion"`
-	RunID              string                   `json:"runId"`
-	NodeID             string                   `json:"nodeId"`
-	Number             int                      `json:"number"`
-	Phase              NodePhase                `json:"phase"`
-	Conclusion         Conclusion               `json:"conclusion,omitempty"`
-	Reason             Reason                   `json:"reason,omitempty"`
-	Backend            string                   `json:"backend"`
-	LaunchState        LaunchState              `json:"launchState,omitempty"`
-	Execution          *backend.ExecutionHandle `json:"execution,omitempty"`
-	ResultConsumed     bool                     `json:"resultConsumed"`
-	PromptHash         string                   `json:"promptHash"`
-	StartedAt          time.Time                `json:"startedAt"`
-	UpdatedAt          time.Time                `json:"updatedAt"`
-	CompletedAt        *time.Time               `json:"completedAt,omitempty"`
+	ProtocolVersion        int                      `json:"protocolVersion"`
+	StateSchemaVersion     int                      `json:"stateSchemaVersion"`
+	RunID                  string                   `json:"runId"`
+	NodeID                 string                   `json:"nodeId"`
+	Number                 int                      `json:"number"`
+	Phase                  NodePhase                `json:"phase"`
+	Conclusion             Conclusion               `json:"conclusion,omitempty"`
+	Reason                 Reason                   `json:"reason,omitempty"`
+	ResolvedDriver         string                   `json:"resolvedDriver"`
+	ResolvedTarget         string                   `json:"resolvedTarget"`
+	Backend                string                   `json:"-"`
+	LaunchState            LaunchState              `json:"launchState,omitempty"`
+	Execution              *backend.ExecutionHandle `json:"execution,omitempty"`
+	ResultConsumed         bool                     `json:"resultConsumed"`
+	ContextCompilerVersion string                   `json:"contextCompilerVersion,omitempty"`
+	ContextManifest        contextcompiler.Manifest `json:"contextManifest"`
+	ContextHash            string                   `json:"contextHash"`
+	PromptHash             string                   `json:"-"`
+	StartedAt              time.Time                `json:"startedAt"`
+	UpdatedAt              time.Time                `json:"updatedAt"`
+	CompletedAt            *time.Time               `json:"completedAt,omitempty"`
 
 	legacyExecution *legacyExecutionSnapshot
 }
@@ -228,12 +237,15 @@ func ValidateAttemptSnapshot(snapshot AttemptSnapshot) error {
 	if snapshot.Phase == NodePhaseWaiting && snapshot.Reason == "" {
 		return fmt.Errorf("waiting attempt requires a reason")
 	}
+	if snapshot.ResolvedDriver != "" && snapshot.Backend != "" && snapshot.ResolvedDriver != snapshot.Backend {
+		return fmt.Errorf("attempt Driver %q conflicts with deprecated Backend alias %q", snapshot.ResolvedDriver, snapshot.Backend)
+	}
 	if snapshot.Execution != nil {
 		if err := backend.ValidateExecutionHandle(*snapshot.Execution); err != nil {
 			return fmt.Errorf("attempt has invalid execution handle: %w", err)
 		}
-		if snapshot.Execution.Backend != snapshot.Backend {
-			return fmt.Errorf("attempt Backend %q does not match execution handle Backend %q", snapshot.Backend, snapshot.Execution.Backend)
+		if snapshot.Execution.DriverName() != attemptDriver(snapshot) {
+			return fmt.Errorf("attempt Driver %q does not match execution handle Driver %q", attemptDriver(snapshot), snapshot.Execution.DriverName())
 		}
 	}
 	if snapshot.LaunchState != "" && snapshot.LaunchState != LaunchPrepared && snapshot.LaunchState != LaunchDispatching && snapshot.LaunchState != LaunchHandlePersisted && snapshot.LaunchState != LaunchFinishedWithoutHandle && snapshot.LaunchState != LaunchSessionPersisted && snapshot.LaunchState != LaunchFinishedWithoutSession {

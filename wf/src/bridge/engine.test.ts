@@ -13,7 +13,7 @@ const lines = readline.createInterface({input: process.stdin});
 lines.on('line', line => {
   const request = JSON.parse(line);
   if (request.method === 'engine.hello') {
-    process.stdout.write(JSON.stringify({jsonrpc:'2.0',protocolVersion:${version},id:request.id,result:{engineVersion:'fixture',protocolVersion:${version},supportedMethods:[],supportedBackends:['ccpanes'],backendReady:true,backendDiagnostic:request.params?.backend ?? 'ready',projectChecked:false,projectReady:false}})+'\\n');
+    process.stdout.write(JSON.stringify({jsonrpc:'2.0',protocolVersion:${version},id:request.id,result:{engineVersion:'fixture',protocolVersion:${version},supportedMethods:[],supportedDrivers:['codex'],backendReady:true,backendDiagnostic:request.params?.driver ?? 'ready',projectChecked:false,projectReady:false}})+'\\n');
   } else if (request.method === 'run.start') {
     process.stdout.write(JSON.stringify({jsonrpc:'2.0',protocolVersion:2,method:'run.event',params:{protocolVersion:2,runId:'run-1',sequence:1,type:'node.running',phase:'running',nodeId:'agent-1',nodePhase:'running',timestamp:new Date().toISOString()}})+'\\n');
     process.stdout.write(JSON.stringify({jsonrpc:'2.0',protocolVersion:2,id:request.id,result:{protocolVersion:2,runId:'run-1'}})+'\\n');
@@ -43,11 +43,11 @@ test('correlates responses and routes v2 run.event notifications', async () => {
   assertExited(bridge);
 });
 
-test('hello forwards the selected Backend', async () => {
+test('hello forwards the selected Driver', async () => {
   const bridge = new EngineBridge(process.execPath, [await fixture()]);
   try {
-    const hello = await bridge.hello('project', 'direct');
-    assert.equal(hello.backendDiagnostic, 'direct');
+    const hello = await bridge.hello('project', 'codex');
+    assert.equal(hello.backendDiagnostic, 'codex');
   } finally {
     await bridge.close();
   }

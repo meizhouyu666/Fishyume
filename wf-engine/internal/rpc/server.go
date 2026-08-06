@@ -84,9 +84,13 @@ func (s *Server) handle(ctx context.Context, request Request) {
 				return
 			}
 		}
-		doctor := s.service.Doctor(ctx, params.Project, params.Backend)
+		selectedDriver := params.Driver
+		if selectedDriver == "" {
+			selectedDriver = params.Backend
+		}
+		doctor := s.service.Doctor(ctx, params.Project, selectedDriver)
 		s.writeResult(id, HelloResult{EngineVersion: EngineVersion, ProtocolVersion: ProtocolVersion,
-			SupportedMethods: supportedMethods, SupportedBackends: s.service.SupportedBackends(),
+			SupportedMethods: supportedMethods, SupportedDrivers: s.service.SupportedBackends(), SupportedBackends: s.service.SupportedBackends(),
 			BackendReady: doctor.BackendReady, BackendDiagnostic: doctor.BackendDiagnostic,
 			ProjectChecked: doctor.ProjectChecked, ProjectReady: doctor.ProjectReady,
 			ProjectDiagnostic: doctor.ProjectDiagnostic})

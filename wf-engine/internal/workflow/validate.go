@@ -24,7 +24,7 @@ func Validate(doc Document) ([]string, error) {
 	if len(doc.Nodes) == 0 {
 		return nil, fmt.Errorf("workflow must contain at least one node")
 	}
-	if err := validateToolRuntime(doc.Defaults.Tool, doc.Defaults.Runtime, "workflow defaults"); err != nil {
+	if _, _, err := ResolveAgent(doc.Defaults, Node{}); err != nil {
 		return nil, err
 	}
 	for id, node := range doc.Nodes {
@@ -52,14 +52,14 @@ func Validate(doc Document) ([]string, error) {
 			if node.Prompt != "" {
 				return nil, fmt.Errorf("agent node %q cannot define prompt", id)
 			}
-			if err := validateToolRuntime(node.Tool, node.Runtime, "node "+id); err != nil {
+			if _, _, err := ResolveAgent(doc.Defaults, node); err != nil {
 				return nil, err
 			}
 		case "approval":
 			if strings.TrimSpace(node.Prompt) == "" {
 				return nil, fmt.Errorf("approval node %q requires prompt", id)
 			}
-			if node.Task != "" || node.Tool != "" || node.Runtime != "" || len(node.RequiredSkills) > 0 {
+			if node.Task != "" || node.Agent.Driver != "" || node.Agent.Target != "" || node.Tool != "" || node.Runtime != "" || len(node.RequiredSkills) > 0 {
 				return nil, fmt.Errorf("approval node %q contains agent-only fields", id)
 			}
 		default:
@@ -91,16 +91,6 @@ func Validate(doc Document) ([]string, error) {
 		}
 	}
 	return order, nil
-}
-
-func validateToolRuntime(tool, runtimeKind, owner string) error {
-	if tool != "" && tool != "codex" && tool != "claude" && tool != "opencode" {
-		return fmt.Errorf("%s has unsupported tool %q", owner, tool)
-	}
-	if runtimeKind != "" && runtimeKind != "local" && runtimeKind != "wsl" && runtimeKind != "ssh" {
-		return fmt.Errorf("%s has unsupported runtime %q", owner, runtimeKind)
-	}
-	return nil
 }
 
 func validateCondition(condition Condition, ancestors map[string]bool) error {

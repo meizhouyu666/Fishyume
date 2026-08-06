@@ -19,7 +19,7 @@ test('status renders parallel active attempts, approvals, and diagnostics in sup
     {protocolVersion: 2, runId: 'run-1', nodeId: 'b', number: 1, phase: 'waiting', reason: 'cancel_failed', backend: 'direct', promptHash: 'b', startedAt: snapshot.createdAt, updatedAt: snapshot.updatedAt},
   ], waitingApprovals: [{id: 'approve', type: 'approval', phase: 'waiting', reason: 'approval_required', diagnostic: 'approve?'}], diagnostics: [{nodeId: 'b', reason: 'cancel_failed', message: 'not confirmed'}]};
   writeStatus(view, {write(text) {output += text}});
-  assert.match(output, /backend=ccpanes capacity=2/);
+  assert.match(output, /driver=ccpanes target=local capacity=2/);
   assert.match(output, /active node=a/);
   assert.match(output, /active node=b/);
   assert.match(output, /approval node=approve/);

@@ -3,7 +3,6 @@ package run
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,7 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"wf.local/wf-engine/internal/agent"
 	"wf.local/wf-engine/internal/backend"
+	"wf.local/wf-engine/internal/contextcompiler"
 	"wf.local/wf-engine/internal/store"
 	"wf.local/wf-engine/internal/workflow"
 )
@@ -21,7 +22,7 @@ import (
 const protocolVersion = 2
 
 // State schema versioning is independent from the JSON-RPC protocol version.
-const stateSchemaVersion = 2
+const stateSchemaVersion = 3
 
 const (
 	startupIdleReconcileChecks = 20
@@ -34,6 +35,8 @@ const (
 
 type StartRequest struct {
 	Project string `json:"project"`
+	Driver  string `json:"driver,omitempty"`
+	Target  string `json:"target,omitempty"`
 	Backend string `json:"backend,omitempty"`
 	Tool    string `json:"tool"`
 	Runtime string `json:"runtime"`
@@ -42,6 +45,8 @@ type StartRequest struct {
 
 type StartWorkflowRequest struct {
 	Project    string               `json:"project"`
+	Driver     string               `json:"driver,omitempty"`
+	Target     string               `json:"target,omitempty"`
 	Backend    string               `json:"backend,omitempty"`
 	Filename   string               `json:"filename"`
 	Content    string               `json:"content"`
@@ -147,7 +152,7 @@ func NewServiceWithRegistry(registry *backend.Registry, defaultBackend string, s
 	}
 	defaultBackend = strings.TrimSpace(defaultBackend)
 	if defaultBackend == "" {
-		defaultBackend = "ccpanes"
+		defaultBackend = "codex"
 	}
 	service := &Service{registry: registry, defaultBackend: defaultBackend, store: state, now: time.Now, getenv: os.Getenv, controllers: make(map[string]*controller)}
 	if state != nil {
@@ -197,8 +202,23 @@ func (s *Service) selectBackend(explicit, workflowDefault string) (backend.Agent
 	if name == "" {
 		name = s.defaultBackend
 	}
+	if name == "direct" {
+		name = "codex"
+	}
+	if name == "ccpanes" {
+		return nil, "", fmt.Errorf("CC-Panes is retired for new Runs; historical snapshots remain readable but cannot be selected")
+	}
 	candidate, err := s.registry.Get(name)
 	if err != nil {
+		// M4 compatibility for embedded single-Driver tests and callers that
+		// still express tool=codex separately from their injected backend name.
+		// Production registers the formal "codex" Driver and never takes this
+		// path. CC-Panes is intentionally excluded.
+		if name == "codex" && s.defaultBackend != "ccpanes" {
+			if fallback, fallbackErr := s.registry.Get(s.defaultBackend); fallbackErr == nil {
+				return fallback, s.defaultBackend, nil
+			}
+		}
 		return nil, "", err
 	}
 	return candidate, name, nil
@@ -233,15 +253,13 @@ func (s *Service) Start(ctx context.Context, request StartRequest) (WorkflowSnap
 	if request.Project == "" || request.Task == "" {
 		return WorkflowSnapshot{}, errors.New("project and task are required")
 	}
-	if request.Tool == "" {
-		request.Tool = "codex"
-	}
-	if request.Runtime == "" {
-		request.Runtime = "local"
+	driver, target, warnings, err := resolveStartSelection(request.Driver, request.Target, request.Backend, request.Tool, request.Runtime)
+	if err != nil {
+		return WorkflowSnapshot{}, err
 	}
 	doc := workflow.Document{
 		APIVersion: workflow.APIVersion, Name: "ad-hoc", Inputs: map[string]workflow.InputDeclaration{},
-		Defaults:  workflow.Defaults{Tool: request.Tool, Runtime: request.Runtime},
+		Defaults:  workflow.Defaults{Agent: workflow.AgentSelection{Driver: driver, Target: target}},
 		Execution: workflow.Execution{MaxConcurrency: 1},
 		Nodes:     map[string]workflow.Node{"agent-1": {Type: "agent", Task: request.Task, DependsOn: []string{}, RequiredSkills: []string{}}},
 	}
@@ -249,12 +267,15 @@ func (s *Service) Start(ctx context.Context, request StartRequest) (WorkflowSnap
 	if err != nil {
 		return WorkflowSnapshot{}, err
 	}
-	candidate, backendName, err := s.selectBackend(request.Backend, "")
+	candidate, backendName, err := s.selectBackend(driver, "")
 	if err != nil {
 		return WorkflowSnapshot{}, err
 	}
-	doc.Defaults.Backend = backendName
-	normalized := workflow.Normalized{Document: doc, Inputs: map[string]any{}, TopologicalOrder: order}
+	doc.Defaults.Agent.Driver = backendName
+	normalized := workflow.Normalized{Document: doc, Inputs: map[string]any{}, TopologicalOrder: order, Warnings: warnings}
+	if request.Driver == "" && request.Backend == "" && request.Tool == "" && s.getenv != nil && strings.TrimSpace(s.getenv("FISHYUME_BACKEND")) != "" {
+		normalized.Warnings = append(normalized.Warnings, "FISHYUME_BACKEND is deprecated; use explicit driver selection")
+	}
 	if err := validateBackendCapabilities(candidate, normalized); err != nil {
 		return WorkflowSnapshot{}, err
 	}
@@ -296,11 +317,30 @@ func (s *Service) StartWorkflow(ctx context.Context, request StartWorkflowReques
 	if err != nil {
 		return WorkflowSnapshot{}, err
 	}
-	candidate, backendName, err := s.selectBackend(request.Backend, normalized.Document.Defaults.Backend)
+	workflowDriver, workflowTarget, err := workflow.ResolveAgent(normalized.Document.Defaults, workflow.Node{})
 	if err != nil {
 		return WorkflowSnapshot{}, err
 	}
-	normalized.Document.Defaults.Backend = backendName
+	driver, target, warnings, err := resolveStartSelection(request.Driver, request.Target, request.Backend, "", "")
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	if request.Driver == "" && request.Backend == "" {
+		driver = workflowDriver
+	}
+	if request.Target == "" {
+		target = workflowTarget
+	}
+	candidate, backendName, err := s.selectBackend(driver, workflowDriver)
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	normalized.Document.Defaults.Agent = workflow.AgentSelection{Driver: backendName, Target: target}
+	normalized.Document.Defaults.Backend, normalized.Document.Defaults.Tool, normalized.Document.Defaults.Runtime = "", "", ""
+	normalized.Warnings = append(normalized.Warnings, warnings...)
+	if request.Driver == "" && request.Backend == "" && workflowDriver == "" && s.getenv != nil && strings.TrimSpace(s.getenv("FISHYUME_BACKEND")) != "" {
+		normalized.Warnings = append(normalized.Warnings, "FISHYUME_BACKEND is deprecated; use defaults.agent.driver")
+	}
 	if err := validateBackendCapabilities(candidate, normalized); err != nil {
 		return WorkflowSnapshot{}, err
 	}
@@ -331,25 +371,15 @@ func validateBackendCapabilities(candidate backend.AgentBackend, normalized work
 		if node.Type != "agent" {
 			continue
 		}
-		tool := node.Tool
-		if tool == "" {
-			tool = normalized.Document.Defaults.Tool
+		driver, target, err := workflow.ResolveAgent(normalized.Document.Defaults, node)
+		if err != nil {
+			return err
 		}
-		if tool == "" {
-			tool = "codex"
+		if driver != candidate.Name() {
+			return fmt.Errorf("Driver %q cannot execute node %q resolved to Driver %q", candidate.Name(), nodeID, driver)
 		}
-		runtimeKind := node.Runtime
-		if runtimeKind == "" {
-			runtimeKind = normalized.Document.Defaults.Runtime
-		}
-		if runtimeKind == "" {
-			runtimeKind = "local"
-		}
-		if !containsCapability(capabilities.Tools, tool) {
-			return fmt.Errorf("Backend %q does not support tool %q required by node %q", candidate.Name(), tool, nodeID)
-		}
-		if !containsCapability(capabilities.Runtimes, runtimeKind) {
-			return fmt.Errorf("Backend %q does not support runtime %q required by node %q", candidate.Name(), runtimeKind, nodeID)
+		if !containsCapability(capabilities.Runtimes, target) {
+			return fmt.Errorf("Driver %q does not support target %q required by node %q", candidate.Name(), target, nodeID)
 		}
 	}
 	return nil
@@ -362,6 +392,57 @@ func containsCapability(values []string, wanted string) bool {
 		}
 	}
 	return false
+}
+
+func legacyToolForDriver(registry *backend.Registry, driver string) string {
+	candidate, err := registry.Get(driver)
+	if err == nil {
+		capabilities := candidate.Capabilities()
+		if len(capabilities.Tools) > 0 && strings.TrimSpace(capabilities.Tools[0]) != "" {
+			return capabilities.Tools[0]
+		}
+	}
+	return driver
+}
+
+func resolveStartSelection(driver, target, legacyBackend, legacyTool, legacyRuntime string) (string, string, []string, error) {
+	driver = strings.TrimSpace(driver)
+	target = strings.TrimSpace(target)
+	legacyBackend = strings.TrimSpace(legacyBackend)
+	legacyTool = strings.TrimSpace(legacyTool)
+	legacyRuntime = strings.TrimSpace(legacyRuntime)
+	warnings := make([]string, 0, 1)
+	legacyDriver := legacyBackend
+	if legacyDriver == "direct" {
+		legacyDriver = "codex"
+	}
+	if legacyDriver != "" && legacyTool != "" && legacyDriver != legacyTool {
+		return "", "", nil, fmt.Errorf("deprecated backend %q conflicts with tool %q", legacyBackend, legacyTool)
+	}
+	if legacyDriver == "" {
+		legacyDriver = legacyTool
+	}
+	if driver == "" {
+		driver = legacyDriver
+	} else if legacyDriver != "" && driver != legacyDriver {
+		return "", "", nil, fmt.Errorf("driver %q conflicts with deprecated backend/tool selection %q", driver, legacyDriver)
+	}
+	if target == "" {
+		target = legacyRuntime
+	} else if legacyRuntime != "" && target != legacyRuntime {
+		return "", "", nil, fmt.Errorf("target %q conflicts with deprecated runtime %q", target, legacyRuntime)
+	}
+	if target == "" {
+		target = "local"
+	}
+	if legacyBackend != "" || legacyTool != "" || legacyRuntime != "" {
+		warnings = append(warnings, "backend/tool/runtime are deprecated; use driver/target")
+	}
+	return driver, target, warnings, nil
+}
+
+func agentResultContractSchema() json.RawMessage {
+	return json.RawMessage(`{"type":"object","additionalProperties":false,"required":["status","summary","artifacts","warnings","checks","questions"],"properties":{"status":{"type":"string","enum":["succeeded","failed","needs_input","indeterminate"]},"summary":{"type":"string","minLength":1,"maxLength":16384},"artifacts":{"type":"array","items":{"type":"string"},"maxItems":256},"warnings":{"type":"array","items":{"type":"string"},"maxItems":256},"checks":{"type":"array","items":{"type":"string"},"maxItems":256},"questions":{"type":"array","maxItems":32,"items":{"type":"object","additionalProperties":false,"required":["id","prompt","choices","required"],"properties":{"id":{"type":"string"},"prompt":{"type":"string"},"choices":{"type":"array","items":{"type":"string"},"maxItems":256},"required":{"type":"boolean"}}}}}}`)
 }
 
 func (s *Service) startNormalized(_ context.Context, project string, normalized workflow.Normalized, command, backendName string) (WorkflowSnapshot, error) {
@@ -396,8 +477,12 @@ func (s *Service) startNormalized(_ context.Context, project string, normalized 
 		}
 		nodeSummaries[nodeID] = summarizeNode(node)
 	}
+	_, target, err := workflow.ResolveAgent(normalized.Document.Defaults, workflow.Node{})
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
 	run := WorkflowSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, ID: id, WorkflowName: normalized.Document.Name, Project: project,
-		Backend: backendName, EffectiveConcurrency: effectiveConcurrency, Phase: PhaseCreated, Inputs: normalized.Inputs, TopologicalOrder: normalized.TopologicalOrder,
+		ResolvedDriver: backendName, ResolvedTarget: target, Backend: backendName, DeprecationWarnings: append([]string(nil), normalized.Warnings...), EffectiveConcurrency: effectiveConcurrency, Phase: PhaseCreated, Inputs: normalized.Inputs, TopologicalOrder: normalized.TopologicalOrder,
 		Nodes: nodeSummaries, StateDir: s.store.RunDir(id), CreatedAt: now, UpdatedAt: now}
 	if err := s.persistRun(&run, nil, "run.created", "workflow run created"); err != nil {
 		return WorkflowSnapshot{}, err
@@ -724,7 +809,7 @@ func (s *Service) handleCancellationRequest(ctx context.Context, runID string) (
 		}
 		alreadyCancelled := attempt.Phase == NodePhaseCompleted && attempt.Conclusion == ConclusionCancelled
 		if !alreadyCancelled && handle != nil {
-			candidate, err := s.registry.Get(attempt.Backend)
+			candidate, err := s.registry.Get(attemptDriver(attempt))
 			if err != nil {
 				return s.persistCancelFailure(runID, activeNodeID, err.Error())
 			}
@@ -782,7 +867,7 @@ func (s *Service) waitForCancellationHandle(ctx context.Context, runID, nodeID s
 			}
 			continue
 		}
-		candidate, err := s.registry.Get(attempt.Backend)
+		candidate, err := s.registry.Get(attemptDriver(attempt))
 		if err != nil {
 			return attempt, nil, err
 		}
@@ -1146,20 +1231,32 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			if err != nil {
 				return err
 			}
-			prompt, err := template.Render(normalized.Inputs, results)
+			renderedTask, err := template.Render(normalized.Inputs, results)
 			if err != nil {
 				return err
 			}
-			if len(definition.RequiredSkills) > 0 {
-				prompt = "Required skills: " + strings.Join(definition.RequiredSkills, ", ") + "\n\n" + prompt
-			}
-			if len([]byte(prompt)) > workflow.MaxPromptBytes {
+			if len([]byte(renderedTask)) > workflow.MaxPromptBytes {
 				return fmt.Errorf("rendered prompt exceeds %d bytes", workflow.MaxPromptBytes)
 			}
 			number, now := node.CurrentAttempt+1, s.now().UTC()
-			hash := sha256.Sum256([]byte(prompt))
+			ancestorResults := make(map[string]workflow.Result)
+			for ancestorID := range ancestorSet(normalized.Document, node.ID) {
+				if result, ok := results[ancestorID]; ok {
+					ancestorResults[ancestorID] = result
+				}
+			}
+			compiled, err := contextcompiler.Compile(contextcompiler.Input{
+				Identity: agent.AttemptIdentity{RunID: run.ID, NodeID: node.ID, Attempt: number}, Workspace: run.Project, Task: renderedTask,
+				AncestorResults: ancestorResults, RequiredSkills: definition.RequiredSkills,
+				Constraints: map[string]string{"interaction": "none", "processMode": "one-shot", "pty": "disabled"}, Budget: map[string]int64{},
+				ResultSchema: agentResultContractSchema(), ResultMaxBytes: workflow.MaxResultBytes,
+			})
+			if err != nil {
+				return err
+			}
 			attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: run.ID, NodeID: node.ID, Number: number, Phase: NodePhaseRunning, LaunchState: LaunchPrepared,
-				Backend: run.Backend, PromptHash: hex.EncodeToString(hash[:]), StartedAt: now, UpdatedAt: now}
+				ResolvedDriver: runDriver(*run), ResolvedTarget: runTarget(*run), Backend: runDriver(*run),
+				ContextCompilerVersion: compiled.Manifest.CompilerVersion, ContextManifest: compiled.Manifest, ContextHash: compiled.Hash, PromptHash: compiled.Hash, StartedAt: now, UpdatedAt: now}
 			if err := s.writeAttempt(attempt, true); err != nil {
 				return err
 			}
@@ -1172,22 +1269,13 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			if err := s.persistRun(run, node, "node.running", "launching Agent attempt"); err != nil {
 				return err
 			}
-			tool, runtimeKind := definition.Tool, definition.Runtime
-			if tool == "" {
-				tool = normalized.Document.Defaults.Tool
+			driver, target, err := workflow.ResolveAgent(normalized.Document.Defaults, definition)
+			if err != nil {
+				return err
 			}
-			if tool == "" {
-				tool = "codex"
-			}
-			if runtimeKind == "" {
-				runtimeKind = normalized.Document.Defaults.Runtime
-			}
-			if runtimeKind == "" {
-				runtimeKind = "local"
-			}
-			launch = &pendingLaunch{runID: run.ID, nodeID: node.ID, attempt: number, backend: run.Backend,
-				launchSpec: backend.AgentExecutionSpec{RunID: run.ID, NodeID: node.ID, Attempt: number, Workspace: run.Project, Tool: tool, Runtime: runtimeKind,
-					Instructions: prompt, RequiredSkills: append([]string(nil), definition.RequiredSkills...), ResultContract: backend.ResultContract{MaxBytes: workflow.MaxResultBytes}}}
+			launch = &pendingLaunch{runID: run.ID, nodeID: node.ID, attempt: number, backend: driver,
+				launchSpec: backend.AgentExecutionSpec{RunID: run.ID, NodeID: node.ID, Attempt: number, Workspace: run.Project, Tool: legacyToolForDriver(s.registry, driver), Runtime: target,
+					Instructions: compiled.Prompt, RequiredSkills: append([]string(nil), definition.RequiredSkills...), ResultContract: backend.ResultContract{Schema: compiled.Envelope.ResultContract.Schema, MaxBytes: workflow.MaxResultBytes}, Envelope: &compiled.Envelope}}
 			progressed = true
 			return nil
 		}
@@ -1301,8 +1389,8 @@ func (s *Service) persistExecutionHandle(launch pendingLaunch, handle backend.Ex
 	if err := backend.ValidateExecutionHandle(handle); err != nil {
 		return err
 	}
-	if handle.Backend != launch.backend {
-		return fmt.Errorf("Backend %q returned a handle for %q", launch.backend, handle.Backend)
+	if handle.DriverName() != launch.backend {
+		return fmt.Errorf("Driver %q returned a handle for %q", launch.backend, handle.DriverName())
 	}
 	var attempt AttemptSnapshot
 	if err := s.store.ReadAttempt(launch.runID, launch.nodeID, launch.attempt, &attempt); err != nil {
@@ -1323,8 +1411,8 @@ func (s *Service) executionHandle(candidate backend.AgentBackend, attempt Attemp
 		if err := backend.ValidateExecutionHandle(handle); err != nil {
 			return nil, err
 		}
-		if handle.Backend != attempt.Backend {
-			return nil, fmt.Errorf("Attempt Backend %q does not match execution handle Backend %q", attempt.Backend, handle.Backend)
+		if handle.DriverName() != attemptDriver(attempt) {
+			return nil, fmt.Errorf("Attempt Driver %q does not match execution handle Driver %q", attemptDriver(attempt), handle.DriverName())
 		}
 		return &handle, nil
 	}
@@ -1347,7 +1435,7 @@ func (s *Service) reconcileAttempt(ctx context.Context, runID, nodeID string, at
 	if err := s.store.ReadAttempt(runID, nodeID, attemptNumber, &attempt); err != nil {
 		return false, err
 	}
-	candidate, err := s.registry.Get(attempt.Backend)
+	candidate, err := s.registry.Get(attemptDriver(attempt))
 	if err != nil {
 		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Could not select persisted Backend: "+err.Error())
 	}
@@ -1513,7 +1601,7 @@ func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generati
 			return s.persistRun(run, node, "node.completed", run.Summary)
 		})
 		return err == nil, err
-	case "waiting_input", "blocked", "waitinginput":
+	case "needs_input", "waiting_input", "blocked", "waitinginput":
 		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonAgentWaitingInput, result.Summary)
 	case "completion_missing", "idle":
 		return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, result.Summary)
@@ -1858,8 +1946,8 @@ func validateActiveAttempt(run WorkflowSnapshot, node NodeSnapshot, attempt Atte
 	if attempt.RunID != run.ID || attempt.NodeID != node.ID || attempt.Number != node.CurrentAttempt {
 		return fmt.Errorf("active Attempt identity does not match run %q node %q attempt %d", run.ID, node.ID, node.CurrentAttempt)
 	}
-	if attempt.Backend != run.Backend {
-		return fmt.Errorf("active Attempt Backend %q does not match run Backend %q", attempt.Backend, run.Backend)
+	if attemptDriver(attempt) != runDriver(run) {
+		return fmt.Errorf("active Attempt Driver %q does not match run Driver %q", attemptDriver(attempt), runDriver(run))
 	}
 	if attempt.Phase == NodePhaseCompleted || node.Phase == NodePhaseCompleted || node.Phase == NodePhaseSkipped {
 		return fmt.Errorf("active node %q and Attempt phases are inconsistent", node.ID)

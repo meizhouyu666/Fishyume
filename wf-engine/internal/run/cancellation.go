@@ -83,9 +83,9 @@ func (s *Service) markConcurrentCancellationIntent(runID string) ([]cancellation
 			continue
 		}
 		if backendName == "" {
-			backendName = attempt.Backend
-		} else if attempt.Backend != backendName {
-			return nil, false, fmt.Errorf("active Attempts use mixed Backends %q and %q", backendName, attempt.Backend)
+			backendName = attemptDriver(attempt)
+		} else if attemptDriver(attempt) != backendName {
+			return nil, false, fmt.Errorf("active Attempts use mixed Drivers %q and %q", backendName, attemptDriver(attempt))
 		}
 		targets = append(targets, cancellationTarget{nodeID: node.ID, attempt: node.CurrentAttempt})
 	}
@@ -114,7 +114,7 @@ func (s *Service) cancelTarget(ctx context.Context, runID string, target cancell
 		outcome.confirmed = true
 		return outcome
 	}
-	candidate, err := s.registry.Get(attempt.Backend)
+	candidate, err := s.registry.Get(attemptDriver(attempt))
 	if err != nil {
 		outcome.diagnostic = err.Error()
 		return outcome
