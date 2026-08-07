@@ -141,14 +141,14 @@ Console 以 `j`/`k` 或上下方向键遍历全部 Workflow 节点，`Enter` 折
 
 ## M4：Agent-Native Control Plane
 
-M4 已批准。M4.0 + M4.1 + M4.2 已完成合同冻结、Codex Driver、Context Compiler、CC-Panes 新 Run 退役以及常驻服务/IPC；后续 M4.3 才会加入 Agent-native MCP/Application API。完整 M4 包括：
+M4 已批准。M4.0 + M4.1 + M4.2 已完成合同冻结、Codex Driver、Context Compiler、CC-Panes 新 Run 退役以及常驻服务/IPC；后续 M4.3 将加入统一 Application Service、Agent-native MCP/Machine API、`needs_input` answer 与跨重启持久化幂等。完整 M4 包括：
 
 - 本地常驻 Control Plane 与 Named Pipe/Unix Domain Socket；
 - Headless Agent Process Protocol v1；
 - Codex Agent Driver 与 CC-Panes 新 Run 退役；
 - 确定性 Context Compiler 骨架；
-- `capabilities`、Workflow validate/explain、Run list/get/events/action/result；
-- 幂等调用、跨进程动作和崩溃恢复。
+- `capabilities`、Workflow validate/explain、Run list/get/events/action（含 answer）/result；
+- 有界事件读取、持久化幂等调用、跨进程动作和崩溃恢复。
 
 正式架构见 [`docs/fishyume-m4-agent-native-control-plane.md`](./docs/fishyume-m4-agent-native-control-plane.md)，分批实施与门禁见 [`docs/fishyume-m4-implementation-plan.md`](./docs/fishyume-m4-implementation-plan.md)。
 

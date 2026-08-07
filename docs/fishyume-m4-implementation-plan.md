@@ -133,7 +133,16 @@
 
 ## 5. M4.3：Agent-Native MCP 与 Machine API
 
-### Application API
+> 实施状态：未开始；2026-08-08 已补充正式 Application Service、`answer` 动作、跨重启幂等与有界查询合同。
+
+### M4.3.0：Application Contract
+
+- 在 transport 与 Core 之间建立正式 Application Service。MCP、Machine CLI、TUI 和兼容 RPC 只能调用该层，不得直接导入 Scheduler、Store 或具体 Driver。
+- Application request/response、错误 envelope 和 JSON fixture 是唯一公开合同；MCP 与 Machine CLI 复用相同类型，不各自重新解释业务错误。
+- 新公开合同只使用 `driver/target`。`backend/tool/runtime` 和 `run.startWorkflow` 仅保留在兼容入口，不进入 `system.capabilities`、MCP tool schema 或新状态。
+- 定义稳定错误 code：`invalid_argument`、`invalid_workflow`、`not_found`、`conflict`、`capability_unavailable`、`not_ready`、`protocol_mismatch` 和 `internal`；错误同时携带稳定 `message` 与有界结构化 `data`。
+
+### M4.3.1：Application API
 
 - `system.capabilities`
 - `workflow.validate`
@@ -145,35 +154,55 @@
 - `run.action`
 - `run.result`
 
+正式 `run.start` 接受 project、Workflow source/structured document、inputs 和 `clientRequestId`。Ad-hoc human CLI 可以在客户端生成单节点 Workflow；不得为 MCP 再定义第二套 Run 创建语义。
+
+`run.list` 使用稳定排序、filter、cursor 和 limit；`run.events` 使用 `afterSequence`、limit 和有界 `waitMs`；`run.result` 明确区分 terminal result 与 `not_ready`。所有列表、事件、Result 和 schema response 均有 item/byte 上限。
+
 ### Workflow 作者体验
 
-- Capabilities 返回 JSON Schema、Node 类型、限制和示例。
-- Validate 返回稳定 path/code/message。
-- Explain 返回 DAG、并行层、Approval、条件、Context 来源、resolved Driver/Target 和 warning。
+- Capabilities 返回 API/Workflow schema version、JSON Schema、Node/action 类型、Driver/Target 能力、稳定限制、错误码和最小示例，不返回 credential 或完整环境变量。
+- Validate 返回稳定 path/code/message；静态语法/结构错误与当前机器的 Driver capability 缺口分开表达。
+- Explain 返回规范化 DAG、拓扑顺序、并行层、Approval、条件、Context 来源、resolved Driver/Target、capability gap 和 warning。
 - 不调用 LLM，不隐式改写 Workflow。
 
-### MCP 与 Machine CLI
+### `run.action` 与 `needs_input`
+
+- `run.action` 统一承载 `approve`、`reject`、`answer`、`retry` 和 `cancel`。
+- 每个动作携带唯一 `actionId`、`runId`、`expectedStateVersion`；Node 动作还必须绑定 `nodeId` 和适用时的 `expectedAttempt`。
+- `answer` 携带按 question ID 索引的结构化 scalar answers；Engine 校验 question identity、required/choice 约束和 Attempt identity。
+- `answer` 不恢复旧交互进程。它结束 waiting 状态，创建新 Attempt，并由 Context Compiler 将原问题与回答显式编入新 Envelope。
+- TUI 与 Host Agent 提交相同 action request；任何客户端都不能在本地推断动作是否仍然适用。
+
+### M4.3.2：持久化幂等、冲突与事件
+
+- `clientRequestId` 持久化去重 Run 创建；`actionId` 持久化去重全部动作，包括 `answer` 和 `retry`。
+- 同一 ID 与相同 canonical request hash 返回原 `runId`/action response；同一 ID 与不同 payload 返回 `conflict`。
+- 幂等记录必须跨客户端、Control Plane crash/restart 和 RPC/MCP 重发有效，不允许只保存在进程内 Map。
+- 文件存储继续保留，但 request/action intent、业务状态 mutation 与 committed response 必须通过可恢复 journal 或等价协议消除崩溃窗口；恢复时不得重复 Start、retry、cancel 或 Approval/answer 副作用。
+- `expectedStateVersion` 和 `expectedAttempt` 防止陈旧提交；幂等 replay 与新请求 conflict 必须可区分。
+- Event sequence 在单个 Run 内严格递增。事件游标读取以持久化日志为真相；通知只负责唤醒，不得成为唯一事件来源。
+- 有界 `run.events` 等待不能阻塞同一 MCP client 的独立读取或 action；RPC transport 必须支持连接内并发请求，或由适配器使用等价的独立连接策略。
+
+### M4.3.3：MCP、Machine CLI 与 TUI 迁移
 
 - MCP server 是连接 Control Plane 的薄适配器，不导入 Scheduler、Store 或具体 Driver。
 - `run.events` 使用 `afterSequence` 和有界 `waitMs`，不提供无限阻塞调用。
 - CLI `--json` 与 MCP 使用相同 response 类型。
 - 人类文本、TUI 和 JSON 输出路径分离。
 - 增加 `fishyume attach <run-id>`。
-
-### 幂等与冲突
-
-- `clientRequestId` 去重 Run 创建。
-- `actionId` 去重 approve/reject/retry/cancel。
-- `expectedStateVersion` 和 expected Attempt 防止陈旧提交。
-- 定义 conflict、not found、invalid workflow、capability unavailable 和 protocol mismatch 错误码。
+- TUI 迁移到 `run.get`/`run.action`，不再直接拥有 `resume/cancel` 的业务参数拼装；旧 human CLI 命令通过兼容 adapter 调用同一 Application Service。
 
 ### 门禁
 
-- Fake Host Agent 完成 capabilities → validate → explain → start → events/action → result。
-- MCP 重发 start 不创建第二个 Run。
-- MCP 重发动作不产生重复副作用。
-- Machine CLI JSON snapshot 稳定。
-- TUI 仍只消费 Control Plane 状态。
+- Application contract fixtures 覆盖全部 request/response/error，公开 JSON 不出现 `backend/tool/runtime`。
+- Fake Host Agent 完成 capabilities → validate → explain → start → events/action（含 Approval 与 `needs_input` answer）→ result。
+- MCP 在 Control Plane 重启前后重发 start 不创建第二个 Run；相同 ID 不同 payload 稳定返回 conflict。
+- MCP 在 action intent、状态 mutation 和 response commit 故障点重发动作不产生重复副作用。
+- `run.events` 覆盖 cursor、分页、byte/item limit、bounded wait、断线重连和等待期间并发 action。
+- Machine CLI 与 MCP 的 JSON snapshot 完全一致；human text/TUI snapshot 不污染 machine output。
+- TUI 只消费 Application API 返回的 Control Plane 状态，并与 MCP 共享 `actionId`/expected state 真相。
+- 新 M4.3 测试不调用 LLM、不要求 Provider 登录、不依赖 CC-Panes 或人工 MCP allow。
+- `go test ./...`、`go vet ./...`、`go build ./cmd/wf-engine`、`npm --prefix wf run verify` 与 `git diff --check` 全通过。
 
 ## 6. M4.4：产品化、迁移与发布验证
 
@@ -217,9 +246,11 @@ Claude Driver 可以在 M4 核心收口后作为追加验证，但不阻塞 M4�
 5. `chore: retire ccpanes from new runs`
 6. `feat: add local control plane transport`
 7. `feat: reconnect cli and tui through local ipc`
-8. `feat: add agent-native application api`
-9. `feat: expose fishyume mcp server`
-10. `docs: complete M4 product and migration guide`
+8. `feat: freeze agent-native application contracts`
+9. `feat: add durable application api and idempotency`
+10. `feat: expose fishyume mcp and machine cli`
+11. `refactor: route tui and legacy cli through application api`
+12. `docs: complete M4 product and migration guide`
 
 状态 Schema、IPC、MCP 和 Driver 迁移不得混在一个不可分割的大提交中。
 

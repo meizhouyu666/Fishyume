@@ -235,13 +235,17 @@ defaults:
 
 MCP、Machine CLI 和 TUI 必须复用同一 Application API。
 
+Application Service 是 transport-neutral 产品边界：它拥有公开 request/response、错误分类、幂等和动作前置条件，但不复制 Scheduler 状态机。Local JSON-RPC、MCP 和 Machine CLI 只负责协议适配；它们不得直接导入 Scheduler、Store 或具体 Driver。新公开合同只使用 `driver/target`，旧 `backend/tool/runtime` 与 `run.startWorkflow` 仅保留为兼容入口。
+
 ### 系统与 Workflow
 
 - `system.capabilities`
 - `workflow.validate`
 - `workflow.explain`
 
-`workflow.explain` 返回规范化 DAG、拓扑顺序、并行层级、Approval、条件分支、Context 来源、resolved Driver/Target、能力缺口和风险警告。它是确定性解释器，不调用模型。
+`system.capabilities` 返回 API/Workflow schema version、JSON Schema、Node/action 类型、Driver/Target 能力、稳定限制、错误码和最小示例，不暴露 credential 或完整环境变量。
+
+`workflow.validate` 返回稳定 path/code/message，并区分静态 Workflow 错误与当前机器的 capability gap。`workflow.explain` 返回规范化 DAG、拓扑顺序、并行层级、Approval、条件分支、Context 来源、resolved Driver/Target、能力缺口和风险警告。两者都是确定性服务，不调用模型，也不隐式改写 Workflow。
 
 ### Run
 
@@ -252,21 +256,28 @@ MCP、Machine CLI 和 TUI 必须复用同一 Application API。
 - `run.action`
 - `run.result`
 
-MCP 不提供无限阻塞的 watch tool。`run.events` 使用 `afterSequence` 和有界 `waitMs` 实现游标读取或短轮询。
+正式 `run.start` 接受 project、Workflow source/structured document、inputs 和 `clientRequestId`；Ad-hoc human CLI 通过客户端生成单节点 Workflow，不形成第二套 Application API。
 
-`run.action` 统一承载 approve、reject、retry 和 cancel，并绑定 `nodeId`、期望 Attempt/StateVersion 和唯一 `actionId`。
+`run.list` 使用稳定排序、filter、cursor 和 limit。MCP 不提供无限阻塞的 watch tool；`run.events` 使用 `afterSequence`、limit 和有界 `waitMs` 实现游标读取或短轮询，持久化 event log 是真相，连接级通知只负责唤醒。`run.result` 明确区分 terminal result 与 `not_ready`。所有列表、事件、Result 和 schema response 都有 item/byte 上限。
+
+`run.action` 统一承载 `approve`、`reject`、`answer`、`retry` 和 `cancel`，并绑定唯一 `actionId`、`runId`、`expectedStateVersion`；Node 动作还绑定 `nodeId` 和适用时的 `expectedAttempt`。
+
+`answer` 按 question ID 提交结构化 scalar answers。Engine 校验 question、required/choice 与 Attempt identity，然后创建新 Attempt，并由 Context Compiler 将原问题和回答显式编入新 Envelope；它不恢复已结束的交互进程。
 
 ### 幂等与冲突
 
-- `run.start` 使用 `clientRequestId` 去重；
-- `run.action` 使用 `actionId` 去重；
-- 变更请求携带 `expectedStateVersion` 或等价条件；
+- `run.start` 使用 `clientRequestId` 持久化去重；
+- `run.action` 使用 `actionId` 持久化去重；
+- 同一 ID 与相同 canonical request hash 返回原 response，同一 ID 与不同 payload 返回 conflict；
+- 幂等记录跨客户端和 Control Plane crash/restart 生效，不允许只存放在进程内；
+- request/action intent、业务状态 mutation 与 committed response 使用可恢复 journal 或等价协议，崩溃恢复不得重复 Start 或动作副作用；
+- 变更请求携带 `expectedStateVersion` 与适用时的 `expectedAttempt`；
 - Event `sequence` 在单个 Run 内严格递增；
-- 错误使用稳定 code、message 和结构化 data。
+- 错误使用稳定 code、message 和有界结构化 data，至少覆盖 invalid argument/workflow、not found、conflict、capability unavailable、not ready、protocol mismatch 和 internal。
 
 ## 9. 持久化与安全
 
-M4 继续使用文件型状态存储，不因常驻服务强制迁移 SQLite。持久化内容包括 normalized Workflow、Run/Node/Attempt snapshot、append-only events、Driver Handle、Result、动作幂等身份、Context manifest/hash 和 controller lease。
+M4 继续使用文件型状态存储，不因常驻服务强制迁移 SQLite。持久化内容包括 normalized Workflow、Run/Node/Attempt snapshot、append-only events、Driver Handle、Result、创建/动作幂等 journal、Context manifest/hash 和 controller lease。
 
 安全要求：
 
@@ -286,7 +297,7 @@ M4 继续使用文件型状态存储，不因常驻服务强制迁移 SQLite。�
 6. Host Agent 调用 `run.start`，立即获得 `runId` 和 attach 命令；
 7. Control Plane 调度无头 Node Agent；
 8. 用户可执行 `fishyume attach <run-id>`；
-9. Approval 可由 TUI 或 Host Agent 提交；
+9. Approval 与 `needs_input` answer 可由 TUI 或 Host Agent 提交；
 10. Control Plane 重启时先对账后恢复；
 11. Host Agent 调用 `run.result` 获取最终结构化结果。
 
@@ -309,12 +320,12 @@ M4 继续使用文件型状态存储，不因常驻服务强制迁移 SQLite。�
 
 1. 新 Run 不依赖 CC-Panes Profile、TaskBinding、Session、daemon 或 MCP approval。
 2. Node Agent 以无 TUI、无交互 PTY 的外部进程运行。
-3. Host Agent 能通过 MCP 完成 capabilities → validate → explain → start → events/action → result。
+3. Host Agent 能通过 MCP 完成 capabilities → validate → explain → start → events/action（含 Approval 与 `needs_input` answer）→ result。
 4. `run.start` 异步返回，客户端退出后 Run 继续执行。
 5. TUI 可从另一终端 attach，并与 MCP 共享动作真相。
 6. Control Plane 崩溃重启后不会重复启动已持久化 Attempt。
 7. 退出码、进程消失和普通 stdout 不能伪造成功。
-8. 重复 start/action 由幂等键安全去重。
+8. 重复 start/action 由持久化幂等键跨 Control Plane 重启安全去重；同 ID 不同 payload 返回 conflict。
 9. Control Plane、Driver 和 Context Compiler 有平台无关合同测试。
 10. Windows Named Pipe 与 Linux Unix Socket 自动化验证通过。
 11. M2/M3 状态、取消、并发和 TUI 安全测试不回退。
