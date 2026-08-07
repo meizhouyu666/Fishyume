@@ -318,6 +318,15 @@ func TestDirectCancelStopsMatchedSupervisorWhenChildIdentityMismatches(t *testin
 func TestDirectBackendRecoversWithANewInstance(t *testing.T) {
 	candidate, spec := newFixtureBackend(t)
 	handle := startScenario(t, candidate, spec, "active")
+	if runtime.GOOS == "linux" {
+		data, _, err := candidate.decodeHandle(handle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if data.Supervisor.GroupID <= 0 || data.Child.GroupID <= 0 || data.Supervisor.GroupID == data.Child.GroupID {
+			t.Fatalf("supervisor and child must use distinct Linux process groups: supervisor=%+v child=%+v", data.Supervisor, data.Child)
+		}
+	}
 	restarted := New(candidate.config)
 	observation, err := restarted.Observe(context.Background(), handle)
 	if err != nil || observation.State != backend.ObservationActive {

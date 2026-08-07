@@ -44,6 +44,57 @@ func TestCancellationRequestIsAtomicAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestCancellationResponseIsNotVisibleBeforeRequestCleanup(t *testing.T) {
+	state := New(t.TempDir())
+	const runID = "run-cancel-response-visibility"
+	if err := state.InitWorkflowRun(runID); err != nil {
+		t.Fatal(err)
+	}
+	request, err := state.RequestCancellation(runID, time.Unix(10, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	written := make(chan struct{})
+	release := make(chan struct{})
+	resolved := make(chan error, 1)
+	go func() {
+		resolved <- withLeaseGuard(state.CancelRequestPath(runID), func() error {
+			response := CancelResponse{RequestID: request.ID, Status: CancelResponseCompleted, UpdatedAt: time.Unix(11, 0)}
+			if err := state.writeJSON(state.CancelResponsePath(runID), response); err != nil {
+				return err
+			}
+			close(written)
+			<-release
+			return os.Remove(state.CancelRequestPath(runID))
+		})
+	}()
+	<-written
+
+	readStarted := make(chan struct{})
+	read := make(chan error, 1)
+	go func() {
+		close(readStarted)
+		_, err := state.ReadCancellationResponse(runID, request.ID)
+		read <- err
+	}()
+	<-readStarted
+	select {
+	case err := <-read:
+		t.Fatalf("response became visible before request cleanup: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-resolved; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-read; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(state.CancelRequestPath(runID)); !os.IsNotExist(err) {
+		t.Fatalf("resolved request still exists: %v", err)
+	}
+}
+
 func TestCancellationResponseCleansRequestAndRetryReplacesStaleResponse(t *testing.T) {
 	state := New(t.TempDir())
 	const runID = "run-cancel-retry"

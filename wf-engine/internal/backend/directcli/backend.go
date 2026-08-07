@@ -376,7 +376,7 @@ func (b *Backend) Cancel(ctx context.Context, handle backend.ExecutionHandle) (*
 		return nil, err
 	}
 	refs := []processRef{data.Supervisor, data.Child}
-	active := make([]processRef, 0, len(refs))
+	active := make(map[int]processRef, len(refs))
 	mismatchedPID := 0
 	for _, ref := range refs {
 		status, err := inspectProcessRef(ref)
@@ -385,7 +385,7 @@ func (b *Backend) Cancel(ctx context.Context, handle backend.ExecutionHandle) (*
 		}
 		switch status {
 		case processMatched:
-			active = append(active, ref)
+			active[ref.PID] = ref
 		case processMismatched:
 			if mismatchedPID == 0 {
 				mismatchedPID = ref.PID
@@ -398,14 +398,43 @@ func (b *Backend) Cancel(ctx context.Context, handle backend.ExecutionHandle) (*
 		}
 		return &backend.CancelResult{State: backend.CancelConfirmed, Diagnostic: "Direct execution is already stopped"}, nil
 	}
-	root := active[0]
-	if err := terminateProcessTree(ctx, root); err != nil {
-		return &backend.CancelResult{State: backend.CancelNotConfirmed, Diagnostic: err.Error()}, nil
+	// Stop the Agent tree before the supervisor. The supervisor owns Wait(), so
+	// keeping it alive briefly lets it reap the child and avoids persistent
+	// zombies on Unix runners. New handles have distinct supervisor/child
+	// process groups; older handles are still inspected safely by PID identity.
+	if child, ok := active[data.Child.PID]; ok {
+		if err := terminateProcessTree(ctx, child); err != nil {
+			return &backend.CancelResult{State: backend.CancelNotConfirmed, Diagnostic: err.Error()}, nil
+		}
+		delete(active, data.Child.PID)
+	}
+	if supervisor, ok := active[data.Supervisor.PID]; ok {
+		graceDeadline := time.Now().Add(time.Second)
+		for {
+			status, inspectErr := inspectProcessRef(supervisor)
+			if inspectErr != nil {
+				return nil, inspectErr
+			}
+			if status != processMatched {
+				break
+			}
+			if time.Now().After(graceDeadline) {
+				if err := terminateProcessTree(ctx, supervisor); err != nil {
+					return &backend.CancelResult{State: backend.CancelNotConfirmed, Diagnostic: err.Error()}, nil
+				}
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return &backend.CancelResult{State: backend.CancelNotConfirmed, Diagnostic: ctx.Err().Error()}, nil
+			case <-time.After(b.config.PollInterval):
+			}
+		}
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		remaining := false
-		for _, ref := range active {
+		for _, ref := range refs {
 			status, err := inspectProcessRef(ref)
 			if err != nil {
 				return nil, err

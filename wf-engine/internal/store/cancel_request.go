@@ -103,7 +103,13 @@ func (s *Store) ReadCancellationResponse(runID, requestID string) (CancelRespons
 		return CancelResponse{}, err
 	}
 	var response CancelResponse
-	if err := readJSON(s.CancelResponsePath(runID), &response); err != nil {
+	// ResolveCancellation writes the response before removing the request so a
+	// failed response write never loses durable cancellation intent. Read under
+	// the same guard to prevent callers from observing that response during the
+	// short interval before request cleanup completes.
+	if err := withLeaseGuard(s.CancelRequestPath(runID), func() error {
+		return readJSON(s.CancelResponsePath(runID), &response)
+	}); err != nil {
 		return CancelResponse{}, err
 	}
 	if response.RequestID != requestID {

@@ -57,6 +57,12 @@ func RunSupervisor(configPath string) int {
 	command.Stdin = bytes.NewReader(prompt)
 	command.Stdout = events
 	command.Stderr = stderr
+	// Keep the Agent and its descendants in a process group separate from the
+	// supervisor. Cancellation can then stop the Agent tree first while the
+	// supervisor remains alive long enough to reap the child and persist exit
+	// evidence. Killing both in one Unix process group can otherwise leave an
+	// orphaned zombie that still occupies the persisted child PID.
+	configureBackgroundCommand(command)
 	if err := command.Start(); err != nil {
 		_, _ = stderr.Write([]byte("start Codex CLI: " + err.Error() + "\n"))
 		return 125
