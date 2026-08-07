@@ -3,34 +3,48 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"wf.local/wf-engine/internal/run"
+	"wf.local/wf-engine/internal/store"
 	"wf.local/wf-engine/internal/workflow"
 )
 
 type fakeCore struct {
-	mu        sync.Mutex
-	reports   []run.DriverCapabilityReport
-	views     map[string]run.StatusView
-	events    map[string][]run.WorkflowEvent
-	attempts  map[string]run.AttemptSnapshot
-	sinks     map[int]run.EventSink
-	nextSink  int
-	started   run.StartWorkflowRequest
-	resumed   run.ResumeRequest
-	cancelled string
+	mu          sync.Mutex
+	reports     []run.DriverCapabilityReport
+	views       map[string]run.StatusView
+	events      map[string][]run.WorkflowEvent
+	attempts    map[string]run.AttemptSnapshot
+	sinks       map[int]run.EventSink
+	nextSink    int
+	started     run.StartWorkflowRequest
+	startCount  int
+	resumed     run.ResumeRequest
+	resumeCount int
+	cancelled   string
 }
 
 func (f *fakeCore) DriverCapabilityReports(context.Context, string) []run.DriverCapabilityReport {
 	return append([]run.DriverCapabilityReport(nil), f.reports...)
 }
 func (f *fakeCore) StartWorkflow(_ context.Context, request run.StartWorkflowRequest) (run.WorkflowSnapshot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.started = request
-	return run.WorkflowSnapshot{ID: "run-started", StateVersion: 1}, nil
+	f.startCount++
+	now := time.Unix(100, 0).UTC()
+	snapshot := run.WorkflowSnapshot{ID: request.RunID, WorkflowName: request.Normalized.Document.Name, Project: request.Project, ResolvedDriver: "codex", ResolvedTarget: "local", StateVersion: 1, Phase: run.PhaseCreated, TopologicalOrder: append([]string(nil), request.Normalized.TopologicalOrder...), Nodes: map[string]run.NodeSummary{}, CreatedAt: now, UpdatedAt: now}
+	if f.views == nil {
+		f.views = map[string]run.StatusView{}
+	}
+	f.views[request.RunID] = run.StatusView{Run: &snapshot, Nodes: []run.NodeSnapshot{}}
+	return snapshot, nil
 }
 func (f *fakeCore) Status(id string) (run.StatusView, error) {
 	view, ok := f.views[id]
@@ -40,11 +54,23 @@ func (f *fakeCore) Status(id string) (run.StatusView, error) {
 	return view, nil
 }
 func (f *fakeCore) Resume(_ context.Context, request run.ResumeRequest) (run.WorkflowSnapshot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.resumed = request
+	f.resumeCount++
 	view := f.views[request.RunID]
 	snapshot := *view.Run
 	snapshot.StateVersion++
 	snapshot.Phase = run.PhaseRunning
+	if request.Action != nil && request.Action.NodeID != "" {
+		for index := range view.Nodes {
+			if view.Nodes[index].ID == request.Action.NodeID {
+				view.Nodes[index].Phase, view.Nodes[index].Reason, view.Nodes[index].Result = run.NodePhaseReady, "", nil
+			}
+		}
+	}
+	view.Run = &snapshot
+	f.views[request.RunID] = view
 	return snapshot, nil
 }
 func (f *fakeCore) Cancel(_ context.Context, id string) (run.WorkflowSnapshot, error) {
@@ -104,7 +130,7 @@ func (*missingError) Error() string { return "run not found" }
 
 func TestWorkflowAuthoringApplicationAPI(t *testing.T) {
 	core := newFakeCore()
-	service := NewService(core, "codex")
+	service := NewService(core, "codex", store.New(t.TempDir()))
 	capabilities, appErr := service.SystemCapabilities(context.Background(), SystemCapabilitiesRequest{Project: "project"})
 	if appErr != nil {
 		t.Fatal(appErr)
@@ -134,9 +160,9 @@ func TestWorkflowAuthoringApplicationAPI(t *testing.T) {
 
 func TestRunApplicationQueriesActionsAndResult(t *testing.T) {
 	core := newFakeCore()
-	service := NewService(core, "codex")
+	service := NewService(core, "codex", store.New(t.TempDir()))
 	started, appErr := service.RunStart(context.Background(), RunStartRequest{Project: "project", Workflow: WorkflowInput{Document: validWorkflowDocument()}, ClientRequestID: "request-1"})
-	if appErr != nil || started.RunID != "run-started" || core.started.Normalized == nil {
+	if appErr != nil || started.RunID == "" || core.started.Normalized == nil || core.started.RunID != started.RunID {
 		t.Fatalf("start = %+v, error = %v, request = %+v", started, appErr, core.started)
 	}
 	listed, appErr := service.RunList(context.Background(), RunListRequest{Limit: 1})
@@ -167,7 +193,7 @@ func TestRunApplicationQueriesActionsAndResult(t *testing.T) {
 
 func TestRunEventsPaginationAndBoundedWait(t *testing.T) {
 	core := newFakeCore()
-	service := NewService(core, "codex")
+	service := NewService(core, "codex", store.New(t.TempDir()))
 	first, appErr := service.RunEvents(context.Background(), RunEventsRequest{RunID: "run-waiting", Limit: 1})
 	if appErr != nil || len(first.Events) != 1 || first.Events[0].Sequence != 1 || !first.More {
 		t.Fatalf("first events = %+v, error = %v", first, appErr)
@@ -182,6 +208,20 @@ func TestRunEventsPaginationAndBoundedWait(t *testing.T) {
 		done <- response
 	}()
 	time.Sleep(10 * time.Millisecond)
+	attempt := 1
+	actionDone := make(chan *Error, 1)
+	go func() {
+		_, actionErr := service.RunAction(context.Background(), RunActionRequest{ActionID: "event-action", RunID: "run-waiting", Type: ActionAnswer, ExpectedStateVersion: 4, NodeID: "plan", ExpectedAttempt: &attempt, Answers: map[string]any{"scope": "core"}})
+		actionDone <- actionErr
+	}()
+	select {
+	case actionErr := <-actionDone:
+		if actionErr != nil {
+			t.Fatalf("concurrent action failed: %v", actionErr)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("event wait blocked an independent action")
+	}
 	core.appendEvent(run.WorkflowEvent{RunID: "run-waiting", Sequence: 3, Type: "node.answer_submitted", Phase: run.PhaseRunning, Timestamp: time.Unix(30, 0).UTC()})
 	select {
 	case response := <-done:
@@ -190,6 +230,116 @@ func TestRunEventsPaginationAndBoundedWait(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("bounded event wait did not wake")
+	}
+	core.mu.Lock()
+	core.events["run-waiting"] = []run.WorkflowEvent{
+		{RunID: "run-waiting", Sequence: 1, Type: "large", Phase: run.PhaseRunning, Message: strings.Repeat("a", 300*1024), Timestamp: time.Unix(40, 0).UTC()},
+		{RunID: "run-waiting", Sequence: 2, Type: "large", Phase: run.PhaseRunning, Message: strings.Repeat("b", 300*1024), Timestamp: time.Unix(41, 0).UTC()},
+	}
+	core.mu.Unlock()
+	bounded, appErr := service.RunEvents(context.Background(), RunEventsRequest{RunID: "run-waiting", Limit: 100})
+	encoded, _ := json.Marshal(bounded)
+	if appErr != nil || len(bounded.Events) != 1 || !bounded.More || len(encoded) > MaxResponseBytes {
+		t.Fatalf("byte-bounded events len=%d response=%+v error=%v", len(encoded), bounded, appErr)
+	}
+}
+
+func TestDurableStartIdempotencyAcrossRestartAndFaultWindows(t *testing.T) {
+	for _, faultPoint := range []string{"journal_intent", "journal_mutation", "journal_commit"} {
+		t.Run(faultPoint, func(t *testing.T) {
+			core := newFakeCore()
+			state := store.New(t.TempDir())
+			failed := false
+			state.SetFaultInjectorForTest(func(operation, _ string) error {
+				if operation == faultPoint && !failed {
+					failed = true
+					return errors.New("fixture crash")
+				}
+				return nil
+			})
+			request := RunStartRequest{Project: "project", Workflow: WorkflowInput{Document: validWorkflowDocument()}, ClientRequestID: "request-fault"}
+			if _, appErr := NewService(core, "codex", state).RunStart(context.Background(), request); appErr == nil || appErr.Code != CodeInternal {
+				t.Fatalf("first error = %v", appErr)
+			}
+			startsAfterFault := core.startCount
+			state.SetFaultInjectorForTest(nil)
+			secondService := NewService(core, "codex", state)
+			if faultPoint != "journal_intent" {
+				if appErr := secondService.Recover(context.Background()); appErr != nil {
+					t.Fatalf("restart recovery error = %v", appErr)
+				}
+			}
+			response, appErr := secondService.RunStart(context.Background(), request)
+			if appErr != nil || response.RunID == "" {
+				t.Fatalf("replay response = %+v, error = %v", response, appErr)
+			}
+			wantStarts := 1
+			if faultPoint == "journal_intent" {
+				wantStarts = startsAfterFault + 1
+			}
+			if core.startCount != wantStarts {
+				t.Fatalf("start count = %d, want %d", core.startCount, wantStarts)
+			}
+			replayed, appErr := NewService(core, "codex", state).RunStart(context.Background(), request)
+			if appErr != nil || !reflect.DeepEqual(replayed, response) || core.startCount != wantStarts {
+				t.Fatalf("committed replay = %+v, error = %v, starts = %d", replayed, appErr, core.startCount)
+			}
+			conflicting := request
+			conflicting.Project = "other-project"
+			if _, appErr := NewService(core, "codex", state).RunStart(context.Background(), conflicting); appErr == nil || appErr.Code != CodeConflict {
+				t.Fatalf("conflicting replay error = %v", appErr)
+			}
+		})
+	}
+}
+
+func TestDurableActionIdempotencyAcrossRestartAndFaultWindows(t *testing.T) {
+	for _, faultPoint := range []string{"journal_intent", "journal_mutation", "journal_commit"} {
+		t.Run(faultPoint, func(t *testing.T) {
+			core := newFakeCore()
+			state := store.New(t.TempDir())
+			failed := false
+			state.SetFaultInjectorForTest(func(operation, _ string) error {
+				if operation == faultPoint && !failed {
+					failed = true
+					return errors.New("fixture crash")
+				}
+				return nil
+			})
+			attempt := 1
+			request := RunActionRequest{ActionID: "action-fault", RunID: "run-waiting", Type: ActionAnswer, ExpectedStateVersion: 4, NodeID: "plan", ExpectedAttempt: &attempt, Answers: map[string]any{"scope": "core"}}
+			if _, appErr := NewService(core, "codex", state).RunAction(context.Background(), request); appErr == nil || appErr.Code != CodeInternal {
+				t.Fatalf("first error = %v", appErr)
+			}
+			resumesAfterFault := core.resumeCount
+			state.SetFaultInjectorForTest(nil)
+			secondService := NewService(core, "codex", state)
+			if faultPoint != "journal_intent" {
+				if appErr := secondService.Recover(context.Background()); appErr != nil {
+					t.Fatalf("restart recovery error = %v", appErr)
+				}
+			}
+			response, appErr := secondService.RunAction(context.Background(), request)
+			if appErr != nil || response.ActionID != request.ActionID {
+				t.Fatalf("replay response = %+v, error = %v", response, appErr)
+			}
+			wantResumes := 1
+			if faultPoint == "journal_intent" {
+				wantResumes = resumesAfterFault + 1
+			}
+			if core.resumeCount != wantResumes {
+				t.Fatalf("resume count = %d, want %d", core.resumeCount, wantResumes)
+			}
+			replayed, appErr := NewService(core, "codex", state).RunAction(context.Background(), request)
+			if appErr != nil || !reflect.DeepEqual(replayed, response) || core.resumeCount != wantResumes {
+				t.Fatalf("committed replay = %+v, error = %v, resumes = %d", replayed, appErr, core.resumeCount)
+			}
+			conflicting := request
+			conflicting.Answers = map[string]any{"scope": "all"}
+			if _, appErr := NewService(core, "codex", state).RunAction(context.Background(), conflicting); appErr == nil || appErr.Code != CodeConflict {
+				t.Fatalf("conflicting replay error = %v", appErr)
+			}
+		})
 	}
 }
 

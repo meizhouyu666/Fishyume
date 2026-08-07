@@ -2,7 +2,10 @@ package application
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +16,7 @@ import (
 	"time"
 
 	"wf.local/wf-engine/internal/run"
+	"wf.local/wf-engine/internal/store"
 	"wf.local/wf-engine/internal/workflow"
 )
 
@@ -28,18 +32,32 @@ type Core interface {
 	AddEventSink(run.EventSink) func()
 }
 
+type Journal interface {
+	ReadApplicationJournal(string, string) (store.ApplicationJournalRecord, error)
+	BeginApplicationJournal(string, string, string, json.RawMessage, string, time.Time) (store.ApplicationJournalRecord, error)
+	MarkApplicationJournalMutated(string, string, string, json.RawMessage, time.Time) (store.ApplicationJournalRecord, error)
+	CommitApplicationJournal(string, string, string, time.Time) (store.ApplicationJournalRecord, error)
+	ListPendingApplicationJournals() ([]store.ApplicationJournalRecord, error)
+}
+
 type Service struct {
 	core          Core
 	defaultDriver string
+	journal       Journal
+	now           func() time.Time
 	mutationMu    sync.Mutex
 }
 
-func NewService(core Core, defaultDriver string) *Service {
+func NewService(core Core, defaultDriver string, journals ...Journal) *Service {
 	defaultDriver = strings.TrimSpace(defaultDriver)
 	if defaultDriver == "" {
 		defaultDriver = "codex"
 	}
-	return &Service{core: core, defaultDriver: defaultDriver}
+	var journal Journal
+	if len(journals) > 0 {
+		journal = journals[0]
+	}
+	return &Service{core: core, defaultDriver: defaultDriver, journal: journal, now: time.Now}
 }
 
 func (s *Service) SystemCapabilities(ctx context.Context, request SystemCapabilitiesRequest) (SystemCapabilitiesResponse, *Error) {
@@ -134,16 +152,48 @@ func (s *Service) RunStart(ctx context.Context, request RunStartRequest) (RunSta
 	if len(issues) > 0 {
 		return RunStartResponse{}, NewError(CodeInvalidWorkflow, "workflow is invalid", map[string]any{"issues": issues})
 	}
-	if gaps := s.capabilityGaps(ctx, project, normalized, request.Driver, request.Target); len(gaps) > 0 {
-		return RunStartResponse{}, NewError(CodeCapabilityUnavailable, "workflow requires unavailable driver capabilities", map[string]any{"gaps": gaps})
+	if s.journal == nil {
+		return RunStartResponse{}, NewError(CodeInternal, "durable application journal is unavailable", nil)
 	}
 	s.mutationMu.Lock()
 	defer s.mutationMu.Unlock()
-	snapshot, err := s.core.StartWorkflow(ctx, run.StartWorkflowRequest{Project: project, Driver: strings.TrimSpace(request.Driver), Target: strings.TrimSpace(request.Target), Normalized: &normalized, Inputs: request.Inputs})
+	requestHash, canonical, err := canonicalRequest(request)
+	if err != nil {
+		return RunStartResponse{}, internalError(err)
+	}
+	record, readErr := s.journal.ReadApplicationJournal("start", request.ClientRequestID)
+	if readErr == nil {
+		if record.RequestHash != requestHash {
+			return RunStartResponse{}, conflictError("clientRequestId is already bound to a different payload", map[string]any{"id": request.ClientRequestID})
+		}
+		if record.State == store.JournalMutated || record.State == store.JournalCommitted {
+			return replayJournalResponse[RunStartResponse](s, record)
+		}
+		if view, statusErr := s.core.Status(record.PlannedRunID); statusErr == nil && !view.Legacy && view.Run != nil {
+			response := startResponse(*view.Run)
+			return persistJournalResponse(s, "start", request.ClientRequestID, requestHash, response)
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return RunStartResponse{}, internalError(readErr)
+	}
+	if gaps := s.capabilityGaps(ctx, project, normalized, request.Driver, request.Target); len(gaps) > 0 {
+		return RunStartResponse{}, NewError(CodeCapabilityUnavailable, "workflow requires unavailable driver capabilities", map[string]any{"gaps": gaps})
+	}
+	if readErr != nil {
+		plannedRunID, err := newApplicationRunID()
+		if err != nil {
+			return RunStartResponse{}, internalError(err)
+		}
+		record, err = s.journal.BeginApplicationJournal("start", request.ClientRequestID, requestHash, canonical, plannedRunID, s.now())
+		if err != nil {
+			return RunStartResponse{}, mapJournalError(err, request.ClientRequestID)
+		}
+	}
+	snapshot, err := s.core.StartWorkflow(ctx, run.StartWorkflowRequest{RunID: record.PlannedRunID, Project: project, Driver: strings.TrimSpace(request.Driver), Target: strings.TrimSpace(request.Target), Normalized: &normalized, Inputs: request.Inputs})
 	if err != nil {
 		return RunStartResponse{}, mapCoreError(err, "could not start run")
 	}
-	return RunStartResponse{APIVersion: APIVersion, RunID: snapshot.ID, StateVersion: snapshot.StateVersion, Attach: "fishyume attach " + snapshot.ID}, nil
+	return persistJournalResponse(s, "start", request.ClientRequestID, requestHash, startResponse(snapshot))
 }
 
 func (s *Service) RunList(_ context.Context, request RunListRequest) (RunListResponse, *Error) {
@@ -279,8 +329,29 @@ func (s *Service) RunAction(ctx context.Context, request RunActionRequest) (RunA
 	if strings.TrimSpace(request.RunID) == "" {
 		return RunActionResponse{}, NewError(CodeInvalidArgument, "runId is required", map[string]any{"path": "$.runId"})
 	}
+	if request.ExpectedStateVersion == 0 {
+		return RunActionResponse{}, NewError(CodeInvalidArgument, "expectedStateVersion is required", map[string]any{"path": "$.expectedStateVersion"})
+	}
+	if s.journal == nil {
+		return RunActionResponse{}, NewError(CodeInternal, "durable application journal is unavailable", nil)
+	}
+	requestHash, canonical, err := canonicalRequest(request)
+	if err != nil {
+		return RunActionResponse{}, internalError(err)
+	}
 	s.mutationMu.Lock()
 	defer s.mutationMu.Unlock()
+	record, readErr := s.journal.ReadApplicationJournal("action", request.ActionID)
+	if readErr == nil {
+		if record.RequestHash != requestHash {
+			return RunActionResponse{}, conflictError("actionId is already bound to a different payload", map[string]any{"id": request.ActionID})
+		}
+		if record.State == store.JournalMutated || record.State == store.JournalCommitted {
+			return replayJournalResponse[RunActionResponse](s, record)
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return RunActionResponse{}, internalError(readErr)
+	}
 	view, err := s.core.Status(request.RunID)
 	if err != nil {
 		return RunActionResponse{}, mapCoreError(err, "run not found")
@@ -289,14 +360,22 @@ func (s *Service) RunAction(ctx context.Context, request RunActionRequest) (RunA
 		return RunActionResponse{}, NewError(CodeCapabilityUnavailable, "legacy run does not support Agent-native actions", map[string]any{"runId": request.RunID})
 	}
 	current := view.Run
-	if request.ExpectedStateVersion == 0 {
-		return RunActionResponse{}, NewError(CodeInvalidArgument, "expectedStateVersion is required", map[string]any{"path": "$.expectedStateVersion"})
-	}
 	if current.StateVersion != request.ExpectedStateVersion {
+		if readErr == nil && actionWasApplied(request, view) {
+			response := actionResponse(request, *current)
+			return persistJournalResponse(s, "action", request.ActionID, requestHash, response)
+		}
 		return RunActionResponse{}, conflictError("state version conflict", map[string]any{"expectedStateVersion": request.ExpectedStateVersion, "currentStateVersion": current.StateVersion})
 	}
 	if appErr := validateActionShape(request, view); appErr != nil {
 		return RunActionResponse{}, appErr
+	}
+	if readErr != nil {
+		var beginErr error
+		record, beginErr = s.journal.BeginApplicationJournal("action", request.ActionID, requestHash, canonical, request.RunID, s.now())
+		if beginErr != nil {
+			return RunActionResponse{}, mapJournalError(beginErr, request.ActionID)
+		}
 	}
 	var snapshot run.WorkflowSnapshot
 	if request.Type == ActionCancel {
@@ -308,7 +387,7 @@ func (s *Service) RunAction(ctx context.Context, request RunActionRequest) (RunA
 	if err != nil {
 		return RunActionResponse{}, mapActionError(err)
 	}
-	return RunActionResponse{APIVersion: APIVersion, ActionID: request.ActionID, RunID: request.RunID, Type: request.Type, StateVersion: snapshot.StateVersion, Phase: string(snapshot.Phase), Conclusion: string(snapshot.Conclusion)}, nil
+	return persistJournalResponse(s, "action", request.ActionID, requestHash, actionResponse(request, snapshot))
 }
 
 func (s *Service) RunResult(_ context.Context, request RunResultRequest) (RunResultResponse, *Error) {
@@ -336,6 +415,145 @@ func (s *Service) RunResult(_ context.Context, request RunResultRequest) (RunRes
 		return RunResultResponse{}, internalError(err)
 	}
 	return response, nil
+}
+
+func (s *Service) Recover(ctx context.Context) *Error {
+	if s.journal == nil {
+		return NewError(CodeInternal, "durable application journal is unavailable", nil)
+	}
+	records, err := s.journal.ListPendingApplicationJournals()
+	if err != nil {
+		return internalError(err)
+	}
+	for _, record := range records {
+		switch record.Kind {
+		case "start":
+			var request RunStartRequest
+			if err := json.Unmarshal(record.Request, &request); err != nil {
+				return internalError(fmt.Errorf("decode pending start journal %q: %w", record.ID, err))
+			}
+			if _, appErr := s.RunStart(ctx, request); appErr != nil {
+				return appErr
+			}
+		case "action":
+			var request RunActionRequest
+			if err := json.Unmarshal(record.Request, &request); err != nil {
+				return internalError(fmt.Errorf("decode pending action journal %q: %w", record.ID, err))
+			}
+			if _, appErr := s.RunAction(ctx, request); appErr != nil {
+				return appErr
+			}
+		default:
+			return internalError(fmt.Errorf("unsupported pending journal kind %q", record.Kind))
+		}
+	}
+	return nil
+}
+
+func startResponse(snapshot run.WorkflowSnapshot) RunStartResponse {
+	return RunStartResponse{APIVersion: APIVersion, RunID: snapshot.ID, StateVersion: snapshot.StateVersion, Attach: "fishyume attach " + snapshot.ID}
+}
+
+func actionResponse(request RunActionRequest, snapshot run.WorkflowSnapshot) RunActionResponse {
+	return RunActionResponse{APIVersion: APIVersion, ActionID: request.ActionID, RunID: request.RunID, Type: request.Type, StateVersion: snapshot.StateVersion, Phase: string(snapshot.Phase), Conclusion: string(snapshot.Conclusion)}
+}
+
+func actionWasApplied(request RunActionRequest, view run.StatusView) bool {
+	if view.Run == nil {
+		return false
+	}
+	if request.Type == ActionCancel {
+		return view.Run.CancelRequested || view.Run.Conclusion == run.ConclusionCancelled
+	}
+	var node *run.NodeSnapshot
+	for index := range view.Nodes {
+		if view.Nodes[index].ID == request.NodeID {
+			node = &view.Nodes[index]
+			break
+		}
+	}
+	if node == nil {
+		return false
+	}
+	switch request.Type {
+	case ActionApprove:
+		return node.Result != nil && node.Result.Decision == "approved"
+	case ActionReject:
+		return node.Result != nil && node.Result.Decision == "rejected" && node.Result.Reason == request.Reason
+	case ActionAnswer, ActionRetry:
+		if request.ExpectedAttempt == nil {
+			return false
+		}
+		return node.CurrentAttempt > *request.ExpectedAttempt || node.CurrentAttempt == *request.ExpectedAttempt && node.Result == nil && (node.Phase == run.NodePhaseReady || node.Phase == run.NodePhaseRunning || node.Phase == run.NodePhaseCompleted)
+	default:
+		return false
+	}
+}
+
+func canonicalRequest(value any) (string, json.RawMessage, error) {
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return "", nil, err
+	}
+	digest := sha256.Sum256(canonical)
+	return hex.EncodeToString(digest[:]), canonical, nil
+}
+
+func newApplicationRunID() (string, error) {
+	value := make([]byte, 12)
+	if _, err := rand.Read(value); err != nil {
+		return "", fmt.Errorf("generate application run id: %w", err)
+	}
+	return "run-" + hex.EncodeToString(value), nil
+}
+
+func persistJournalResponse[T any](s *Service, kind, id, requestHash string, response T) (T, *Error) {
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		var zero T
+		return zero, internalError(err)
+	}
+	record, err := s.journal.MarkApplicationJournalMutated(kind, id, requestHash, encoded, s.now())
+	if err != nil {
+		var zero T
+		return zero, mapJournalError(err, id)
+	}
+	if _, err := s.journal.CommitApplicationJournal(kind, id, requestHash, s.now()); err != nil {
+		var zero T
+		return zero, mapJournalError(err, id)
+	}
+	if string(record.Response) != string(encoded) {
+		return decodeJournalResponse[T](record)
+	}
+	return response, nil
+}
+
+func replayJournalResponse[T any](s *Service, record store.ApplicationJournalRecord) (T, *Error) {
+	if record.State == store.JournalMutated {
+		committed, err := s.journal.CommitApplicationJournal(record.Kind, record.ID, record.RequestHash, s.now())
+		if err != nil {
+			var zero T
+			return zero, mapJournalError(err, record.ID)
+		}
+		record = committed
+	}
+	return decodeJournalResponse[T](record)
+}
+
+func decodeJournalResponse[T any](record store.ApplicationJournalRecord) (T, *Error) {
+	var response T
+	if err := json.Unmarshal(record.Response, &response); err != nil {
+		return response, internalError(fmt.Errorf("decode %s journal response %q: %w", record.Kind, record.ID, err))
+	}
+	return response, nil
+}
+
+func mapJournalError(err error, id string) *Error {
+	var conflict *store.JournalConflictError
+	if errors.As(err, &conflict) {
+		return conflictError("request id is already bound to a different payload", map[string]any{"id": id})
+	}
+	return NewError(CodeInternal, "durable application journal failed", map[string]any{"detail": err.Error()})
 }
 
 func parseWorkflow(input WorkflowInput, inputs map[string]any) (workflow.Normalized, []ValidationIssue) {

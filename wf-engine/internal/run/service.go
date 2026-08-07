@@ -44,6 +44,7 @@ type StartRequest struct {
 }
 
 type StartWorkflowRequest struct {
+	RunID      string               `json:"-"`
 	Project    string               `json:"project"`
 	Driver     string               `json:"driver,omitempty"`
 	Target     string               `json:"target,omitempty"`
@@ -309,7 +310,7 @@ func (s *Service) Start(ctx context.Context, request StartRequest) (WorkflowSnap
 	if err := ensureBackendReady(ctx, candidate, request.Project); err != nil {
 		return WorkflowSnapshot{}, err
 	}
-	return s.startNormalized(ctx, request.Project, normalized, "run", backendName)
+	return s.startNormalized(ctx, request.Project, normalized, "run", backendName, "")
 }
 
 func (s *Service) StartWorkflow(ctx context.Context, request StartWorkflowRequest) (WorkflowSnapshot, error) {
@@ -374,7 +375,7 @@ func (s *Service) StartWorkflow(ctx context.Context, request StartWorkflowReques
 	if err := ensureBackendReady(ctx, candidate, request.Project); err != nil {
 		return WorkflowSnapshot{}, err
 	}
-	return s.startNormalized(ctx, request.Project, normalized, "run", backendName)
+	return s.startNormalized(ctx, request.Project, normalized, "run", backendName, request.RunID)
 }
 
 func ensureBackendReady(ctx context.Context, candidate backend.AgentBackend, project string) error {
@@ -472,13 +473,17 @@ func agentResultContractSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","additionalProperties":false,"required":["status","summary","artifacts","warnings","checks","questions"],"properties":{"status":{"type":"string","enum":["succeeded","failed","needs_input","indeterminate"]},"summary":{"type":"string","minLength":1,"maxLength":16384},"artifacts":{"type":"array","items":{"type":"string"},"maxItems":256},"warnings":{"type":"array","items":{"type":"string"},"maxItems":256},"checks":{"type":"array","items":{"type":"string"},"maxItems":256},"questions":{"type":"array","maxItems":32,"items":{"type":"object","additionalProperties":false,"required":["id","prompt","choices","required"],"properties":{"id":{"type":"string"},"prompt":{"type":"string"},"choices":{"type":"array","items":{"type":"string"},"maxItems":256},"required":{"type":"boolean"}}}}}}`)
 }
 
-func (s *Service) startNormalized(_ context.Context, project string, normalized workflow.Normalized, command, backendName string) (WorkflowSnapshot, error) {
+func (s *Service) startNormalized(_ context.Context, project string, normalized workflow.Normalized, command, backendName, requestedRunID string) (WorkflowSnapshot, error) {
 	if s.store == nil || s.leases == nil {
 		return WorkflowSnapshot{}, errors.New("workflow state directory is unavailable")
 	}
-	id, err := newRunID()
-	if err != nil {
-		return WorkflowSnapshot{}, err
+	id := strings.TrimSpace(requestedRunID)
+	if id == "" {
+		var err error
+		id, err = newRunID()
+		if err != nil {
+			return WorkflowSnapshot{}, err
+		}
 	}
 	if err := s.store.InitWorkflowRun(id); err != nil {
 		return WorkflowSnapshot{}, err
