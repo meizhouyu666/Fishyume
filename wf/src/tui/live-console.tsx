@@ -66,11 +66,13 @@ export class LiveConsoleController {
   }
 
   async resume(action: ResumeAction): Promise<ActionResult> {
-    return this.#mutate('run.resume', {runId: this.#runId, action}, `${action.type} ${action.nodeId}`);
+    const expected = this.#view?.run?.stateVersion;
+    return this.#mutate('run.resume', {runId: this.#runId, ...(expected === undefined ? {} : {expectedStateVersion: expected}), action}, `${action.type} ${action.nodeId}`);
   }
 
   async cancel(): Promise<ActionResult> {
-    return this.#mutate('run.cancel', {runId: this.#runId}, 'cancel run');
+    const expected = this.#view?.run?.stateVersion;
+    return this.#mutate('run.cancel', {runId: this.#runId, ...(expected === undefined ? {} : {expectedStateVersion: expected})}, 'cancel run');
   }
 
   detach(): Promise<void> {
@@ -87,10 +89,8 @@ export class LiveConsoleController {
 
   async #performDetach(): Promise<void> {
     await this.#mutationTask?.catch(() => undefined);
-    if (this.#view?.run?.phase === 'completed') {this.#mayOwnController = false; return}
     ++this.#revision;
-    try {await this.#client.call<WorkflowSnapshot>('run.detach', {runId: this.#runId})}
-    finally {this.#mayOwnController = false}
+    this.#mayOwnController = false;
   }
 
   async close(): Promise<void> {
@@ -184,7 +184,7 @@ export async function runLiveConsole(client: EngineClient, options: RunLiveConso
   const leave = async (): Promise<void> => {
     if (leaving) return;
     leaving = true;
-    try {await controller.detach()} catch { /* Closing the bridge still releases the local controller. */ }
+    await controller.detach();
     settle();
   };
   const onInterrupt = (): void => {void leave()};

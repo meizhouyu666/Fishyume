@@ -335,6 +335,24 @@ func (s *Store) ListNodeIDs(runID string) ([]string, error) {
 	return ids, nil
 }
 
+func (s *Store) ListRunIDs() ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(s.root, "runs"))
+	if os.IsNotExist(err) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list workflow runs: %w", err)
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() && safeID.MatchString(entry.Name()) {
+			ids = append(ids, entry.Name())
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
 func (s *Store) ListAttempts(runID, nodeID string) ([]int, error) {
 	if err := validateRunNode(runID, nodeID); err != nil {
 		return nil, err

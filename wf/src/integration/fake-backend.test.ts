@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {mkdtemp, readFile, rm, stat} from 'node:fs/promises';
+import {mkdtemp, readFile, readdir, rm, stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -38,13 +38,41 @@ async function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 10
   }
 }
 
-function assertExited(bridge: EngineBridge): void {
-  assert.ok(bridge.child.exitCode !== null || bridge.child.signalCode !== null, `child ${bridge.child.pid ?? 'unknown'} is still running`);
+async function closeBridge(bridge: EngineBridge): Promise<void> {
+  await bridge.close();
 }
 
-async function closeAndAssert(bridge: EngineBridge): Promise<void> {
-  await bridge.close();
-  assertExited(bridge);
+async function stopTemporaryControlPlane(stateDir: string, signal: NodeJS.Signals = 'SIGTERM'): Promise<void> {
+  let pid: number;
+  try {
+    const owner = JSON.parse(await readFile(join(stateDir, 'control-plane.json'), 'utf8')) as {pid?: number};
+    if (!owner.pid) return;
+    pid = owner.pid;
+  } catch {return}
+  try {process.kill(pid, signal)} catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return;
+    throw error;
+  }
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    try {process.kill(pid, 0)} catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return;
+      throw error;
+    }
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error(`temporary Control Plane ${pid} did not exit`);
+}
+
+async function waitForRun(bridge: EngineBridge, runId: string, accept: (view: RunStatusView) => boolean, label: string): Promise<RunStatusView> {
+  const deadline = Date.now() + 10_000;
+  let latest: RunStatusView | undefined;
+  while (Date.now() < deadline) {
+    latest = await bridge.call<RunStatusView>('run.status', {runId});
+    if (accept(latest)) return latest;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error(`${label} timeout: ${JSON.stringify(latest)}`);
 }
 
 test('CLI bridge fake integration closes completed, waiting, failed, and error-path engines', {timeout: 45_000}, async () => {
@@ -91,7 +119,7 @@ test('CLI bridge fake integration closes completed, waiting, failed, and error-p
     const events = (await readFile(join(snapshot.stateDir, 'events.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
     assert.ok(events.length >= 4);
     assert.match(await readFile(join(snapshot.stateDir, 'nodes', 'agent-1', 'attempts', '1', 'output.log'), 'utf8'), /turn.completed/);
-    await closeAndAssert(bridge);
+    await closeBridge(bridge);
 
     const workflow = `apiVersion: wf/v1
 name: fake-integration
@@ -118,7 +146,7 @@ nodes:
     workflowBridge.onRunEvent(event => {if (event.phase === 'waiting' && event.reason === 'approval_required') resolveApproval()});
     const workflowRun = await workflowBridge.call<{runId: string}>('run.startWorkflow', {project: projectRoot, filename: 'workflow.yaml', content: workflow, inputs: {goal: 'ship'}});
     await withTimeout(approval, 'approval');
-    await closeAndAssert(workflowBridge);
+    await closeBridge(workflowBridge);
 
     const resumeBridge = bridgeWithEnvironment(enginePath, environment, bridges);
     let resolveWorkflowTerminal!: () => void;
@@ -132,7 +160,7 @@ nodes:
     assert.equal(rejected?.phase, 'skipped');
     assert.equal(rejected?.reason, 'condition_false');
     assert.equal((await readFile(join(workflowView.run!.stateDir, 'workflow.json'), 'utf8')).includes('topologicalOrder'), true);
-    await closeAndAssert(resumeBridge);
+    await closeBridge(resumeBridge);
 
     const failedBridge = bridgeWithEnvironment(enginePath, environment, bridges);
     let resolveFailure!: () => void;
@@ -142,14 +170,43 @@ nodes:
     await withTimeout(failure, 'failure terminal');
     const failedView = await failedBridge.call<RunStatusView>('run.status', {runId: failedRun.runId});
     assert.equal(failedView.run?.conclusion, 'failed');
-    await closeAndAssert(failedBridge);
+    await closeBridge(failedBridge);
 
     const errorBridge = bridgeWithEnvironment(enginePath, environment, bridges);
     try {
       await assert.rejects(errorBridge.call('unknown.method', {}), /method not found/);
     } finally {
-      await closeAndAssert(errorBridge);
+      await closeBridge(errorBridge);
     }
+
+    // Closing the client immediately after run.start must not own the Run
+    // lifecycle. A second client observes the same durable Attempt to terminal.
+    const starter = bridgeWithEnvironment(enginePath, environment, bridges);
+    const detachedRun = await starter.call<{runId: string}>('run.start', {project: projectRoot, driver: 'codex', target: 'local', task: 'scenario:delayed-succeeded'});
+    await closeBridge(starter);
+    const observer = bridgeWithEnvironment(enginePath, environment, bridges);
+    const detachedFinal = await waitForRun(observer, detachedRun.runId, view => view.run?.phase === 'completed', 'detached Run completion');
+    assert.equal(detachedFinal.run?.conclusion, 'succeeded');
+    assert.deepEqual(await readdir(join(detachedFinal.run!.stateDir, 'nodes', 'agent-1', 'attempts')), ['1']);
+    await closeBridge(observer);
+
+    // Crash the Control Plane while the external Agent remains active. The
+    // replacement must reconcile Attempt 1 and never dispatch Attempt 2.
+    const crashStarter = bridgeWithEnvironment(enginePath, environment, bridges);
+    const crashRun = await crashStarter.call<{runId: string}>('run.start', {project: projectRoot, driver: 'codex', target: 'local', task: 'scenario:active'});
+    const active = await waitForRun(crashStarter, crashRun.runId, view => Boolean(view.activeAttempt?.execution), 'active Attempt persistence');
+    await closeBridge(crashStarter);
+    await stopTemporaryControlPlane(stateDir, 'SIGKILL');
+    const recovery = bridgeWithEnvironment(enginePath, environment, bridges);
+    const recovered = await waitForRun(recovery, crashRun.runId, view => Boolean(view.activeAttempt?.execution), 'Control Plane recovery');
+    assert.equal(recovered.activeAttempt?.number, 1);
+    assert.deepEqual(await readdir(join(active.run!.stateDir, 'nodes', 'agent-1', 'attempts')), ['1']);
+    const expectedStateVersion = recovered.run?.stateVersion;
+    await recovery.call('run.cancel', {runId: crashRun.runId, expectedStateVersion});
+    const cancelled = await waitForRun(recovery, crashRun.runId, view => view.run?.conclusion === 'cancelled', 'recovered Run cancellation');
+    assert.equal(cancelled.run?.phase, 'completed');
+    assert.deepEqual(await readdir(join(active.run!.stateDir, 'nodes', 'agent-1', 'attempts')), ['1']);
+    await closeBridge(recovery);
   } catch (error) {
     testError = error;
     throw error;
@@ -157,11 +214,12 @@ nodes:
     const cleanupErrors: unknown[] = [];
     for (const bridge of bridges.reverse()) {
       try {
-        await closeAndAssert(bridge);
+        await closeBridge(bridge);
       } catch (error) {
         cleanupErrors.push(error);
       }
     }
+    try {await stopTemporaryControlPlane(stateDir)} catch (error) {cleanupErrors.push(error)}
     try {
       await rm(temporary, {recursive: true, force: true, maxRetries: 3, retryDelay: 100});
       await assert.rejects(stat(temporary), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');

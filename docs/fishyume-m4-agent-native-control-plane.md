@@ -1,6 +1,6 @@
 # Fishyume M4：Agent-Native Control Plane & Headless Runtime v1
 
-> 状态：架构已批准；M4.0 + M4.1 已实施，M4.2 + M4.3 待实施
+> 状态：架构已批准；M4.0 + M4.1 + M4.2 已实施，M4.3 待实施
 >
 > 日期：2026-08-06
 >
@@ -129,6 +129,12 @@ M4 因此引入明确的本地 Control Plane：
 - 状态文件继续是持久化真相，服务不是唯一的数据持有者。
 
 M4 首版采用用户级按需启动，不要求安装操作系统服务或建设自动更新系统。
+
+### M4.2 已实现行为
+
+`wf-engine serve` 通过状态目录级 owner lock 与 `control-plane.json` 发布单一 owner。metadata 和连接握手共同校验 Engine/RPC/IPC/state schema、规范化 stateDir、owner ID、用户 identity 与 state-dir hash；活 owner 阻止其他版本取得写 ownership，stale endpoint 只在取得 owner lock 后替换。Windows Named Pipe 使用当前用户 SID ACL；Linux/macOS Unix Socket 使用用户私有目录和 `0600` socket。默认不监听 TCP。
+
+TypeScript CLI/TUI 默认自动发现或 detached 启动 Control Plane；显式 stdio Engine transport 继续用于合同测试和受控嵌入。客户端关闭和 TUI detach 只断开观察。服务启动扫描非终态 Run，先对已持久化 Attempt 执行 Observe/Reconcile，再允许 scheduler 决策。多连接读可并发，mutation 由 Control Plane 串行化；现有 resume/cancel RPC 可携带 snapshot `stateVersion` 作为 `expectedStateVersion` 条件。完整 M4.3 `run.action`/`actionId` API 不在本阶段实现。
 
 ## 6. Headless Agent Process Protocol v1
 

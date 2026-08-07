@@ -62,8 +62,9 @@ type ResumeAction struct {
 }
 
 type ResumeRequest struct {
-	RunID  string        `json:"runId"`
-	Action *ResumeAction `json:"action,omitempty"`
+	RunID                string        `json:"runId"`
+	ExpectedStateVersion *uint64       `json:"expectedStateVersion,omitempty"`
+	Action               *ResumeAction `json:"action,omitempty"`
 }
 
 type DoctorReport struct {
@@ -119,12 +120,13 @@ type Service struct {
 	now            func() time.Time
 	getenv         func(string) string
 
-	mu             sync.Mutex
+	mu             sync.RWMutex
 	controllers    map[string]*controller
 	nextGeneration uint64
 	persistMu      sync.Mutex
 	sinkMu         sync.RWMutex
-	eventSink      EventSink
+	eventSinks     map[uint64]EventSink
+	nextSinkID     uint64
 	testHooks      serviceTestHooks
 }
 
@@ -154,7 +156,7 @@ func NewServiceWithRegistry(registry *backend.Registry, defaultBackend string, s
 	if defaultBackend == "" {
 		defaultBackend = "codex"
 	}
-	service := &Service{registry: registry, defaultBackend: defaultBackend, store: state, now: time.Now, getenv: os.Getenv, controllers: make(map[string]*controller)}
+	service := &Service{registry: registry, defaultBackend: defaultBackend, store: state, now: time.Now, getenv: os.Getenv, controllers: make(map[string]*controller), eventSinks: make(map[uint64]EventSink)}
 	if state != nil {
 		service.leases = store.NewLeaseManager(state)
 	}
@@ -168,7 +170,30 @@ func (s *Service) SupportedBackends() []string {
 func (s *Service) SetEventSink(sink EventSink) {
 	s.sinkMu.Lock()
 	defer s.sinkMu.Unlock()
-	s.eventSink = sink
+	s.eventSinks = make(map[uint64]EventSink)
+	if sink != nil {
+		s.nextSinkID++
+		s.eventSinks[s.nextSinkID] = sink
+	}
+}
+
+func (s *Service) AddEventSink(sink EventSink) func() {
+	if sink == nil {
+		return func() {}
+	}
+	s.sinkMu.Lock()
+	s.nextSinkID++
+	id := s.nextSinkID
+	s.eventSinks[id] = sink
+	s.sinkMu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.sinkMu.Lock()
+			delete(s.eventSinks, id)
+			s.sinkMu.Unlock()
+		})
+	}
 }
 
 func (s *Service) Doctor(ctx context.Context, project, requestedBackend string) DoctorReport {
@@ -535,8 +560,8 @@ func (s *Service) Status(runID string) (StatusView, error) {
 	if s.store == nil {
 		return StatusView{}, errors.New("workflow state directory is unavailable")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	state := s.store
 	kind, err := state.DetectSnapshot(runID)
 	if err != nil && os.IsNotExist(err) {
@@ -645,6 +670,9 @@ func (s *Service) Resume(_ context.Context, request ResumeRequest) (WorkflowSnap
 	if err != nil {
 		return WorkflowSnapshot{}, err
 	}
+	if request.ExpectedStateVersion != nil && run.StateVersion != *request.ExpectedStateVersion {
+		return WorkflowSnapshot{}, fmt.Errorf("state version conflict: expected %d, current %d", *request.ExpectedStateVersion, run.StateVersion)
+	}
 	if run.Phase == PhaseCompleted && request.Action == nil {
 		return run, nil
 	}
@@ -728,35 +756,6 @@ func (s *Service) hasSettledNeedsInput(nodes []NodeSnapshot) (bool, error) {
 }
 
 func (s *Service) Detach(runID string) (WorkflowSnapshot, error) {
-	s.mu.Lock()
-	active := s.controllers[runID]
-	if active == nil {
-		s.mu.Unlock()
-		run, err := s.Get(runID)
-		if err != nil {
-			return WorkflowSnapshot{}, err
-		}
-		if run.Phase == PhaseCompleted {
-			return run, nil
-		}
-		return run, fmt.Errorf("run %q has no controller in this engine process", runID)
-	}
-	active.stopping = true
-	run, _, err := s.loadRun(runID)
-	if err != nil {
-		s.mu.Unlock()
-		active.cancel()
-		<-active.done
-		return WorkflowSnapshot{}, err
-	}
-	run.Phase, run.Reason, run.Summary, run.UpdatedAt = PhasePaused, ReasonControllerDetach, "controller detached; active Agent session left running", s.now().UTC()
-	persistErr := s.persistRun(&run, nil, "run.paused", run.Summary)
-	active.cancel()
-	s.mu.Unlock()
-	<-active.done
-	if persistErr != nil {
-		return WorkflowSnapshot{}, persistErr
-	}
 	return s.Get(runID)
 }
 
@@ -1042,8 +1041,8 @@ func (s *Service) stopController(runID string, generation uint64) {
 }
 
 func (s *Service) controller(runID string) *controller {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.controllers[runID]
 }
 
@@ -1069,6 +1068,92 @@ func (s *Service) WaitControllers(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func (s *Service) ActiveControllerCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.controllers)
+}
+
+func (s *Service) HasNonTerminalRuns() (bool, error) {
+	if s.store == nil {
+		return false, errors.New("workflow state directory is unavailable")
+	}
+	ids, err := s.store.ListRunIDs()
+	if err != nil {
+		return false, err
+	}
+	for _, id := range ids {
+		kind, detectErr := s.store.DetectSnapshot(id)
+		if detectErr != nil || kind == store.SnapshotLegacyM1 {
+			continue
+		}
+		var snapshot WorkflowSnapshot
+		if readErr := s.store.ReadSnapshot(id, &snapshot); readErr != nil {
+			return false, readErr
+		}
+		if snapshot.Phase != PhaseCompleted {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Recover starts controllers for durable non-terminal Runs. Existing Attempts
+// are reconciled by control before any scheduler decision is made.
+func (s *Service) Recover(ctx context.Context) error {
+	if s.store == nil || s.leases == nil {
+		return errors.New("workflow state directory is unavailable")
+	}
+	ids, err := s.store.ListRunIDs()
+	if err != nil {
+		return err
+	}
+	for _, runID := range ids {
+		kind, detectErr := s.store.DetectSnapshot(runID)
+		if detectErr != nil || kind == store.SnapshotLegacyM1 {
+			continue
+		}
+		run, nodes, loadErr := s.loadRun(runID)
+		if loadErr != nil {
+			return loadErr
+		}
+		if run.Phase == PhaseCompleted || s.controller(runID) != nil {
+			continue
+		}
+		if run.Phase == PhaseWaiting && run.Reason == ReasonApprovalRequired {
+			continue
+		}
+		if run.Phase == PhaseWaiting && run.Reason == ReasonAgentWaitingInput {
+			settled, settledErr := s.hasSettledNeedsInput(nodes)
+			if settledErr != nil {
+				return settledErr
+			}
+			if settled {
+				continue
+			}
+		}
+		lease, acquireErr := s.leases.AcquireRecovery(runID, "serve-recover")
+		if acquireErr != nil {
+			return fmt.Errorf("recover run %q: %w", runID, acquireErr)
+		}
+		if run.Phase == PhasePaused {
+			run.Phase, run.Conclusion, run.Reason, run.Summary, run.UpdatedAt = PhaseRunning, "", "", "controller recovered", s.now().UTC()
+			if persistErr := s.persistRun(&run, nil, "run.recovered", run.Summary); persistErr != nil {
+				_ = lease.Release()
+				return persistErr
+			}
+		}
+		s.startController(runID, lease, func(controllerCtx context.Context, generation uint64) {
+			if run.CancelRequested {
+				_, _ = s.handleCancellationRequest(controllerCtx, runID)
+				return
+			}
+			s.control(controllerCtx, runID, generation)
+		})
+	}
+	return nil
 }
 
 func (s *Service) acquireLease(runID, command string, wait time.Duration) (*store.Lease, error) {
@@ -1955,6 +2040,7 @@ func resetEventSequence(state *store.Store, runID string) (uint64, error) {
 func (s *Service) persistRun(run *WorkflowSnapshot, node *NodeSnapshot, eventType, message string) error {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
+	run.StateVersion++
 	if err := ValidateWorkflowSnapshot(*run); err != nil {
 		return err
 	}
@@ -1974,9 +2060,12 @@ func (s *Service) persistRun(run *WorkflowSnapshot, node *NodeSnapshot, eventTyp
 		return err
 	}
 	s.sinkMu.RLock()
-	sink := s.eventSink
+	sinks := make([]EventSink, 0, len(s.eventSinks))
+	for _, sink := range s.eventSinks {
+		sinks = append(sinks, sink)
+	}
 	s.sinkMu.RUnlock()
-	if sink != nil {
+	for _, sink := range sinks {
 		sink(event)
 	}
 	return nil

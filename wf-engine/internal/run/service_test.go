@@ -431,9 +431,7 @@ func TestCrashResumeReconcilesWithoutDuplicateLaunch(t *testing.T) {
 		view, _ := first.Status(run.ID)
 		return run.Phase == PhaseRunning && view.ActiveAttempt != nil && view.ActiveAttempt.Execution != nil
 	})
-	if _, err := first.Detach(started.ID); err != nil {
-		t.Fatal(err)
-	}
+	stopControllerForTest(t, first, started.ID)
 	b.mu.Lock()
 	b.waitBlock = false
 	b.observations["session-1"] = []backend.Observation{{State: backend.ObservationTerminal, Result: &backend.BackendResult{Status: "succeeded", Summary: "reconciled"}}}
@@ -451,6 +449,59 @@ func TestCrashResumeReconcilesWithoutDuplicateLaunch(t *testing.T) {
 	b.mu.Unlock()
 	if launches != 1 {
 		t.Fatalf("resume duplicated launch: %d", launches)
+	}
+}
+
+func TestServeRecoveryReconcilesBeforeScheduling(t *testing.T) {
+	b := &fakeWorkflowBackend{waitBlock: true, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	first := NewService(b, state)
+	started, err := first.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, first, started.ID, func(run WorkflowSnapshot) bool {
+		view, _ := first.Status(run.ID)
+		return view.ActiveAttempt != nil && view.ActiveAttempt.Execution != nil
+	})
+	stopControllerForTest(t, first, started.ID)
+	b.mu.Lock()
+	b.waitBlock = false
+	b.observations["session-1"] = []backend.Observation{{State: backend.ObservationTerminal, Result: &backend.BackendResult{Status: "succeeded", Summary: "recovered"}}}
+	b.mu.Unlock()
+	recovered := NewService(b, state)
+	if err := recovered.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	final := waitForRun(t, recovered, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	if final.Conclusion != ConclusionSucceeded {
+		t.Fatalf("final=%+v", final)
+	}
+	b.mu.Lock()
+	launches := b.launches
+	b.mu.Unlock()
+	if launches != 1 {
+		t.Fatalf("recovery dispatched duplicate Attempt: launches=%d", launches)
+	}
+	if active, err := recovered.HasNonTerminalRuns(); err != nil || active {
+		t.Fatalf("terminal Run reported active=%t err=%v", active, err)
+	}
+}
+
+func TestWaitingApprovalKeepsControlPlaneActiveWithoutController(t *testing.T) {
+	document := "apiVersion: wf/v1\nname: approval\nexecution: {maxConcurrency: 1}\nnodes: {approve: {type: approval, prompt: approve}}\n"
+	service := NewService(&fakeWorkflowBackend{observations: map[string][]backend.Observation{}}, store.New(t.TempDir()))
+	started, err := service.StartWorkflow(context.Background(), StartWorkflowRequest{Project: "p", Content: document})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.Reason == ReasonApprovalRequired })
+	waitForControllers(t, service)
+	if service.ActiveControllerCount() != 0 {
+		t.Fatalf("waiting Approval retained controller")
+	}
+	if active, err := service.HasNonTerminalRuns(); err != nil || !active {
+		t.Fatalf("waiting Approval active=%t err=%v", active, err)
 	}
 }
 
@@ -529,9 +580,7 @@ func TestResumeReconciliationClassifiesDelayedMissingAndExited(t *testing.T) {
 				view, _ := first.Status(run.ID)
 				return view.ActiveAttempt != nil && view.ActiveAttempt.Execution != nil
 			})
-			if _, err := first.Detach(started.ID); err != nil {
-				t.Fatal(err)
-			}
+			stopControllerForTest(t, first, started.ID)
 			b.mu.Lock()
 			b.waitBlock = false
 			b.observations["session-1"] = append([]backend.Observation(nil), test.observations...)
@@ -1088,9 +1137,7 @@ func TestStaleCancelRequestIsRecoveredAfterOwnerExit(t *testing.T) {
 		view, _ := owner.Status(run.ID)
 		return view.ActiveAttempt != nil && view.ActiveAttempt.Execution != nil
 	})
-	if _, err := owner.Detach(started.ID); err != nil {
-		t.Fatal(err)
-	}
+	stopControllerForTest(t, owner, started.ID)
 	request, err := state.RequestCancellation(started.ID, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -1180,7 +1227,7 @@ nodes: {approve: {type: approval, prompt: approve}}
 	}
 }
 
-func TestDetachWinsControllerPersistenceWindows(t *testing.T) {
+func TestDetachDoesNotInterruptControllerMutation(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		content string
@@ -1198,7 +1245,7 @@ nodes: {approve: {type: approval, prompt: approve}}
 `, point: "approval.waiting"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			b := &fakeWorkflowBackend{observations: map[string][]backend.Observation{}}
+			b := &fakeWorkflowBackend{waitResults: []backend.BackendResult{{Status: "succeeded", Summary: "done"}}, observations: map[string][]backend.Observation{}}
 			state := store.New(t.TempDir())
 			service := NewService(b, state)
 			entered, release := make(chan struct{}), make(chan struct{})
@@ -1213,32 +1260,36 @@ nodes: {approve: {type: approval, prompt: approve}}
 				t.Fatal(err)
 			}
 			<-entered
-			detached := make(chan error, 1)
-			go func() { _, detachErr := service.Detach(started.ID); detached <- detachErr }()
-			waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhasePaused })
+			detached, detachErr := service.Detach(started.ID)
+			if detachErr != nil {
+				t.Fatal(detachErr)
+			}
+			if detached.Phase != PhaseCreated {
+				t.Fatalf("detach mutated phase: %+v", detached)
+			}
 			close(release)
-			if err := <-detached; err != nil {
-				t.Fatal(err)
-			}
-			final, err := service.Get(started.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if final.Phase != PhasePaused || final.Reason != ReasonControllerDetach {
-				t.Fatalf("final=%+v", final)
+			final := waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool {
+				return run.Phase == PhaseCompleted || run.Reason == ReasonApprovalRequired
+			})
+			if final.Phase == PhasePaused || final.Reason == ReasonControllerDetach {
+				t.Fatalf("detach paused controller: %+v", final)
 			}
 			b.mu.Lock()
 			launches := b.launches
 			b.mu.Unlock()
-			if launches != 0 {
-				t.Fatalf("launches=%d", launches)
+			wantLaunches := 1
+			if test.point == "approval.waiting" {
+				wantLaunches = 0
+			}
+			if launches != wantLaunches {
+				t.Fatalf("launches=%d want=%d", launches, wantLaunches)
 			}
 		})
 	}
 }
 
-func TestDetachAfterLaunchPersistsHandleAndResumeDoesNotRelaunch(t *testing.T) {
-	b := &fakeWorkflowBackend{waitBlock: true, observations: map[string][]backend.Observation{}}
+func TestDetachAfterLaunchKeepsControllerAndDoesNotRelaunch(t *testing.T) {
+	b := &fakeWorkflowBackend{waitResults: []backend.BackendResult{{Status: "succeeded", Summary: "done"}}, observations: map[string][]backend.Observation{}}
 	state := store.New(t.TempDir())
 	service := NewService(b, state)
 	launchReturned, release := make(chan struct{}), make(chan struct{})
@@ -1249,31 +1300,24 @@ func TestDetachAfterLaunchPersistsHandleAndResumeDoesNotRelaunch(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-launchReturned
-	detached := make(chan error, 1)
-	go func() { _, detachErr := service.Detach(started.ID); detached <- detachErr }()
-	waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhasePaused })
-	close(release)
-	if err := <-detached; err != nil {
-		t.Fatal(err)
-	}
-	view, err := service.Status(started.ID)
+	detached, err := service.Detach(started.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.ActiveAttempt == nil || view.ActiveAttempt.Execution == nil || view.ActiveAttempt.Execution.ID != "session-1" {
-		t.Fatalf("execution handle was not persisted after detach: %+v", view.ActiveAttempt)
+	if detached.Phase != PhaseRunning {
+		t.Fatalf("detach mutated active run: %+v", detached)
 	}
-	b.mu.Lock()
-	b.waitBlock = false
-	b.observations["session-1"] = []backend.Observation{{State: backend.ObservationTerminal, Result: &backend.BackendResult{Status: "succeeded", Summary: "reconciled"}}}
-	b.mu.Unlock()
-	resumer := NewService(b, state)
-	if _, err := resumer.Resume(context.Background(), ResumeRequest{RunID: started.ID}); err != nil {
-		t.Fatal(err)
-	}
-	final := waitForRun(t, resumer, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	close(release)
+	final := waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
 	if final.Conclusion != ConclusionSucceeded {
 		t.Fatalf("final=%+v", final)
+	}
+	var attempt AttemptSnapshot
+	if err := state.ReadAttempt(started.ID, "agent-1", 1, &attempt); err != nil {
+		t.Fatal(err)
+	}
+	if attempt.Execution == nil || attempt.Execution.ID != "session-1" {
+		t.Fatalf("execution handle was not persisted after detach: %+v", attempt)
 	}
 	b.mu.Lock()
 	launches := b.launches
@@ -1283,7 +1327,7 @@ func TestDetachAfterLaunchPersistsHandleAndResumeDoesNotRelaunch(t *testing.T) {
 	}
 }
 
-func TestDetachBeforeResultPersistenceLeavesPausedAndReconciles(t *testing.T) {
+func TestDetachBeforeResultPersistenceDoesNotChangeOutcome(t *testing.T) {
 	b := &fakeWorkflowBackend{waitResults: []backend.BackendResult{{Status: "succeeded", Summary: "first result"}}, observations: map[string][]backend.Observation{}}
 	state := store.New(t.TempDir())
 	service := NewService(b, state)
@@ -1299,21 +1343,15 @@ func TestDetachBeforeResultPersistenceLeavesPausedAndReconciles(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-resultReady
-	detached := make(chan error, 1)
-	go func() { _, detachErr := service.Detach(started.ID); detached <- detachErr }()
-	waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhasePaused })
+	detached, err := service.Detach(started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detached.Phase != PhaseRunning {
+		t.Fatalf("detach mutated run: %+v", detached)
+	}
 	close(release)
-	if err := <-detached; err != nil {
-		t.Fatal(err)
-	}
-	b.mu.Lock()
-	b.observations["session-1"] = []backend.Observation{{State: backend.ObservationTerminal, Result: &backend.BackendResult{Status: "succeeded", Summary: "reconciled result"}}}
-	b.mu.Unlock()
-	resumer := NewService(b, state)
-	if _, err := resumer.Resume(context.Background(), ResumeRequest{RunID: started.ID}); err != nil {
-		t.Fatal(err)
-	}
-	final := waitForRun(t, resumer, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	final := waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
 	if final.Conclusion != ConclusionSucceeded {
 		t.Fatalf("final=%+v", final)
 	}
@@ -1322,6 +1360,20 @@ func TestDetachBeforeResultPersistenceLeavesPausedAndReconciles(t *testing.T) {
 	b.mu.Unlock()
 	if launches != 1 {
 		t.Fatalf("resume duplicated launch: %d", launches)
+	}
+}
+
+func stopControllerForTest(t *testing.T, service *Service, runID string) {
+	t.Helper()
+	active := service.controller(runID)
+	if active == nil {
+		t.Fatalf("run %s has no active controller", runID)
+	}
+	active.cancel()
+	select {
+	case <-active.done:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("controller for %s did not stop", runID)
 	}
 }
 

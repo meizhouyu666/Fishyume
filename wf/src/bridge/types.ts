@@ -18,7 +18,7 @@ export type Reason = 'approval_required' | 'agent_waiting_input' | 'completion_m
 
 export interface NodeSummary {id: string; type: 'agent' | 'approval'; phase: NodePhase; conclusion?: Conclusion; reason?: Reason; diagnostic?: string; currentAttempt?: number}
 export interface WorkflowSnapshot {
-  protocolVersion: 2; stateSchemaVersion?: number; id: string; workflowName: string; project: string;
+  protocolVersion: 2; stateSchemaVersion?: number; stateVersion?: number; id: string; workflowName: string; project: string;
   resolvedDriver?: string; resolvedTarget?: string; deprecationWarnings?: string[]; backend?: string;
   phase: RunPhase; conclusion?: Conclusion; reason?: Reason; summary?: string; effectiveConcurrency?: number;
   inputs?: Record<string, JsonScalar>; topologicalOrder: string[]; nodes: Record<string, NodeSummary>;

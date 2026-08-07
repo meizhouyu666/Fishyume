@@ -6,7 +6,8 @@ import {exitCodeForSnapshot, TextReporter, type TextWriter, writeStatus} from '.
 export async function cancelRun(client: EngineClient, runId: string, output: TextWriter): Promise<number> {
   const reporter = new TextReporter(output); const unsubscribe = client.onRunEvent((event: RunEvent) => {if (event.runId === runId) reporter.event(event)});
   try {
-    const snapshot = await client.call<WorkflowSnapshot>('run.cancel', {runId}); const view = await client.call<RunStatusView>('run.status', {runId}); writeStatus(view, output); return exitCodeForSnapshot(view.run ?? snapshot);
+    const before = await client.call<RunStatusView>('run.status', {runId});
+    const snapshot = await client.call<WorkflowSnapshot>('run.cancel', {runId, expectedStateVersion: before.run?.stateVersion}); const view = await client.call<RunStatusView>('run.status', {runId}); writeStatus(view, output); return exitCodeForSnapshot(view.run ?? snapshot);
   } catch (error) {
     output.write(`fail ${error instanceof Error ? error.message : String(error)}\n`);
     try {const view = await client.call<RunStatusView>('run.status', {runId}); writeStatus(view, output); return view.run ? exitCodeForSnapshot(view.run) : 6} catch {return 7}

@@ -41,17 +41,28 @@ type LeaseManager struct {
 	ttl                  time.Duration
 	owner                func() (string, error)
 	beforeHeartbeatGuard func()
+	processAlive         func(int) (bool, error)
 }
 
 func NewLeaseManager(store *Store) *LeaseManager {
-	return &LeaseManager{store: store, clock: realClock{}, ttl: DefaultLeaseTTL, owner: newLeaseOwner}
+	return &LeaseManager{store: store, clock: realClock{}, ttl: DefaultLeaseTTL, owner: newLeaseOwner, processAlive: platformProcessAlive}
 }
 
 func NewLeaseManagerForTest(store *Store, clock Clock, ttl time.Duration, owner func() (string, error)) *LeaseManager {
-	return &LeaseManager{store: store, clock: clock, ttl: ttl, owner: owner}
+	return &LeaseManager{store: store, clock: clock, ttl: ttl, owner: owner, processAlive: platformProcessAlive}
 }
 
 func (m *LeaseManager) Acquire(runID, command string) (*Lease, error) {
+	return m.acquire(runID, command, false)
+}
+
+// AcquireRecovery may replace an unexpired lease only when its recorded
+// process is confirmed dead. A live or unverifiable owner remains a conflict.
+func (m *LeaseManager) AcquireRecovery(runID, command string) (*Lease, error) {
+	return m.acquire(runID, command, true)
+}
+
+func (m *LeaseManager) acquire(runID, command string, recovery bool) (*Lease, error) {
 	if err := validateID("run", runID); err != nil {
 		return nil, err
 	}
@@ -73,7 +84,13 @@ func (m *LeaseManager) Acquire(runID, command string) (*Lease, error) {
 		current, readErr := readLease(path)
 		if readErr == nil {
 			if current.ExpiresAt.After(now) {
-				return &LeaseConflictError{Current: current}
+				if !recovery {
+					return &LeaseConflictError{Current: current}
+				}
+				alive, aliveErr := m.processAlive(current.PID)
+				if aliveErr != nil || alive {
+					return &LeaseConflictError{Current: current}
+				}
 			}
 			if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
 				return fmt.Errorf("remove expired control lease: %w", removeErr)

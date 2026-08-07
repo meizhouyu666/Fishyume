@@ -32,7 +32,7 @@ func main() {
 	if first := strings.SplitN(prompt, "\n", 2)[0]; strings.HasPrefix(first, "scenario:") {
 		scenario = strings.TrimSpace(strings.TrimPrefix(first, "scenario:"))
 	}
-	for _, candidate := range []string{"terminal-succeeded", "terminal-failed", "terminal-indeterminate", "terminal-needs-input", "malformed-result", "wrong-identity", "oversized-result", "conflict-result", "premature-result", "nonzero-missing", "result-pending", "waiting-input", "active", "large-output"} {
+	for _, candidate := range []string{"terminal-succeeded", "delayed-succeeded", "terminal-failed", "terminal-indeterminate", "terminal-needs-input", "malformed-result", "wrong-identity", "oversized-result", "conflict-result", "premature-result", "nonzero-missing", "result-pending", "waiting-input", "active", "large-output"} {
 		if strings.Contains(prompt, "scenario:"+candidate) {
 			scenario = candidate
 			break
@@ -55,6 +55,10 @@ func main() {
 	case "terminal-succeeded", "terminal-failed", "terminal-indeterminate":
 		status := strings.TrimPrefix(scenario, "terminal-")
 		writeResult(resultPath, id, status, status+" fixture in "+mustWorkingDirectory())
+		emitCompleted()
+	case "delayed-succeeded":
+		time.Sleep(500 * time.Millisecond)
+		writeResult(resultPath, id, "succeeded", "delayed fixture in "+mustWorkingDirectory())
 		emitCompleted()
 	case "terminal-needs-input":
 		writeNeedsInput(resultPath, id)

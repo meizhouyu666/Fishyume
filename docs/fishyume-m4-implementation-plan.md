@@ -1,6 +1,6 @@
 # Fishyume M4 分阶段实施计划
 
-> 状态：M4.0 + M4.1 已完成；M4.2 + M4.3 未开始
+> 状态：M4.0 + M4.1 + M4.2 已完成；M4.3 未开始
 >
 > 对应架构：[`fishyume-m4-agent-native-control-plane.md`](./fishyume-m4-agent-native-control-plane.md)
 
@@ -82,6 +82,8 @@
 
 ## 4. M4.2：Local Control Plane 与 IPC
 
+> 实施状态：已完成（用户级 owner lock/metadata、Named Pipe/Unix Socket、IPC 握手、TS 自动发现/启动、异步 controller、启动恢复、多客户端读与串行 mutation、只读 detach）。
+
 ### 目标
 
 让 Run 生命周期独立于单个 CLI、MCP 或 TUI 客户端，并允许多客户端安全连接。
@@ -118,6 +120,16 @@
 - 强制终止并重启 Control Plane 后不产生重复 Attempt。
 - 两个并发 action 只有一个满足 expected state。
 - Named Pipe、Unix Socket 与保留的 stdio 集成测试通过。
+
+### 实施记录
+
+- `wf-engine serve` 持有状态目录级 owner lock；metadata 固化 Engine/RPC/IPC/state schema、规范化 stateDir、owner ID、用户 identity 与 state-dir hash。活 owner 阻止同版本或不兼容版本并发写入；只有取得 lock 后才替换 stale endpoint。
+- Windows Named Pipe 使用当前用户 SID ACL；Unix Socket 目录/socket 权限分别为 `0700`/`0600`。握手为 64 KiB 有界 frame 并带 deadline，后续 JSON-RPC 保持 1 MiB 上限；不监听 TCP。
+- TS bridge 默认连接 Control Plane；显式 Engine args 的受控测试路径继续使用 stdio。客户端 close、TUI detach 和终端退出只关闭连接。
+- 启动扫描非终态 Run；持久化 Attempt 总是先 reconcile，再进入 schedule。恢复 lease 仅在旧 PID 被确认失效或 lease 到期时替换。
+- 连接级通知为有界 best-effort 流；snapshot/event 文件仍是持久化真相。读请求可并发，mutation 由共享 gate 串行化。
+- 新 snapshot 写入单调 `stateVersion`；现有 resume/cancel RPC 接受可选 `expectedStateVersion`，CLI/TUI action 会绑定所见版本。完整 `run.action`/`actionId` API 仍属于 M4.3。
+- M4.2 不启用自动 idle 退出，因此活动或等待中的 Run 不会因 idle 策略失去服务 owner。
 
 ## 5. M4.3：Agent-Native MCP 与 Machine API
 

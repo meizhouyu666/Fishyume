@@ -122,6 +122,40 @@ func TestLeaseCrashLikeAbandonmentAndWrongOwnerRelease(t *testing.T) {
 	}
 }
 
+func TestRecoveryLeaseRequiresConfirmedDeadOwner(t *testing.T) {
+	state := New(t.TempDir())
+	if err := state.InitWorkflowRun("run-recovery"); err != nil {
+		t.Fatal(err)
+	}
+	clock := &fakeClock{now: time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)}
+	owner := NewLeaseManagerForTest(state, clock, time.Minute, func() (string, error) { return "old", nil })
+	if _, err := owner.Acquire("run-recovery", "serve"); err != nil {
+		t.Fatal(err)
+	}
+	live := NewLeaseManagerForTest(state, clock, time.Minute, func() (string, error) { return "live-replacement", nil })
+	live.processAlive = func(int) (bool, error) { return true, nil }
+	if _, err := live.AcquireRecovery("run-recovery", "recover"); err == nil {
+		t.Fatal("recovery replaced a confirmed live owner")
+	}
+	unknown := NewLeaseManagerForTest(state, clock, time.Minute, func() (string, error) { return "unknown-replacement", nil })
+	unknown.processAlive = func(int) (bool, error) { return false, errors.New("identity unavailable") }
+	if _, err := unknown.AcquireRecovery("run-recovery", "recover"); err == nil {
+		t.Fatal("recovery replaced an unverifiable owner")
+	}
+	dead := NewLeaseManagerForTest(state, clock, time.Minute, func() (string, error) { return "new", nil })
+	dead.processAlive = func(int) (bool, error) { return false, nil }
+	replacement, err := dead.AcquireRecovery("run-recovery", "recover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.Record().OwnerID != "new" {
+		t.Fatalf("replacement=%+v", replacement.Record())
+	}
+	if err := replacement.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestOldHeartbeatCannotOverwriteOrReleaseReplacement(t *testing.T) {
 	state := New(t.TempDir())
 	if err := state.InitWorkflowRun("run-heartbeat-race"); err != nil {

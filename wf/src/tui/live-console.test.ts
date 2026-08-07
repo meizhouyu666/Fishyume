@@ -6,7 +6,7 @@ import {LiveConsoleController} from './live-console.js';
 
 const createdAt = '2026-08-06T00:00:00Z';
 function view(phase: WorkflowSnapshot['phase'], updatedAt = createdAt): RunStatusView {
-  return {protocolVersion: 2, legacy: false, run: {protocolVersion: 2, id: 'run-1', workflowName: 'fixture', project: 'p', backend: 'direct', phase, ...(phase === 'completed' ? {conclusion: 'succeeded' as const} : {}), topologicalOrder: ['node'], nodes: {node: {id: 'node', type: 'agent', phase: phase === 'completed' ? 'completed' : 'running', ...(phase === 'completed' ? {conclusion: 'succeeded' as const} : {})}}, cancelRequested: false, stateDir: 'state', createdAt, updatedAt}};
+  return {protocolVersion: 2, legacy: false, run: {protocolVersion: 2, stateVersion: 7, id: 'run-1', workflowName: 'fixture', project: 'p', backend: 'direct', phase, ...(phase === 'completed' ? {conclusion: 'succeeded' as const} : {}), topologicalOrder: ['node'], nodes: {node: {id: 'node', type: 'agent', phase: phase === 'completed' ? 'completed' : 'running', ...(phase === 'completed' ? {conclusion: 'succeeded' as const} : {})}}, cancelRequested: false, stateDir: 'state', createdAt, updatedAt}};
 }
 
 class FakeClient implements EngineClient {
@@ -64,8 +64,8 @@ test('resume and cancel use exact existing RPC parameters and refresh afterward'
   ];
   for (const action of actions) assert.equal((await controller.resume(action)).ok, true);
   assert.equal((await controller.cancel()).ok, true);
-  assert.deepEqual(client.calls.filter(call => call.method === 'run.resume').map(call => call.params), actions.map(action => ({runId: 'run-1', action})));
-  assert.deepEqual(client.calls.find(call => call.method === 'run.cancel')?.params, {runId: 'run-1'});
+  assert.deepEqual(client.calls.filter(call => call.method === 'run.resume').map(call => call.params), actions.map(action => ({runId: 'run-1', expectedStateVersion: 7, action})));
+  assert.deepEqual(client.calls.find(call => call.method === 'run.cancel')?.params, {runId: 'run-1', expectedStateVersion: 7});
   assert.equal(client.calls.filter(call => call.method === 'run.status').length, 6);
   await controller.close();
 });
@@ -96,16 +96,16 @@ test('watch polling stops at terminal state and pure observation close does not 
   assert.equal(active.calls.filter(call => call.method === 'run.detach').length, 0);
 });
 
-test('watch ownership after successful resume detaches on close while run mode keeps detach semantics', async () => {
+test('watch and run mode detach only disconnect observation after mutations settle', async () => {
   const watchClient = new FakeClient(); watchClient.statusViews = [view('waiting'), view('running')];
   const watchController = new LiveConsoleController(watchClient, 'run-1', {mode: 'watch', onView() {}}); await watchController.start();
   assert.equal((await watchController.resume({type: 'approve', nodeId: 'approve'})).ok, true);
   await watchController.close();
-  assert.deepEqual(watchClient.calls.filter(call => call.method === 'run.detach').map(call => call.params), [{runId: 'run-1'}]);
+  assert.equal(watchClient.calls.filter(call => call.method === 'run.detach').length, 0);
 
   const runClient = new FakeClient(); const runController = new LiveConsoleController(runClient, 'run-1', {mode: 'run', onView() {}}); await runController.start();
   assert.ok(runClient.listener); await runController.close(); assert.equal(runClient.listener, undefined);
-  assert.deepEqual(runClient.calls.find(call => call.method === 'run.detach')?.params, {runId: 'run-1'});
+  assert.equal(runClient.calls.filter(call => call.method === 'run.detach').length, 0);
 });
 
 test('terminal views do not detach even when watch previously acquired controller ownership', async () => {

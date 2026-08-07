@@ -58,5 +58,6 @@ type StartResult struct {
 }
 
 type runIDParams struct {
-	RunID string `json:"runId"`
+	RunID                string  `json:"runId"`
+	ExpectedStateVersion *uint64 `json:"expectedStateVersion,omitempty"`
 }

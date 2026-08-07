@@ -55,7 +55,7 @@ export async function runWorkflow(client: EngineClient, options: RunOptions, out
     current = initial.run; reporter.started(current);
     if (controllerStops.has(current.phase)) settle();
     let detaching = false;
-    const onInterrupt = (): void => {if (detaching) return; detaching = true; void client.call<WorkflowSnapshot>('run.detach', {runId: started.runId}).then(snapshot => {current = snapshot; settle()})};
+    const onInterrupt = (): void => {if (detaching) return; detaching = true; settle()};
     process.once('SIGINT', onInterrupt);
     try {
       await stopped;

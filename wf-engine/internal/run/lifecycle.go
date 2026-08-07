@@ -60,6 +60,7 @@ const (
 type WorkflowSnapshot struct {
 	ProtocolVersion      int                    `json:"protocolVersion"`
 	StateSchemaVersion   int                    `json:"stateSchemaVersion"`
+	StateVersion         uint64                 `json:"stateVersion,omitempty"`
 	ID                   string                 `json:"id"`
 	WorkflowName         string                 `json:"workflowName"`
 	Project              string                 `json:"project"`

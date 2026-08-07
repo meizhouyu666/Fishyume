@@ -22,27 +22,70 @@ const (
 var supportedMethods = []string{"engine.hello", "run.start", "run.startWorkflow", "run.status", "run.resume", "run.cancel", "run.detach"}
 
 type Server struct {
-	reader  *bufio.Reader
-	writer  io.Writer
-	service *run.Service
-	writeMu sync.Mutex
+	reader               *bufio.Reader
+	writer               io.Writer
+	service              *run.Service
+	writeMu              sync.Mutex
+	mutationMu           *sync.Mutex
+	waitControllersOnEOF bool
+	unsubscribe          func()
+	notifications        chan run.WorkflowEvent
+	notificationDone     chan struct{}
+	notificationDoneOnce sync.Once
 }
 
 func NewServer(input io.Reader, output io.Writer, service *run.Service) *Server {
-	server := &Server{reader: bufio.NewReaderSize(input, 64*1024), writer: output, service: service}
-	service.SetEventSink(func(event run.WorkflowEvent) {
+	return newServer(input, output, service, nil, true)
+}
+
+func NewConnectionServer(input io.Reader, output io.Writer, service *run.Service, mutationMu *sync.Mutex) *Server {
+	return newServer(input, output, service, mutationMu, false)
+}
+
+func newServer(input io.Reader, output io.Writer, service *run.Service, mutationMu *sync.Mutex, waitControllersOnEOF bool) *Server {
+	server := &Server{reader: bufio.NewReaderSize(input, 64*1024), writer: output, service: service, mutationMu: mutationMu, waitControllersOnEOF: waitControllersOnEOF}
+	sink := func(event run.WorkflowEvent) {
 		_ = server.write(Notification{JSONRPC: "2.0", ProtocolVersion: ProtocolVersion, Method: "run.event", Params: event})
-	})
+	}
+	if waitControllersOnEOF {
+		service.SetEventSink(sink)
+		server.unsubscribe = func() {}
+	} else {
+		server.notifications = make(chan run.WorkflowEvent, 128)
+		server.notificationDone = make(chan struct{})
+		sink = func(event run.WorkflowEvent) {
+			select {
+			case server.notifications <- event:
+			default:
+				// Durable state remains authoritative when a slow observer falls
+				// behind this bounded best-effort notification stream.
+			}
+		}
+		server.unsubscribe = service.AddEventSink(sink)
+	}
 	return server
 }
 
 func (s *Server) Serve(ctx context.Context) error {
+	if s.notifications != nil {
+		go s.writeNotifications()
+	}
+	defer func() {
+		s.unsubscribe()
+		s.notificationDoneOnce.Do(func() {
+			if s.notificationDone != nil {
+				close(s.notificationDone)
+			}
+		})
+	}()
 	for {
 		line, err := readLine(s.reader, MaxMessageSize)
 		if errors.Is(err, io.EOF) {
-			waitContext, cancel := context.WithTimeout(context.Background(), time.Second)
-			_ = s.service.WaitControllers(waitContext)
-			cancel()
+			if s.waitControllersOnEOF {
+				waitContext, cancel := context.WithTimeout(context.Background(), time.Second)
+				_ = s.service.WaitControllers(waitContext)
+				cancel()
+			}
 			return nil
 		}
 		if errors.Is(err, errMessageTooLarge) {
@@ -64,6 +107,17 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 }
 
+func (s *Server) writeNotifications() {
+	for {
+		select {
+		case event := <-s.notifications:
+			_ = s.write(Notification{JSONRPC: "2.0", ProtocolVersion: ProtocolVersion, Method: "run.event", Params: event})
+		case <-s.notificationDone:
+			return
+		}
+	}
+}
+
 func (s *Server) handle(ctx context.Context, request Request) {
 	id := decodeID(request.ID)
 	if request.JSONRPC != "2.0" {
@@ -73,6 +127,10 @@ func (s *Server) handle(ctx context.Context, request Request) {
 	if request.ProtocolVersion != ProtocolVersion {
 		s.writeError(id, -32600, "unsupported protocol version", map[string]int{"supported": ProtocolVersion})
 		return
+	}
+	if s.mutationMu != nil && isMutation(request.Method) {
+		s.mutationMu.Lock()
+		defer s.mutationMu.Unlock()
 	}
 
 	switch request.Method {
@@ -161,6 +219,17 @@ func (s *Server) handle(ctx context.Context, request Request) {
 		if !ok {
 			return
 		}
+		if params.ExpectedStateVersion != nil {
+			current, statusErr := s.service.Get(params.RunID)
+			if statusErr != nil {
+				s.writeError(id, -32004, "run not found", statusErr.Error())
+				return
+			}
+			if current.StateVersion != *params.ExpectedStateVersion {
+				s.writeError(id, -32009, "state version conflict", map[string]uint64{"expected": *params.ExpectedStateVersion, "current": current.StateVersion})
+				return
+			}
+		}
 		snapshot, err := s.service.Cancel(ctx, params.RunID)
 		if err != nil {
 			s.writeError(id, -32000, "could not cancel run", err.Error())
@@ -169,6 +238,15 @@ func (s *Server) handle(ctx context.Context, request Request) {
 		s.writeResult(id, snapshot)
 	default:
 		s.writeError(id, -32601, "method not found", request.Method)
+	}
+}
+
+func isMutation(method string) bool {
+	switch method {
+	case "run.start", "run.startWorkflow", "run.resume", "run.cancel":
+		return true
+	default:
+		return false
 	}
 }
 

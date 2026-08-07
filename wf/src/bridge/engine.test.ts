@@ -24,7 +24,9 @@ lines.on('line', line => {
 }
 
 function assertExited(bridge: EngineBridge): void {
-  assert.ok(bridge.child.exitCode !== null || bridge.child.signalCode !== null, `child ${bridge.child.pid ?? 'unknown'} is still running`);
+	const child = bridge.child;
+	assert.ok(child);
+	assert.ok(child.exitCode !== null || child.signalCode !== null, `child ${child.pid ?? 'unknown'} is still running`);
 }
 
 test('correlates responses and routes v2 run.event notifications', async () => {

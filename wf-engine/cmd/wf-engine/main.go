@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/backend/driveradapter"
+	"wf.local/wf-engine/internal/controlplane"
 	"wf.local/wf-engine/internal/driver/codex"
 	"wf.local/wf-engine/internal/rpc"
 	"wf.local/wf-engine/internal/run"
@@ -27,9 +30,40 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	server := rpc.NewServer(os.Stdin, os.Stdout, run.NewServiceWithRegistry(registry, "codex", state))
+	service := run.NewServiceWithRegistry(registry, "codex", state)
+	if len(os.Args) == 2 && os.Args[1] == "serve" {
+		if err := serveControlPlane(state, service); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: wf-engine [serve]")
+		os.Exit(2)
+	}
+	server := rpc.NewServer(os.Stdin, os.Stdout, service)
 	if err := server.Serve(context.Background()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func serveControlPlane(state *store.Store, service *run.Service) error {
+	owner, err := controlplane.AcquireOwner(state.Root(), rpc.EngineVersion, rpc.ProtocolVersion)
+	if err != nil {
+		return err
+	}
+	defer owner.Close()
+	server, err := controlplane.NewServer(owner, service)
+	if err != nil {
+		return err
+	}
+	defer server.Close()
+	if err := service.Recover(context.Background()); err != nil {
+		return fmt.Errorf("recover durable Runs: %w", err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return server.Serve(ctx)
 }

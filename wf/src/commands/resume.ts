@@ -9,7 +9,8 @@ export async function resumeRun(client: EngineClient, runId: string, action: Res
   const reporter = new TextReporter(output); let settle!: () => void; const stopped = new Promise<void>(resolve => {settle = resolve});
   const unsubscribe = client.onRunEvent((event: RunEvent) => {if (event.runId !== runId) return; reporter.event(event); if (stops.has(event.phase)) settle()});
   try {
-    const snapshot = await client.call<WorkflowSnapshot>('run.resume', {runId, ...(action ? {action} : {})});
+    const expected = action ? (await client.call<RunStatusView>('run.status', {runId})).run?.stateVersion : undefined;
+    const snapshot = await client.call<WorkflowSnapshot>('run.resume', {runId, ...(expected === undefined ? {} : {expectedStateVersion: expected}), ...(action ? {action} : {})});
     if (stops.has(snapshot.phase)) settle(); await stopped;
     const view = await client.call<RunStatusView>('run.status', {runId}); writeStatus(view, output);
     return view.run ? exitCodeForSnapshot(view.run) : 6;
