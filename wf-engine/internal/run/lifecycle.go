@@ -1,6 +1,7 @@
 package run
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -104,6 +105,7 @@ type NodeSnapshot struct {
 	Reason             Reason           `json:"reason,omitempty"`
 	Diagnostic         string           `json:"diagnostic,omitempty"`
 	Result             *workflow.Result `json:"result,omitempty"`
+	PendingInputAnswer json.RawMessage  `json:"pendingInputAnswer,omitempty"`
 	CurrentAttempt     int              `json:"currentAttempt,omitempty"`
 	CreatedAt          time.Time        `json:"createdAt"`
 	UpdatedAt          time.Time        `json:"updatedAt"`

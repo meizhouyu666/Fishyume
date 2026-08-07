@@ -55,10 +55,12 @@ type StartWorkflowRequest struct {
 }
 
 type ResumeAction struct {
-	Type                     string `json:"type"`
-	NodeID                   string `json:"nodeId"`
-	Reason                   string `json:"reason,omitempty"`
-	AcknowledgeDuplicateRisk bool   `json:"acknowledgeDuplicateRisk,omitempty"`
+	Type                     string         `json:"type"`
+	NodeID                   string         `json:"nodeId"`
+	ExpectedAttempt          *int           `json:"expectedAttempt,omitempty"`
+	Reason                   string         `json:"reason,omitempty"`
+	Answers                  map[string]any `json:"answers,omitempty"`
+	AcknowledgeDuplicateRisk bool           `json:"acknowledgeDuplicateRisk,omitempty"`
 }
 
 type ResumeRequest struct {
@@ -1377,7 +1379,7 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 				Identity: agent.AttemptIdentity{RunID: run.ID, NodeID: node.ID, Attempt: number}, Workspace: run.Project, Target: target, Task: renderedTask,
 				AncestorResults: ancestorResults, RequiredSkills: definition.RequiredSkills,
 				Constraints: map[string]string{"interaction": "none", "processMode": "one-shot", "pty": "disabled"}, Budget: map[string]int64{},
-				ResultSchema: agentResultContractSchema(), ResultMaxBytes: workflow.MaxResultBytes,
+				ResultSchema: agentResultContractSchema(), ResultMaxBytes: workflow.MaxResultBytes, InputAnswer: node.PendingInputAnswer,
 			})
 			if err != nil {
 				return err
@@ -1388,7 +1390,7 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			if err := s.writeAttempt(attempt, true); err != nil {
 				return err
 			}
-			node.Phase, node.Reason, node.Conclusion, node.CurrentAttempt, node.UpdatedAt = NodePhaseRunning, "", "", number, now
+			node.Phase, node.Reason, node.Conclusion, node.PendingInputAnswer, node.CurrentAttempt, node.UpdatedAt = NodePhaseRunning, "", "", nil, number, now
 			run.Phase, run.Reason, run.Conclusion, run.ActiveNodeID, run.Summary, run.UpdatedAt = PhaseRunning, "", "", node.ID, "launching Agent", now
 			if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
 				return err
@@ -1938,6 +1940,28 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 		}
 		run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.CancelRequested, run.UpdatedAt = PhaseRunning, "", "", "", "explicit retry requested", false, now
 		return s.persistRun(run, &node, "node.retry_requested", run.Summary)
+	case "answer":
+		if node.Type != "agent" || node.Phase != NodePhaseWaiting || node.Reason != ReasonAgentWaitingInput || node.Result == nil || len(node.Result.Questions) == 0 {
+			return fmt.Errorf("node %q is not waiting for structured input", node.ID)
+		}
+		if action.ExpectedAttempt == nil || *action.ExpectedAttempt != node.CurrentAttempt {
+			return fmt.Errorf("attempt conflict: expected %v, current %d", action.ExpectedAttempt, node.CurrentAttempt)
+		}
+		inputAnswer, err := validateAndEncodeAnswers(node.CurrentAttempt, node.Result.Questions, action.Answers)
+		if err != nil {
+			return err
+		}
+		now := s.now().UTC()
+		node.Phase, node.Conclusion, node.Reason, node.Diagnostic, node.PendingInputAnswer, node.Result, node.UpdatedAt = NodePhaseReady, "", "", "", inputAnswer, nil, now
+		if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
+			return err
+		}
+		run.Nodes[node.ID] = summarizeNode(node)
+		if err := s.resetDownstream(run, node.ID); err != nil {
+			return err
+		}
+		run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.CancelRequested, run.UpdatedAt = PhaseRunning, "", "", "", "input answer submitted", false, now
+		return s.persistRun(run, &node, "node.answer_submitted", run.Summary)
 	default:
 		return fmt.Errorf("unknown resume action %q", action.Type)
 	}
@@ -1960,10 +1984,78 @@ func validateResumeAction(action ResumeAction) error {
 		if action.Reason != "" {
 			return errors.New("retry action does not accept reason")
 		}
+	case "answer":
+		if action.ExpectedAttempt == nil || *action.ExpectedAttempt < 1 {
+			return errors.New("answer action requires expectedAttempt")
+		}
+		if action.Reason != "" || action.AcknowledgeDuplicateRisk {
+			return errors.New("answer action does not accept reason or acknowledgeDuplicateRisk")
+		}
 	default:
 		return fmt.Errorf("unknown resume action %q", action.Type)
 	}
 	return nil
+}
+
+func validateAndEncodeAnswers(attempt int, questions []workflow.InputQuestion, answers map[string]any) (json.RawMessage, error) {
+	if answers == nil {
+		answers = map[string]any{}
+	}
+	byID := make(map[string]workflow.InputQuestion, len(questions))
+	for _, question := range questions {
+		byID[question.ID] = question
+		value, exists := answers[question.ID]
+		if question.Required && !exists {
+			return nil, fmt.Errorf("answer for required question %q is missing", question.ID)
+		}
+		if !exists {
+			continue
+		}
+		if err := validateAnswerScalar(value); err != nil {
+			return nil, fmt.Errorf("answer for question %q: %w", question.ID, err)
+		}
+		if len(question.Choices) > 0 {
+			text, ok := value.(string)
+			if !ok || !containsString(question.Choices, text) {
+				return nil, fmt.Errorf("answer for question %q is not one of the declared choices", question.ID)
+			}
+		}
+	}
+	for id, value := range answers {
+		if _, ok := byID[id]; !ok {
+			return nil, fmt.Errorf("answer references unknown question %q", id)
+		}
+		if err := validateAnswerScalar(value); err != nil {
+			return nil, fmt.Errorf("answer for question %q: %w", id, err)
+		}
+	}
+	encoded, err := json.Marshal(struct {
+		Attempt   int                      `json:"attempt"`
+		Questions []workflow.InputQuestion `json:"questions"`
+		Answers   map[string]any           `json:"answers"`
+	}{Attempt: attempt, Questions: questions, Answers: answers})
+	if err != nil {
+		return nil, fmt.Errorf("encode input answers: %w", err)
+	}
+	return encoded, nil
+}
+
+func validateAnswerScalar(value any) error {
+	switch value.(type) {
+	case string, bool, json.Number, float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return nil
+	default:
+		return fmt.Errorf("value must be a string, number, or boolean")
+	}
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) resetDownstream(run *WorkflowSnapshot, target string) error {

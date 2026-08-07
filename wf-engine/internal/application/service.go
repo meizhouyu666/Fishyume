@@ -1,0 +1,686 @@
+package application
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"wf.local/wf-engine/internal/run"
+	"wf.local/wf-engine/internal/workflow"
+)
+
+type Core interface {
+	DriverCapabilityReports(context.Context, string) []run.DriverCapabilityReport
+	StartWorkflow(context.Context, run.StartWorkflowRequest) (run.WorkflowSnapshot, error)
+	Status(string) (run.StatusView, error)
+	Resume(context.Context, run.ResumeRequest) (run.WorkflowSnapshot, error)
+	Cancel(context.Context, string) (run.WorkflowSnapshot, error)
+	ListRunIDs() ([]string, error)
+	ReadEvents(string) ([]run.WorkflowEvent, error)
+	ReadAttempt(string, string, int) (run.AttemptSnapshot, error)
+	AddEventSink(run.EventSink) func()
+}
+
+type Service struct {
+	core          Core
+	defaultDriver string
+	mutationMu    sync.Mutex
+}
+
+func NewService(core Core, defaultDriver string) *Service {
+	defaultDriver = strings.TrimSpace(defaultDriver)
+	if defaultDriver == "" {
+		defaultDriver = "codex"
+	}
+	return &Service{core: core, defaultDriver: defaultDriver}
+}
+
+func (s *Service) SystemCapabilities(ctx context.Context, request SystemCapabilitiesRequest) (SystemCapabilitiesResponse, *Error) {
+	reports := s.core.DriverCapabilityReports(ctx, strings.TrimSpace(request.Project))
+	drivers := make([]DriverCapability, 0, len(reports))
+	for _, report := range reports {
+		targets := append([]string(nil), report.Targets...)
+		sort.Strings(targets)
+		drivers = append(drivers, DriverCapability{Driver: report.Driver, Targets: targets, Ready: report.Ready, Diagnostic: report.Diagnostic, MaxConcurrentAgents: report.MaxConcurrentAgents, SupportsConcurrentCancel: report.SupportsConcurrentCancel})
+	}
+	sort.Slice(drivers, func(i, j int) bool { return drivers[i].Driver < drivers[j].Driver })
+	response := SystemCapabilitiesResponse{APIVersion: APIVersion, WorkflowSchemaVersion: WorkflowSchemaVersion, WorkflowSchema: append(json.RawMessage(nil), WorkflowJSONSchema...), NodeTypes: []string{"agent", "approval"}, ActionTypes: []ActionType{ActionApprove, ActionReject, ActionAnswer, ActionRetry, ActionCancel}, Drivers: drivers, Limits: StableLimits(), ErrorCodes: append([]ErrorCode(nil), StableErrorCodes...), MinimalExample: append(json.RawMessage(nil), MinimalWorkflowExample...)}
+	if err := ensureResponseBound(response, MaxSchemaResponseBytes); err != nil {
+		return SystemCapabilitiesResponse{}, internalError(err)
+	}
+	return response, nil
+}
+
+func (s *Service) WorkflowValidate(ctx context.Context, request WorkflowValidateRequest) (WorkflowValidateResponse, *Error) {
+	response := WorkflowValidateResponse{APIVersion: APIVersion, WorkflowSchemaVersion: WorkflowSchemaVersion, Issues: []ValidationIssue{}, CapabilityGaps: []ValidationIssue{}, Warnings: []string{}}
+	normalized, issues := parseWorkflow(request.Workflow, request.Inputs)
+	if len(issues) > 0 {
+		response.Issues = issues
+		return response, nil
+	}
+	response.Warnings = append(response.Warnings, normalized.Warnings...)
+	response.CapabilityGaps = s.capabilityGaps(ctx, strings.TrimSpace(request.Project), normalized, request.Driver, request.Target)
+	response.Valid = len(response.Issues) == 0
+	if err := ensureResponseBound(response, MaxSchemaResponseBytes); err != nil {
+		return WorkflowValidateResponse{}, internalError(err)
+	}
+	return response, nil
+}
+
+func (s *Service) WorkflowExplain(ctx context.Context, request WorkflowExplainRequest) (WorkflowExplainResponse, *Error) {
+	normalized, issues := parseWorkflow(request.Workflow, request.Inputs)
+	if len(issues) > 0 {
+		return WorkflowExplainResponse{}, NewError(CodeInvalidWorkflow, "workflow is invalid", map[string]any{"issues": issues})
+	}
+	layers := make([][]string, 0)
+	levels := make(map[string]int, len(normalized.TopologicalOrder))
+	nodes := make([]ExplainNode, 0, len(normalized.TopologicalOrder))
+	for _, nodeID := range normalized.TopologicalOrder {
+		definition := normalized.Document.Nodes[nodeID]
+		level := 0
+		for _, dependency := range definition.DependsOn {
+			if levels[dependency]+1 > level {
+				level = levels[dependency] + 1
+			}
+		}
+		levels[nodeID] = level
+		for len(layers) <= level {
+			layers = append(layers, []string{})
+		}
+		layers[level] = append(layers[level], nodeID)
+		contextSources := orderedAncestors(normalized, nodeID)
+		node := ExplainNode{ID: nodeID, Type: definition.Type, DependsOn: append([]string(nil), definition.DependsOn...), ParallelLayer: level, ContextSources: contextSources}
+		if definition.Type == "approval" {
+			node.ApprovalPrompt = definition.Prompt
+		} else {
+			driver, target, err := resolvedSelection(normalized, definition, request.Driver, request.Target, s.defaultDriver)
+			if err != nil {
+				return WorkflowExplainResponse{}, NewError(CodeInvalidWorkflow, "workflow agent selection is invalid", map[string]any{"path": "$.nodes." + nodeID + ".agent", "detail": err.Error()})
+			}
+			node.Agent = &ResolvedAgent{Driver: driver, Target: target}
+		}
+		if definition.When != nil {
+			condition, err := json.Marshal(definition.When)
+			if err != nil {
+				return WorkflowExplainResponse{}, internalError(err)
+			}
+			node.Condition = condition
+		}
+		nodes = append(nodes, node)
+	}
+	response := WorkflowExplainResponse{APIVersion: APIVersion, WorkflowSchemaVersion: WorkflowSchemaVersion, Name: normalized.Document.Name, TopologicalOrder: append([]string(nil), normalized.TopologicalOrder...), ParallelLayers: layers, Nodes: nodes, CapabilityGaps: s.capabilityGaps(ctx, strings.TrimSpace(request.Project), normalized, request.Driver, request.Target), Warnings: append([]string(nil), normalized.Warnings...)}
+	if err := ensureResponseBound(response, MaxResponseBytes); err != nil {
+		return WorkflowExplainResponse{}, internalError(err)
+	}
+	return response, nil
+}
+
+func (s *Service) RunStart(ctx context.Context, request RunStartRequest) (RunStartResponse, *Error) {
+	if err := validateExternalID("clientRequestId", request.ClientRequestID); err != nil {
+		return RunStartResponse{}, err
+	}
+	project := strings.TrimSpace(request.Project)
+	if project == "" {
+		return RunStartResponse{}, NewError(CodeInvalidArgument, "project is required", map[string]any{"path": "$.project"})
+	}
+	normalized, issues := parseWorkflow(request.Workflow, request.Inputs)
+	if len(issues) > 0 {
+		return RunStartResponse{}, NewError(CodeInvalidWorkflow, "workflow is invalid", map[string]any{"issues": issues})
+	}
+	if gaps := s.capabilityGaps(ctx, project, normalized, request.Driver, request.Target); len(gaps) > 0 {
+		return RunStartResponse{}, NewError(CodeCapabilityUnavailable, "workflow requires unavailable driver capabilities", map[string]any{"gaps": gaps})
+	}
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+	snapshot, err := s.core.StartWorkflow(ctx, run.StartWorkflowRequest{Project: project, Driver: strings.TrimSpace(request.Driver), Target: strings.TrimSpace(request.Target), Normalized: &normalized, Inputs: request.Inputs})
+	if err != nil {
+		return RunStartResponse{}, mapCoreError(err, "could not start run")
+	}
+	return RunStartResponse{APIVersion: APIVersion, RunID: snapshot.ID, StateVersion: snapshot.StateVersion, Attach: "fishyume attach " + snapshot.ID}, nil
+}
+
+func (s *Service) RunList(_ context.Context, request RunListRequest) (RunListResponse, *Error) {
+	limit, appErr := boundedLimit(request.Limit, DefaultListLimit, MaxListLimit, "limit")
+	if appErr != nil {
+		return RunListResponse{}, appErr
+	}
+	cursor, appErr := decodeCursor(request.Cursor)
+	if appErr != nil {
+		return RunListResponse{}, appErr
+	}
+	ids, err := s.core.ListRunIDs()
+	if err != nil {
+		return RunListResponse{}, mapCoreError(err, "could not list runs")
+	}
+	items := make([]RunSummary, 0, len(ids))
+	for _, id := range ids {
+		view, statusErr := s.core.Status(id)
+		if statusErr != nil || view.Legacy || view.Run == nil {
+			continue
+		}
+		item := summarizeRun(*view.Run)
+		if request.Filter.Project != "" && item.Project != request.Filter.Project || request.Filter.Phase != "" && item.Phase != request.Filter.Phase || request.Filter.Conclusion != "" && item.Conclusion != request.Filter.Conclusion {
+			continue
+		}
+		items = append(items, item)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].CreatedAt != items[j].CreatedAt {
+			return items[i].CreatedAt > items[j].CreatedAt
+		}
+		return items[i].RunID < items[j].RunID
+	})
+	start := 0
+	if cursor != "" {
+		start = -1
+		for index := range items {
+			if items[index].RunID == cursor {
+				start = index + 1
+				break
+			}
+		}
+		if start < 0 {
+			return RunListResponse{}, NewError(CodeInvalidArgument, "cursor does not identify a run in the filtered result", map[string]any{"path": "$.cursor"})
+		}
+	}
+	items = items[start:]
+	more := len(items) > limit
+	if more {
+		items = items[:limit]
+	}
+	response := RunListResponse{APIVersion: APIVersion, Items: items}
+	for len(response.Items) > 0 {
+		if err := ensureResponseBound(response, MaxResponseBytes); err == nil {
+			break
+		}
+		more = true
+		response.Items = response.Items[:len(response.Items)-1]
+	}
+	if more && len(response.Items) > 0 {
+		response.NextCursor = encodeCursor(response.Items[len(response.Items)-1].RunID)
+	}
+	return response, nil
+}
+
+func (s *Service) RunGet(_ context.Context, request RunGetRequest) (RunGetResponse, *Error) {
+	if strings.TrimSpace(request.RunID) == "" {
+		return RunGetResponse{}, NewError(CodeInvalidArgument, "runId is required", map[string]any{"path": "$.runId"})
+	}
+	view, err := s.core.Status(request.RunID)
+	if err != nil {
+		return RunGetResponse{}, mapCoreError(err, "run not found")
+	}
+	if view.Legacy || view.Run == nil {
+		return RunGetResponse{}, NewError(CodeCapabilityUnavailable, "legacy run is available only through compatibility status", map[string]any{"runId": request.RunID})
+	}
+	result := RunGetResponse{APIVersion: APIVersion, Run: s.mapRunView(view)}
+	if err := ensureResponseBound(result, MaxResponseBytes); err != nil {
+		return RunGetResponse{}, internalError(err)
+	}
+	return result, nil
+}
+
+func (s *Service) RunEvents(ctx context.Context, request RunEventsRequest) (RunEventsResponse, *Error) {
+	if strings.TrimSpace(request.RunID) == "" {
+		return RunEventsResponse{}, NewError(CodeInvalidArgument, "runId is required", map[string]any{"path": "$.runId"})
+	}
+	limit, appErr := boundedLimit(request.Limit, DefaultEventLimit, MaxEventLimit, "limit")
+	if appErr != nil {
+		return RunEventsResponse{}, appErr
+	}
+	if request.WaitMS < 0 || request.WaitMS > MaxEventWaitMS {
+		return RunEventsResponse{}, NewError(CodeInvalidArgument, fmt.Sprintf("waitMs must be between 0 and %d", MaxEventWaitMS), map[string]any{"path": "$.waitMs", "max": MaxEventWaitMS})
+	}
+	if _, err := s.core.Status(request.RunID); err != nil {
+		return RunEventsResponse{}, mapCoreError(err, "run not found")
+	}
+	wake := make(chan struct{}, 1)
+	unsubscribe := s.core.AddEventSink(func(event run.WorkflowEvent) {
+		if event.RunID == request.RunID && event.Sequence > request.AfterSequence {
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+		}
+	})
+	defer unsubscribe()
+	response, err := s.readEvents(request.RunID, request.AfterSequence, limit)
+	if err != nil {
+		return RunEventsResponse{}, mapCoreError(err, "could not read run events")
+	}
+	if len(response.Events) == 0 && request.WaitMS > 0 {
+		timer := time.NewTimer(time.Duration(request.WaitMS) * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return RunEventsResponse{}, NewError(CodeInternal, "event wait was cancelled", map[string]any{"detail": ctx.Err().Error()})
+		case <-timer.C:
+		case <-wake:
+		}
+		response, err = s.readEvents(request.RunID, request.AfterSequence, limit)
+		if err != nil {
+			return RunEventsResponse{}, mapCoreError(err, "could not read run events")
+		}
+	}
+	return response, nil
+}
+
+func (s *Service) RunAction(ctx context.Context, request RunActionRequest) (RunActionResponse, *Error) {
+	if err := validateExternalID("actionId", request.ActionID); err != nil {
+		return RunActionResponse{}, err
+	}
+	if strings.TrimSpace(request.RunID) == "" {
+		return RunActionResponse{}, NewError(CodeInvalidArgument, "runId is required", map[string]any{"path": "$.runId"})
+	}
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+	view, err := s.core.Status(request.RunID)
+	if err != nil {
+		return RunActionResponse{}, mapCoreError(err, "run not found")
+	}
+	if view.Legacy || view.Run == nil {
+		return RunActionResponse{}, NewError(CodeCapabilityUnavailable, "legacy run does not support Agent-native actions", map[string]any{"runId": request.RunID})
+	}
+	current := view.Run
+	if request.ExpectedStateVersion == 0 {
+		return RunActionResponse{}, NewError(CodeInvalidArgument, "expectedStateVersion is required", map[string]any{"path": "$.expectedStateVersion"})
+	}
+	if current.StateVersion != request.ExpectedStateVersion {
+		return RunActionResponse{}, conflictError("state version conflict", map[string]any{"expectedStateVersion": request.ExpectedStateVersion, "currentStateVersion": current.StateVersion})
+	}
+	if appErr := validateActionShape(request, view); appErr != nil {
+		return RunActionResponse{}, appErr
+	}
+	var snapshot run.WorkflowSnapshot
+	if request.Type == ActionCancel {
+		snapshot, err = s.core.Cancel(ctx, request.RunID)
+	} else {
+		expected := request.ExpectedStateVersion
+		snapshot, err = s.core.Resume(ctx, run.ResumeRequest{RunID: request.RunID, ExpectedStateVersion: &expected, Action: &run.ResumeAction{Type: string(request.Type), NodeID: request.NodeID, ExpectedAttempt: request.ExpectedAttempt, Reason: request.Reason, Answers: request.Answers, AcknowledgeDuplicateRisk: request.AcknowledgeDuplicateRisk}})
+	}
+	if err != nil {
+		return RunActionResponse{}, mapActionError(err)
+	}
+	return RunActionResponse{APIVersion: APIVersion, ActionID: request.ActionID, RunID: request.RunID, Type: request.Type, StateVersion: snapshot.StateVersion, Phase: string(snapshot.Phase), Conclusion: string(snapshot.Conclusion)}, nil
+}
+
+func (s *Service) RunResult(_ context.Context, request RunResultRequest) (RunResultResponse, *Error) {
+	view, err := s.core.Status(request.RunID)
+	if err != nil {
+		return RunResultResponse{}, mapCoreError(err, "run not found")
+	}
+	if view.Legacy || view.Run == nil {
+		return RunResultResponse{}, NewError(CodeCapabilityUnavailable, "legacy run has no Agent-native result", map[string]any{"runId": request.RunID})
+	}
+	if view.Run.Phase != run.PhaseCompleted {
+		return RunResultResponse{}, NewError(CodeNotReady, "run result is not ready", map[string]any{"runId": request.RunID, "phase": view.Run.Phase})
+	}
+	results := make([]NodeResult, 0, len(view.Nodes))
+	for _, nodeID := range view.Run.TopologicalOrder {
+		for _, node := range view.Nodes {
+			if node.ID == nodeID {
+				results = append(results, NodeResult{NodeID: node.ID, Conclusion: string(node.Conclusion), Result: mapResult(node.Result)})
+				break
+			}
+		}
+	}
+	response := RunResultResponse{APIVersion: APIVersion, RunID: view.Run.ID, Conclusion: string(view.Run.Conclusion), Summary: view.Run.Summary, Results: results, CompletedAt: formatTime(view.Run.UpdatedAt)}
+	if err := ensureResponseBound(response, MaxResponseBytes); err != nil {
+		return RunResultResponse{}, internalError(err)
+	}
+	return response, nil
+}
+
+func parseWorkflow(input WorkflowInput, inputs map[string]any) (workflow.Normalized, []ValidationIssue) {
+	if (input.Source == nil) == (len(input.Document) == 0) {
+		return workflow.Normalized{}, []ValidationIssue{{Kind: "static", Path: "$.workflow", Code: "exactly_one", Message: "provide exactly one of workflow.source or workflow.document"}}
+	}
+	var data []byte
+	filename := "workflow.json"
+	if input.Source != nil {
+		filename = strings.TrimSpace(input.Source.Filename)
+		if filename == "" {
+			filename = "workflow.yaml"
+		}
+		data = []byte(input.Source.Content)
+		if len(data) == 0 {
+			return workflow.Normalized{}, []ValidationIssue{{Kind: "static", Path: "$.workflow.source.content", Code: "required", Message: "workflow source content is required"}}
+		}
+	} else {
+		data = input.Document
+		if !json.Valid(data) {
+			return workflow.Normalized{}, []ValidationIssue{{Kind: "static", Path: "$.workflow.document", Code: "invalid_json", Message: "workflow document must be valid JSON"}}
+		}
+	}
+	normalized, err := workflow.Parse(data, filename, inputs)
+	if err != nil {
+		return workflow.Normalized{}, []ValidationIssue{{Kind: "static", Path: "$", Code: classifyWorkflowError(err), Message: err.Error()}}
+	}
+	for _, warning := range normalized.Warnings {
+		if strings.Contains(warning, "deprecated") {
+			return workflow.Normalized{}, []ValidationIssue{{Kind: "static", Path: "$", Code: "legacy_field", Message: "Agent-native workflows must use driver/target fields"}}
+		}
+	}
+	return normalized, nil
+}
+
+func classifyWorkflowError(err error) string {
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "decode workflow") || strings.Contains(message, "YAML"):
+		return "syntax"
+	case strings.Contains(message, "apiVersion"):
+		return "api_version"
+	case strings.Contains(message, "cycle"):
+		return "dependency_cycle"
+	case strings.Contains(message, "input"):
+		return "input"
+	default:
+		return "structure"
+	}
+}
+
+func (s *Service) capabilityGaps(ctx context.Context, project string, normalized workflow.Normalized, driverOverride, targetOverride string) []ValidationIssue {
+	reports := s.core.DriverCapabilityReports(ctx, project)
+	byName := make(map[string]run.DriverCapabilityReport, len(reports))
+	for _, report := range reports {
+		byName[report.Driver] = report
+	}
+	gaps := make([]ValidationIssue, 0)
+	for _, nodeID := range normalized.TopologicalOrder {
+		definition := normalized.Document.Nodes[nodeID]
+		if definition.Type != "agent" {
+			continue
+		}
+		driver, target, err := resolvedSelection(normalized, definition, driverOverride, targetOverride, s.defaultDriver)
+		if err != nil {
+			gaps = append(gaps, ValidationIssue{Kind: "capability", Path: "$.nodes." + nodeID + ".agent", Code: "selection", Message: err.Error()})
+			continue
+		}
+		report, ok := byName[driver]
+		if !ok {
+			gaps = append(gaps, ValidationIssue{Kind: "capability", Path: "$.nodes." + nodeID + ".agent.driver", Code: "driver_unavailable", Message: fmt.Sprintf("driver %q is unavailable", driver)})
+			continue
+		}
+		if !contains(report.Targets, target) {
+			gaps = append(gaps, ValidationIssue{Kind: "capability", Path: "$.nodes." + nodeID + ".agent.target", Code: "target_unavailable", Message: fmt.Sprintf("driver %q does not support target %q", driver, target)})
+		}
+		if !report.Ready {
+			gaps = append(gaps, ValidationIssue{Kind: "capability", Path: "$.nodes." + nodeID + ".agent.driver", Code: "driver_not_ready", Message: report.Diagnostic})
+		}
+	}
+	return gaps
+}
+
+func resolvedSelection(normalized workflow.Normalized, node workflow.Node, driverOverride, targetOverride, defaultDriver string) (string, string, error) {
+	driver, target, err := workflow.ResolveAgent(normalized.Document.Defaults, node)
+	if err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(driverOverride) != "" {
+		driver = strings.TrimSpace(driverOverride)
+	}
+	if driver == "" {
+		driver = defaultDriver
+	}
+	if strings.TrimSpace(targetOverride) != "" {
+		target = strings.TrimSpace(targetOverride)
+	}
+	if target == "" {
+		target = "local"
+	}
+	return driver, target, nil
+}
+
+func orderedAncestors(normalized workflow.Normalized, nodeID string) []string {
+	seen := map[string]bool{}
+	var visit func(string)
+	visit = func(id string) {
+		for _, dependency := range normalized.Document.Nodes[id].DependsOn {
+			if !seen[dependency] {
+				seen[dependency] = true
+				visit(dependency)
+			}
+		}
+	}
+	visit(nodeID)
+	result := make([]string, 0, len(seen))
+	for _, id := range normalized.TopologicalOrder {
+		if seen[id] {
+			result = append(result, id)
+		}
+	}
+	return result
+}
+
+func (s *Service) mapRunView(view run.StatusView) RunView {
+	snapshot := *view.Run
+	result := RunView{RunSummary: summarizeRun(snapshot), Summary: snapshot.Summary, CancelRequested: snapshot.CancelRequested, EffectiveConcurrency: snapshot.EffectiveConcurrency, TopologicalOrder: append([]string(nil), snapshot.TopologicalOrder...), Nodes: make([]NodeView, 0, len(view.Nodes)), DeprecationWarnings: append([]string(nil), snapshot.DeprecationWarnings...)}
+	for _, nodeID := range snapshot.TopologicalOrder {
+		for _, node := range view.Nodes {
+			if node.ID != nodeID {
+				continue
+			}
+			mapped := NodeView{NodeID: node.ID, Type: node.Type, Phase: string(node.Phase), Conclusion: string(node.Conclusion), Reason: string(node.Reason), Diagnostic: node.Diagnostic, CurrentAttempt: node.CurrentAttempt, Result: mapResult(node.Result)}
+			if node.CurrentAttempt > 0 {
+				if attempt, err := s.core.ReadAttempt(snapshot.ID, node.ID, node.CurrentAttempt); err == nil {
+					mapped.Attempt = &AttemptView{Number: attempt.Number, Phase: string(attempt.Phase), Conclusion: string(attempt.Conclusion), Reason: string(attempt.Reason), Driver: runAttemptDriver(attempt), Target: runAttemptTarget(attempt), ContextHash: attempt.ContextHash, StartedAt: formatTime(attempt.StartedAt), UpdatedAt: formatTime(attempt.UpdatedAt)}
+					if attempt.CompletedAt != nil {
+						mapped.Attempt.CompletedAt = formatTime(*attempt.CompletedAt)
+					}
+				}
+			}
+			result.Nodes = append(result.Nodes, mapped)
+			break
+		}
+	}
+	return result
+}
+
+func summarizeRun(snapshot run.WorkflowSnapshot) RunSummary {
+	return RunSummary{RunID: snapshot.ID, WorkflowName: snapshot.WorkflowName, Project: snapshot.Project, Driver: snapshot.ResolvedDriver, Target: snapshot.ResolvedTarget, Phase: string(snapshot.Phase), Conclusion: string(snapshot.Conclusion), StateVersion: snapshot.StateVersion, CreatedAt: formatTime(snapshot.CreatedAt), UpdatedAt: formatTime(snapshot.UpdatedAt)}
+}
+
+func runAttemptDriver(attempt run.AttemptSnapshot) string {
+	if attempt.ResolvedDriver != "" {
+		return attempt.ResolvedDriver
+	}
+	return attempt.Backend
+}
+
+func runAttemptTarget(attempt run.AttemptSnapshot) string {
+	if attempt.ResolvedTarget != "" {
+		return attempt.ResolvedTarget
+	}
+	return "local"
+}
+
+func mapResult(result *workflow.Result) *Result {
+	if result == nil {
+		return nil
+	}
+	questions := make([]Question, len(result.Questions))
+	for index, question := range result.Questions {
+		questions[index] = Question{ID: question.ID, Prompt: question.Prompt, Choices: append([]string(nil), question.Choices...), Required: question.Required}
+	}
+	return &Result{Summary: result.Summary, Artifacts: nonNil(result.Artifacts), Warnings: nonNil(result.Warnings), Checks: nonNil(result.Checks), Questions: questions, Decision: result.Decision, Reason: result.Reason, Usage: map[string]int{"inputTokensEstimated": result.Usage.InputTokensEstimated, "outputTokensEstimated": result.Usage.OutputTokensEstimated}}
+}
+
+func nonNil(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return append([]string(nil), values...)
+}
+
+func (s *Service) readEvents(runID string, after uint64, limit int) (RunEventsResponse, error) {
+	persisted, err := s.core.ReadEvents(runID)
+	if err != nil {
+		return RunEventsResponse{}, err
+	}
+	available := make([]Event, 0)
+	for _, event := range persisted {
+		if event.Sequence <= after {
+			continue
+		}
+		available = append(available, Event{RunID: event.RunID, Sequence: event.Sequence, Type: event.Type, Phase: string(event.Phase), Conclusion: string(event.Conclusion), Reason: string(event.Reason), NodeID: event.NodeID, NodePhase: string(event.NodePhase), Message: event.Message, Timestamp: formatTime(event.Timestamp)})
+	}
+	more := len(available) > limit
+	if more {
+		available = available[:limit]
+	}
+	response := RunEventsResponse{APIVersion: APIVersion, RunID: runID, Events: available, NextAfterSequence: after, More: more}
+	for len(response.Events) > 0 {
+		response.NextAfterSequence = response.Events[len(response.Events)-1].Sequence
+		if err := ensureResponseBound(response, MaxResponseBytes); err == nil {
+			break
+		}
+		response.More = true
+		response.Events = response.Events[:len(response.Events)-1]
+	}
+	return response, nil
+}
+
+func validateActionShape(request RunActionRequest, view run.StatusView) *Error {
+	validType := request.Type == ActionApprove || request.Type == ActionReject || request.Type == ActionAnswer || request.Type == ActionRetry || request.Type == ActionCancel
+	if !validType {
+		return NewError(CodeInvalidArgument, "unsupported action type", map[string]any{"path": "$.type", "value": request.Type})
+	}
+	if request.Type == ActionCancel {
+		if request.NodeID != "" || request.ExpectedAttempt != nil || request.Reason != "" || len(request.Answers) > 0 || request.AcknowledgeDuplicateRisk {
+			return NewError(CodeInvalidArgument, "cancel action does not accept node fields", map[string]any{"path": "$"})
+		}
+		return nil
+	}
+	if request.NodeID == "" {
+		return NewError(CodeInvalidArgument, "nodeId is required for node action", map[string]any{"path": "$.nodeId"})
+	}
+	var node *run.NodeSnapshot
+	for index := range view.Nodes {
+		if view.Nodes[index].ID == request.NodeID {
+			node = &view.Nodes[index]
+			break
+		}
+	}
+	if node == nil {
+		return NewError(CodeNotFound, "node not found", map[string]any{"nodeId": request.NodeID})
+	}
+	if request.Type == ActionAnswer || request.Type == ActionRetry {
+		if request.ExpectedAttempt == nil || *request.ExpectedAttempt < 1 {
+			return NewError(CodeInvalidArgument, "expectedAttempt is required for answer and retry", map[string]any{"path": "$.expectedAttempt"})
+		}
+		if node.CurrentAttempt != *request.ExpectedAttempt {
+			return conflictError("attempt conflict", map[string]any{"expectedAttempt": *request.ExpectedAttempt, "currentAttempt": node.CurrentAttempt})
+		}
+	} else if request.ExpectedAttempt != nil {
+		return NewError(CodeInvalidArgument, "approval actions do not accept expectedAttempt", map[string]any{"path": "$.expectedAttempt"})
+	}
+	if request.Type != ActionReject && request.Reason != "" {
+		return NewError(CodeInvalidArgument, "reason is accepted only by reject", map[string]any{"path": "$.reason"})
+	}
+	if request.Type != ActionAnswer && len(request.Answers) > 0 {
+		return NewError(CodeInvalidArgument, "answers are accepted only by answer", map[string]any{"path": "$.answers"})
+	}
+	if request.Type != ActionRetry && request.AcknowledgeDuplicateRisk {
+		return NewError(CodeInvalidArgument, "acknowledgeDuplicateRisk is accepted only by retry", map[string]any{"path": "$.acknowledgeDuplicateRisk"})
+	}
+	return nil
+}
+
+func boundedLimit(value, defaultValue, maximum int, path string) (int, *Error) {
+	if value == 0 {
+		return defaultValue, nil
+	}
+	if value < 1 || value > maximum {
+		return 0, NewError(CodeInvalidArgument, fmt.Sprintf("%s must be between 1 and %d", path, maximum), map[string]any{"path": "$." + path, "max": maximum})
+	}
+	return value, nil
+}
+
+func validateExternalID(name, value string) *Error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return NewError(CodeInvalidArgument, name+" is required", map[string]any{"path": "$." + name})
+	}
+	if len([]byte(value)) > MaxRequestIDBytes {
+		return NewError(CodeInvalidArgument, fmt.Sprintf("%s exceeds %d bytes", name, MaxRequestIDBytes), map[string]any{"path": "$." + name, "maxBytes": MaxRequestIDBytes})
+	}
+	return nil
+}
+
+func encodeCursor(runID string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(runID))
+}
+
+func decodeCursor(cursor string) (string, *Error) {
+	if cursor == "" {
+		return "", nil
+	}
+	data, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil || len(data) == 0 || len(data) > 128 {
+		return "", NewError(CodeInvalidArgument, "cursor is invalid", map[string]any{"path": "$.cursor"})
+	}
+	return string(data), nil
+}
+
+func ensureResponseBound(value any, maximum int) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if len(data) > maximum {
+		return fmt.Errorf("response exceeds %d bytes", maximum)
+	}
+	return nil
+}
+
+func mapActionError(err error) *Error {
+	message := err.Error()
+	if strings.Contains(message, "conflict") || strings.Contains(message, "already has conflicting") {
+		return conflictError("action no longer applies", map[string]any{"detail": message})
+	}
+	if strings.Contains(message, "not waiting") || strings.Contains(message, "not in a retryable") || strings.Contains(message, "not the current") {
+		return conflictError("action no longer applies", map[string]any{"detail": message})
+	}
+	if strings.Contains(message, "answer") || strings.Contains(message, "action") {
+		return NewError(CodeInvalidArgument, "action payload is invalid", map[string]any{"detail": message})
+	}
+	return mapCoreError(err, "could not apply action")
+}
+
+func mapCoreError(err error, message string) *Error {
+	if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") || strings.Contains(err.Error(), "cannot find the file") {
+		return NewError(CodeNotFound, message, nil)
+	}
+	if strings.Contains(err.Error(), "not ready") || strings.Contains(err.Error(), "is not ready") {
+		return NewError(CodeCapabilityUnavailable, message, map[string]any{"detail": err.Error()})
+	}
+	if strings.Contains(err.Error(), "conflict") {
+		return conflictError(message, map[string]any{"detail": err.Error()})
+	}
+	return NewError(CodeInternal, message, map[string]any{"detail": err.Error()})
+}
+
+func conflictError(message string, data map[string]any) *Error {
+	return NewError(CodeConflict, message, data)
+}
+
+func internalError(err error) *Error {
+	return NewError(CodeInternal, "internal application error", map[string]any{"detail": err.Error()})
+}
+
+func contains(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}

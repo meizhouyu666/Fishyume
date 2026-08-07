@@ -1,0 +1,224 @@
+package application
+
+import (
+	"context"
+	"encoding/json"
+	"reflect"
+	"sync"
+	"testing"
+	"time"
+
+	"wf.local/wf-engine/internal/run"
+	"wf.local/wf-engine/internal/workflow"
+)
+
+type fakeCore struct {
+	mu        sync.Mutex
+	reports   []run.DriverCapabilityReport
+	views     map[string]run.StatusView
+	events    map[string][]run.WorkflowEvent
+	attempts  map[string]run.AttemptSnapshot
+	sinks     map[int]run.EventSink
+	nextSink  int
+	started   run.StartWorkflowRequest
+	resumed   run.ResumeRequest
+	cancelled string
+}
+
+func (f *fakeCore) DriverCapabilityReports(context.Context, string) []run.DriverCapabilityReport {
+	return append([]run.DriverCapabilityReport(nil), f.reports...)
+}
+func (f *fakeCore) StartWorkflow(_ context.Context, request run.StartWorkflowRequest) (run.WorkflowSnapshot, error) {
+	f.started = request
+	return run.WorkflowSnapshot{ID: "run-started", StateVersion: 1}, nil
+}
+func (f *fakeCore) Status(id string) (run.StatusView, error) {
+	view, ok := f.views[id]
+	if !ok {
+		return run.StatusView{}, &missingError{}
+	}
+	return view, nil
+}
+func (f *fakeCore) Resume(_ context.Context, request run.ResumeRequest) (run.WorkflowSnapshot, error) {
+	f.resumed = request
+	view := f.views[request.RunID]
+	snapshot := *view.Run
+	snapshot.StateVersion++
+	snapshot.Phase = run.PhaseRunning
+	return snapshot, nil
+}
+func (f *fakeCore) Cancel(_ context.Context, id string) (run.WorkflowSnapshot, error) {
+	f.cancelled = id
+	view := f.views[id]
+	snapshot := *view.Run
+	snapshot.StateVersion++
+	snapshot.Phase, snapshot.Conclusion = run.PhaseCompleted, run.ConclusionCancelled
+	return snapshot, nil
+}
+func (f *fakeCore) ListRunIDs() ([]string, error) {
+	ids := make([]string, 0, len(f.views))
+	for id := range f.views {
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+func (f *fakeCore) ReadEvents(id string) ([]run.WorkflowEvent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]run.WorkflowEvent(nil), f.events[id]...), nil
+}
+func (f *fakeCore) ReadAttempt(runID, nodeID string, number int) (run.AttemptSnapshot, error) {
+	return f.attempts[runID+"/"+nodeID], nil
+}
+func (f *fakeCore) AddEventSink(sink run.EventSink) func() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.sinks == nil {
+		f.sinks = map[int]run.EventSink{}
+	}
+	f.nextSink++
+	id := f.nextSink
+	f.sinks[id] = sink
+	return func() {
+		f.mu.Lock()
+		delete(f.sinks, id)
+		f.mu.Unlock()
+	}
+}
+func (f *fakeCore) appendEvent(event run.WorkflowEvent) {
+	f.mu.Lock()
+	f.events[event.RunID] = append(f.events[event.RunID], event)
+	sinks := make([]run.EventSink, 0, len(f.sinks))
+	for _, sink := range f.sinks {
+		sinks = append(sinks, sink)
+	}
+	f.mu.Unlock()
+	for _, sink := range sinks {
+		sink(event)
+	}
+}
+
+type missingError struct{}
+
+func (*missingError) Error() string { return "run not found" }
+
+func TestWorkflowAuthoringApplicationAPI(t *testing.T) {
+	core := newFakeCore()
+	service := NewService(core, "codex")
+	capabilities, appErr := service.SystemCapabilities(context.Background(), SystemCapabilitiesRequest{Project: "project"})
+	if appErr != nil {
+		t.Fatal(appErr)
+	}
+	if len(capabilities.Drivers) != 1 || capabilities.Drivers[0].Driver != "codex" || !reflect.DeepEqual(capabilities.ActionTypes, []ActionType{ActionApprove, ActionReject, ActionAnswer, ActionRetry, ActionCancel}) {
+		t.Fatalf("unexpected capabilities: %+v", capabilities)
+	}
+	request := WorkflowValidateRequest{Project: "project", Workflow: WorkflowInput{Document: validWorkflowDocument()}, Inputs: map[string]any{}}
+	validated, appErr := service.WorkflowValidate(context.Background(), request)
+	if appErr != nil || !validated.Valid || len(validated.Issues) != 0 || len(validated.CapabilityGaps) != 0 {
+		t.Fatalf("validate = %+v, error = %v", validated, appErr)
+	}
+	explained, appErr := service.WorkflowExplain(context.Background(), request)
+	if appErr != nil {
+		t.Fatal(appErr)
+	}
+	if !reflect.DeepEqual(explained.TopologicalOrder, []string{"plan", "approve"}) || !reflect.DeepEqual(explained.ParallelLayers, [][]string{{"plan"}, {"approve"}}) || explained.Nodes[0].Agent == nil || explained.Nodes[0].Agent.Driver != "codex" {
+		t.Fatalf("unexpected explanation: %+v", explained)
+	}
+	invalid := request
+	invalid.Workflow = WorkflowInput{Document: json.RawMessage(`{"apiVersion":"fishyume/v1"}`)}
+	validated, appErr = service.WorkflowValidate(context.Background(), invalid)
+	if appErr != nil || validated.Valid || len(validated.Issues) != 1 || validated.Issues[0].Path != "$" {
+		t.Fatalf("invalid validate = %+v, error = %v", validated, appErr)
+	}
+}
+
+func TestRunApplicationQueriesActionsAndResult(t *testing.T) {
+	core := newFakeCore()
+	service := NewService(core, "codex")
+	started, appErr := service.RunStart(context.Background(), RunStartRequest{Project: "project", Workflow: WorkflowInput{Document: validWorkflowDocument()}, ClientRequestID: "request-1"})
+	if appErr != nil || started.RunID != "run-started" || core.started.Normalized == nil {
+		t.Fatalf("start = %+v, error = %v, request = %+v", started, appErr, core.started)
+	}
+	listed, appErr := service.RunList(context.Background(), RunListRequest{Limit: 1})
+	if appErr != nil || len(listed.Items) != 1 || listed.NextCursor == "" {
+		t.Fatalf("list = %+v, error = %v", listed, appErr)
+	}
+	next, appErr := service.RunList(context.Background(), RunListRequest{Limit: 1, Cursor: listed.NextCursor})
+	if appErr != nil || len(next.Items) != 1 || next.Items[0].RunID == listed.Items[0].RunID {
+		t.Fatalf("next list = %+v, error = %v", next, appErr)
+	}
+	got, appErr := service.RunGet(context.Background(), RunGetRequest{RunID: "run-waiting"})
+	if appErr != nil || len(got.Run.Nodes) != 1 || got.Run.Nodes[0].Attempt == nil || got.Run.Nodes[0].Attempt.Driver != "codex" {
+		t.Fatalf("get = %+v, error = %v", got, appErr)
+	}
+	attempt := 1
+	action, appErr := service.RunAction(context.Background(), RunActionRequest{ActionID: "action-1", RunID: "run-waiting", Type: ActionAnswer, ExpectedStateVersion: 4, NodeID: "plan", ExpectedAttempt: &attempt, Answers: map[string]any{"scope": "core"}})
+	if appErr != nil || action.StateVersion != 5 || core.resumed.Action == nil || core.resumed.Action.Type != "answer" || core.resumed.Action.Answers["scope"] != "core" {
+		t.Fatalf("action = %+v, error = %v, resume = %+v", action, appErr, core.resumed)
+	}
+	if _, appErr := service.RunResult(context.Background(), RunResultRequest{RunID: "run-waiting"}); appErr == nil || appErr.Code != CodeNotReady {
+		t.Fatalf("waiting result error = %v", appErr)
+	}
+	result, appErr := service.RunResult(context.Background(), RunResultRequest{RunID: "run-complete"})
+	if appErr != nil || result.Conclusion != "succeeded" || len(result.Results) != 1 || result.Results[0].Result == nil || result.Results[0].Result.Summary != "done" {
+		t.Fatalf("result = %+v, error = %v", result, appErr)
+	}
+}
+
+func TestRunEventsPaginationAndBoundedWait(t *testing.T) {
+	core := newFakeCore()
+	service := NewService(core, "codex")
+	first, appErr := service.RunEvents(context.Background(), RunEventsRequest{RunID: "run-waiting", Limit: 1})
+	if appErr != nil || len(first.Events) != 1 || first.Events[0].Sequence != 1 || !first.More {
+		t.Fatalf("first events = %+v, error = %v", first, appErr)
+	}
+	second, appErr := service.RunEvents(context.Background(), RunEventsRequest{RunID: "run-waiting", AfterSequence: first.NextAfterSequence, Limit: 10})
+	if appErr != nil || len(second.Events) != 1 || second.Events[0].Sequence != 2 || second.More {
+		t.Fatalf("second events = %+v, error = %v", second, appErr)
+	}
+	done := make(chan RunEventsResponse, 1)
+	go func() {
+		response, _ := service.RunEvents(context.Background(), RunEventsRequest{RunID: "run-waiting", AfterSequence: 2, WaitMS: 1000})
+		done <- response
+	}()
+	time.Sleep(10 * time.Millisecond)
+	core.appendEvent(run.WorkflowEvent{RunID: "run-waiting", Sequence: 3, Type: "node.answer_submitted", Phase: run.PhaseRunning, Timestamp: time.Unix(30, 0).UTC()})
+	select {
+	case response := <-done:
+		if len(response.Events) != 1 || response.Events[0].Sequence != 3 {
+			t.Fatalf("wait response = %+v", response)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("bounded event wait did not wake")
+	}
+}
+
+func newFakeCore() *fakeCore {
+	created := time.Unix(10, 0).UTC()
+	waitingRun := run.WorkflowSnapshot{ProtocolVersion: 2, StateSchemaVersion: 3, StateVersion: 4, ID: "run-waiting", WorkflowName: "example", Project: "project", ResolvedDriver: "codex", ResolvedTarget: "local", Phase: run.PhaseWaiting, Reason: run.ReasonAgentWaitingInput, TopologicalOrder: []string{"plan"}, Nodes: map[string]run.NodeSummary{"plan": {ID: "plan", Type: "agent", Phase: run.NodePhaseWaiting, Reason: run.ReasonAgentWaitingInput, CurrentAttempt: 1}}, CreatedAt: created, UpdatedAt: created.Add(time.Second)}
+	waitingNode := run.NodeSnapshot{RunID: waitingRun.ID, ID: "plan", Type: "agent", Phase: run.NodePhaseWaiting, Reason: run.ReasonAgentWaitingInput, CurrentAttempt: 1, Result: &workflow.Result{Summary: "input required", Questions: []workflow.InputQuestion{{ID: "scope", Prompt: "Which scope?", Choices: []string{"core", "all"}, Required: true}}}}
+	completeRun := waitingRun
+	completeRun.ID, completeRun.StateVersion, completeRun.Phase, completeRun.Conclusion, completeRun.Summary, completeRun.CreatedAt, completeRun.UpdatedAt = "run-complete", 7, run.PhaseCompleted, run.ConclusionSucceeded, "done", created.Add(-time.Second), created.Add(2*time.Second)
+	completeRun.Nodes = map[string]run.NodeSummary{"plan": {ID: "plan", Type: "agent", Phase: run.NodePhaseCompleted, Conclusion: run.ConclusionSucceeded, CurrentAttempt: 1}}
+	completeNode := waitingNode
+	completeNode.RunID, completeNode.Phase, completeNode.Reason, completeNode.Conclusion, completeNode.Result = completeRun.ID, run.NodePhaseCompleted, "", run.ConclusionSucceeded, &workflow.Result{Summary: "done"}
+	return &fakeCore{
+		reports: []run.DriverCapabilityReport{{Driver: "codex", Targets: []string{"local"}, Ready: true, MaxConcurrentAgents: 2, SupportsConcurrentCancel: true}},
+		views: map[string]run.StatusView{
+			"run-waiting":  {Run: &waitingRun, Nodes: []run.NodeSnapshot{waitingNode}},
+			"run-complete": {Run: &completeRun, Nodes: []run.NodeSnapshot{completeNode}},
+		},
+		events: map[string][]run.WorkflowEvent{"run-waiting": {
+			{RunID: "run-waiting", Sequence: 1, Type: "run.created", Phase: run.PhaseCreated, Timestamp: created},
+			{RunID: "run-waiting", Sequence: 2, Type: "node.waiting", Phase: run.PhaseWaiting, Timestamp: created.Add(time.Second)},
+		}},
+		attempts: map[string]run.AttemptSnapshot{
+			"run-waiting/plan":  {Number: 1, Phase: run.NodePhaseWaiting, ResolvedDriver: "codex", ResolvedTarget: "local", ContextHash: "hash", StartedAt: created, UpdatedAt: created.Add(time.Second)},
+			"run-complete/plan": {Number: 1, Phase: run.NodePhaseCompleted, Conclusion: run.ConclusionSucceeded, ResolvedDriver: "codex", ResolvedTarget: "local", ContextHash: "hash", StartedAt: created, UpdatedAt: created.Add(time.Second)},
+		},
+	}
+}
+
+func validWorkflowDocument() json.RawMessage {
+	return json.RawMessage(`{"apiVersion":"fishyume/v1","name":"example","defaults":{"agent":{"driver":"codex","target":"local"}},"execution":{"maxConcurrency":1},"nodes":{"plan":{"type":"agent","task":"Plan"},"approve":{"type":"approval","dependsOn":["plan"],"prompt":"Approve?"}}}`)
+}

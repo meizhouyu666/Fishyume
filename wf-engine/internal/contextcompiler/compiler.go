@@ -103,6 +103,9 @@ func Compile(input Input) (Compilation, error) {
 		{Name: "attempt-identity", Source: "engine.attempt", Version: "v1"},
 		{Name: "result-contract", Source: "workflow.result", Version: "v1"},
 	}}
+	if len(input.InputAnswer) > 0 {
+		manifest.Components = append(manifest.Components, Component{Name: "input-answer", Source: "run.action.answer", Version: "v1"})
+	}
 	canonical, err := json.Marshal(struct {
 		Envelope agent.AttemptEnvelope `json:"envelope"`
 		Manifest Manifest              `json:"manifest"`

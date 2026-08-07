@@ -167,7 +167,7 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 				Identity: agent.AttemptIdentity{RunID: run.ID, NodeID: node.ID, Attempt: number}, Workspace: run.Project, Target: target, Task: renderedTask,
 				AncestorResults: ancestorResults, RequiredSkills: definition.RequiredSkills,
 				Constraints: map[string]string{"interaction": "none", "processMode": "one-shot", "pty": "disabled"}, Budget: map[string]int64{},
-				ResultSchema: agentResultContractSchema(), ResultMaxBytes: workflow.MaxResultBytes,
+				ResultSchema: agentResultContractSchema(), ResultMaxBytes: workflow.MaxResultBytes, InputAnswer: node.PendingInputAnswer,
 			})
 			if err != nil {
 				return err
@@ -178,7 +178,7 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 			if err := s.writeAttempt(attempt, true); err != nil {
 				return err
 			}
-			node.Phase, node.Reason, node.Diagnostic, node.Conclusion, node.CurrentAttempt, node.UpdatedAt = NodePhaseRunning, "", "", "", number, now
+			node.Phase, node.Reason, node.Diagnostic, node.Conclusion, node.PendingInputAnswer, node.CurrentAttempt, node.UpdatedAt = NodePhaseRunning, "", "", "", nil, number, now
 			if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
 				return err
 			}
