@@ -6,7 +6,7 @@ import type {SystemCapabilitiesResponse} from '../bridge/application.js';
 import type {EngineClient, EventListener} from '../bridge/engine.js';
 import type {EngineHello} from '../bridge/types.js';
 import {runMachine} from '../commands/machine.js';
-import {createMCPServer} from './server.js';
+import {createMCPServer, runMCPTransport} from './server.js';
 
 const capabilities: SystemCapabilitiesResponse = {
   apiVersion: 'fishyume.application/v1', workflowSchemaVersion: 'fishyume/v1', workflowSchema: {type: 'object'},
@@ -17,6 +17,7 @@ const capabilities: SystemCapabilitiesResponse = {
 
 class FakeApplicationClient implements EngineClient {
   closed = false;
+	closeCount = 0;
   async hello(): Promise<EngineHello> {throw new Error('not used')}
   async call<T>(method: string): Promise<T> {
     if (method !== 'system.capabilities') throw new Error(`unexpected ${method}`);
@@ -24,8 +25,19 @@ class FakeApplicationClient implements EngineClient {
   }
   onRunEvent(_listener: EventListener): () => void {return () => undefined}
   onDiagnostic(): () => void {return () => undefined}
-  async close(): Promise<void> {this.closed = true}
+  async close(): Promise<void> {this.closed = true; this.closeCount++}
 }
+
+test('MCP transport close settles the command and closes the EngineClient exactly once', async () => {
+  const engine = new FakeApplicationClient();
+  const [hostTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const running = runMCPTransport(engine, serverTransport);
+  await hostTransport.start();
+  await hostTransport.close();
+  await Promise.race([running, new Promise<void>((_, reject) => setTimeout(() => reject(new Error('MCP command did not settle after host EOF')), 250))]);
+  assert.equal(engine.closed, true);
+  assert.equal(engine.closeCount, 1);
+});
 
 test('MCP and Machine CLI expose identical Application response JSON', async () => {
   const machineClient = new FakeApplicationClient(); let machineOutput = '';

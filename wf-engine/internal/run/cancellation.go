@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"wf.local/wf-engine/internal/backend"
+	"wf.local/wf-engine/internal/store"
 )
 
 type cancellationTarget struct {
@@ -22,7 +23,11 @@ type cancellationOutcome struct {
 }
 
 func (s *Service) handleConcurrentCancellationRequest(ctx context.Context, runID string) (WorkflowSnapshot, error) {
-	targets, supportsConcurrentCancel, err := s.markConcurrentCancellationIntent(runID)
+	request, err := s.store.ReadCancellationRequest(runID)
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	targets, supportsConcurrentCancel, err := s.markConcurrentCancellationIntent(runID, request)
 	if err != nil {
 		return WorkflowSnapshot{}, err
 	}
@@ -53,7 +58,7 @@ func (s *Service) handleConcurrentCancellationRequest(ctx context.Context, runID
 	return s.applyCancellationOutcomes(runID, outcomes)
 }
 
-func (s *Service) markConcurrentCancellationIntent(runID string) ([]cancellationTarget, bool, error) {
+func (s *Service) markConcurrentCancellationIntent(runID string, request store.CancelRequest) ([]cancellationTarget, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	run, nodes, err := s.loadRun(runID)
@@ -63,8 +68,12 @@ func (s *Service) markConcurrentCancellationIntent(runID string) ([]cancellation
 	if run.Phase == PhaseCompleted {
 		return nil, false, nil
 	}
+	if request.ExpectedStateVersion != nil && run.StateVersion != *request.ExpectedStateVersion {
+		return nil, false, fmt.Errorf("state version conflict: expected %d, current %d", *request.ExpectedStateVersion, run.StateVersion)
+	}
 	if !run.CancelRequested || run.Phase != PhaseCancelling {
 		run.CancelRequested, run.Phase, run.Conclusion, run.Reason, run.Summary, run.UpdatedAt = true, PhaseCancelling, "", "", "workflow cancellation requested", s.now().UTC()
+		s.recordActionReceipt(&run, request.ActionID, request.ActionRequestHash)
 		if err := s.persistRun(&run, nil, "run.cancelling", run.Summary); err != nil {
 			return nil, false, err
 		}

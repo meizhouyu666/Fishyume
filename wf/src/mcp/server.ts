@@ -1,10 +1,11 @@
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {StdioServerTransport} from '@modelcontextprotocol/sdk/server/stdio.js';
+import type {Transport} from '@modelcontextprotocol/sdk/shared/transport.js';
 import {z} from 'zod';
 import {ApplicationCallError, callApplication, type ApplicationMethod} from '../bridge/application.js';
 import {EngineBridge, type EngineClient} from '../bridge/engine.js';
 
-const scalar = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+const scalar = z.union([z.string(), z.number(), z.boolean()]);
 const workflow = z.object({
   source: z.object({filename: z.string(), content: z.string()}).optional(),
   document: z.record(z.string(), z.unknown()).optional(),
@@ -43,8 +44,25 @@ export function createMCPServer(client: EngineClient): McpServer {
 }
 
 export async function runMCP(client: EngineClient = new EngineBridge()): Promise<void> {
+  await runMCPTransport(client, new StdioServerTransport());
+}
+
+// Exported for lifecycle tests; production always uses stdio above.
+export async function runMCPTransport(client: EngineClient, transport: Transport): Promise<void> {
   const server = createMCPServer(client);
-  const transport = new StdioServerTransport();
+  let closed = false;
+  let settle!: () => void;
+  const settled = new Promise<void>(resolve => {settle = resolve});
+  const closeClient = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    try {await client.close()} finally {settle()}
+  };
+  // Protocol.connect preserves an already-registered transport close hook.
+  // This covers host EOF as well as an explicit transport close without
+  // emitting anything on stdout.
+  transport.onclose = () => {void closeClient()};
   try {await server.connect(transport)}
-  catch (error) {await client.close(); throw error}
+  catch (error) {await closeClient(); throw error}
+  await settled;
 }

@@ -16,8 +16,11 @@ const (
 )
 
 type CancelRequest struct {
-	ID          string    `json:"id"`
-	RequestedAt time.Time `json:"requestedAt"`
+	ID                   string    `json:"id"`
+	RequestedAt          time.Time `json:"requestedAt"`
+	ExpectedStateVersion *uint64   `json:"expectedStateVersion,omitempty"`
+	ActionID             string    `json:"actionId,omitempty"`
+	ActionRequestHash    string    `json:"actionRequestHash,omitempty"`
 }
 
 type CancelResponse struct {
@@ -36,6 +39,10 @@ func (s *Store) CancelResponsePath(runID string) string {
 }
 
 func (s *Store) RequestCancellation(runID string, requestedAt time.Time) (CancelRequest, error) {
+	return s.RequestCancellationWithPrecondition(runID, requestedAt, nil, "", "")
+}
+
+func (s *Store) RequestCancellationWithPrecondition(runID string, requestedAt time.Time, expectedStateVersion *uint64, actionID, actionRequestHash string) (CancelRequest, error) {
 	if err := validateID("run", runID); err != nil {
 		return CancelRequest{}, err
 	}
@@ -43,7 +50,13 @@ func (s *Store) RequestCancellation(runID string, requestedAt time.Time) (Cancel
 	var request CancelRequest
 	err := withLeaseGuard(path, func() error {
 		if err := readJSON(path, &request); err == nil {
-			return validateCancelRequest(request)
+			if err := validateCancelRequest(request); err != nil {
+				return err
+			}
+			if expectedStateVersion != nil && (request.ActionID != actionID || request.ActionRequestHash != actionRequestHash) {
+				return fmt.Errorf("cancellation request is already pending for a different action")
+			}
+			return nil
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -51,7 +64,7 @@ func (s *Store) RequestCancellation(runID string, requestedAt time.Time) (Cancel
 		if err != nil {
 			return err
 		}
-		request = CancelRequest{ID: id, RequestedAt: requestedAt.UTC()}
+		request = CancelRequest{ID: id, RequestedAt: requestedAt.UTC(), ExpectedStateVersion: expectedStateVersion, ActionID: actionID, ActionRequestHash: actionRequestHash}
 		if err := os.Remove(s.CancelResponsePath(runID)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove stale cancel response: %w", err)
 		}
@@ -121,6 +134,9 @@ func (s *Store) ReadCancellationResponse(runID, requestID string) (CancelRespons
 func validateCancelRequest(request CancelRequest) error {
 	if request.ID == "" || request.RequestedAt.IsZero() {
 		return fmt.Errorf("cancel request is incomplete")
+	}
+	if (request.ActionID == "") != (request.ActionRequestHash == "") {
+		return fmt.Errorf("cancel request action identity is incomplete")
 	}
 	return nil
 }

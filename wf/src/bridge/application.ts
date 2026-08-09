@@ -3,7 +3,7 @@ import {EngineRpcError, type EngineClient} from './engine.js';
 import type {AttemptSnapshot, Conclusion, NodePhase, NodeResult, NodeSnapshot, Reason, RunPhase, RunStatusView, WorkflowSnapshot} from './types.js';
 
 export const applicationApiVersion = 'fishyume.application/v1' as const;
-export type JsonScalar = string | number | boolean | null;
+export type JsonScalar = string | number | boolean;
 export type ApplicationMethod = 'system.capabilities' | 'workflow.validate' | 'workflow.explain' | 'run.start' | 'run.list' | 'run.get' | 'run.events' | 'run.action' | 'run.result';
 export type ApplicationErrorCode = 'invalid_argument' | 'invalid_workflow' | 'not_found' | 'conflict' | 'capability_unavailable' | 'not_ready' | 'protocol_mismatch' | 'internal';
 export interface ApplicationError {code: ApplicationErrorCode; message: string; data?: Record<string, unknown>}

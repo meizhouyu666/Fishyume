@@ -260,14 +260,15 @@ Application Service 是 transport-neutral 产品边界：它拥有公开 request
 
 `run.list` 使用稳定排序、filter、cursor 和 limit。MCP 不提供无限阻塞的 watch tool；`run.events` 使用 `afterSequence`、limit 和有界 `waitMs` 实现游标读取或短轮询，持久化 event log 是真相，连接级通知只负责唤醒。`run.result` 明确区分 terminal result 与 `not_ready`。所有列表、事件、Result 和 schema response 都有 item/byte 上限。
 
-`run.action` 统一承载 `approve`、`reject`、`answer`、`retry` 和 `cancel`，并绑定唯一 `actionId`、`runId`、`expectedStateVersion`；Node 动作还绑定 `nodeId` 和适用时的 `expectedAttempt`。
+`run.action` 统一承载 `approve`、`reject`、`answer`、`retry` 和 `cancel`，并绑定唯一 `actionId`、`runId`、`expectedStateVersion`；Node 动作还绑定 `nodeId` 和适用时的 `expectedAttempt`。`inputs` 与 answer value 的 scalar 合同一致，只接受 string、number 或 boolean（不接受 `null`）。
 
 `answer` 按 question ID 提交结构化 scalar answers。Engine 校验 question、required/choice 与 Attempt identity，然后创建新 Attempt，并由 Context Compiler 将原问题和回答显式编入新 Envelope；它不恢复已结束的交互进程。
 
 ### 幂等与冲突
 
 - `run.start` 使用 `clientRequestId` 持久化去重；
-- `run.action` 使用 `actionId` 持久化去重；
+- `run.action` 使用 `actionId` 持久化去重，并把 canonical request 与接受它的状态版本持久化到 Run 状态；journal recovery 只会重放该精确 receipt。已不适用的 intent 会以稳定的 terminal error 结束，不阻塞 Control Plane 启动；
+- MCP stdio Host EOF/transport close 会关闭 Engine client 并使命令退出，不向 stdout 输出生命周期日志；
 - 同一 ID 与相同 canonical request hash 返回原 response，同一 ID 与不同 payload 返回 conflict；
 - 幂等记录跨客户端和 Control Plane crash/restart 生效，不允许只存放在进程内；
 - request/action intent、业务状态 mutation 与 committed response 使用可恢复 journal 或等价协议，崩溃恢复不得重复 Start 或动作副作用；

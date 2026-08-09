@@ -56,6 +56,8 @@ type StartWorkflowRequest struct {
 }
 
 type ResumeAction struct {
+	ActionID                 string         `json:"actionId,omitempty"`
+	ActionRequestHash        string         `json:"actionRequestHash,omitempty"`
 	Type                     string         `json:"type"`
 	NodeID                   string         `json:"nodeId"`
 	ExpectedAttempt          *int           `json:"expectedAttempt,omitempty"`
@@ -68,6 +70,13 @@ type ResumeRequest struct {
 	RunID                string        `json:"runId"`
 	ExpectedStateVersion *uint64       `json:"expectedStateVersion,omitempty"`
 	Action               *ResumeAction `json:"action,omitempty"`
+}
+
+type CancelRequest struct {
+	RunID                string
+	ExpectedStateVersion *uint64
+	ActionID             string
+	ActionRequestHash    string
 }
 
 type DoctorReport struct {
@@ -673,9 +682,27 @@ func (s *Service) Resume(_ context.Context, request ResumeRequest) (WorkflowSnap
 	if _, err := s.resetEventSequence(request.RunID); err != nil {
 		return WorkflowSnapshot{}, fmt.Errorf("invalid event history: %w", err)
 	}
+	lease, err := s.acquireLease(request.RunID, "resume", time.Second)
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	releaseLease := true
+	defer func() {
+		if releaseLease {
+			_ = lease.Release()
+		}
+	}()
 	run, nodes, err := s.loadRun(request.RunID)
 	if err != nil {
 		return WorkflowSnapshot{}, err
+	}
+	if request.Action != nil && request.Action.ActionID != "" {
+		if receipt, ok := run.ActionReceipts[request.Action.ActionID]; ok {
+			if receipt.RequestHash != request.Action.ActionRequestHash {
+				return WorkflowSnapshot{}, fmt.Errorf("actionId %q is already bound to a different request", request.Action.ActionID)
+			}
+			return run, nil
+		}
 	}
 	if request.ExpectedStateVersion != nil && run.StateVersion != *request.ExpectedStateVersion {
 		return WorkflowSnapshot{}, fmt.Errorf("state version conflict: expected %d, current %d", *request.ExpectedStateVersion, run.StateVersion)
@@ -692,30 +719,21 @@ func (s *Service) Resume(_ context.Context, request ResumeRequest) (WorkflowSnap
 			return run, nil
 		}
 	}
-	lease, err := s.acquireLease(request.RunID, "resume", time.Second)
-	if err != nil {
-		return WorkflowSnapshot{}, err
-	}
 	if request.Action != nil {
 		if err := validateResumeAction(*request.Action); err != nil {
-			_ = lease.Release()
 			return WorkflowSnapshot{}, err
 		}
 		if err := s.applyAction(&run, *request.Action); err != nil {
-			_ = lease.Release()
 			return WorkflowSnapshot{}, err
 		}
 		if run.Phase == PhaseCompleted {
-			_ = lease.Release()
 			return run, nil
 		}
 	} else {
 		if run.CancelRequested {
-			_ = lease.Release()
 			return WorkflowSnapshot{}, fmt.Errorf("run %q has cancellation pending; use fishyume cancel to retry", run.ID)
 		}
 		if run.Phase == PhaseWaiting && run.Reason == ReasonApprovalRequired {
-			_ = lease.Release()
 			return run, nil
 		}
 		run.Phase, run.Conclusion, run.Reason, run.Summary, run.UpdatedAt = PhaseRunning, "", "", "controller resumed", s.now().UTC()
@@ -724,7 +742,11 @@ func (s *Service) Resume(_ context.Context, request ResumeRequest) (WorkflowSnap
 			return WorkflowSnapshot{}, err
 		}
 	}
-	s.startController(request.RunID, lease, func(ctx context.Context, generation uint64) { s.control(ctx, request.RunID, generation) })
+	// Controller ownership transfers to startController. Do not defer-release it.
+	if run.Phase != PhaseCompleted {
+		releaseLease = false
+		s.startController(request.RunID, lease, func(ctx context.Context, generation uint64) { s.control(ctx, request.RunID, generation) })
+	}
 	updated, err := s.Get(request.RunID)
 	if err != nil {
 		return WorkflowSnapshot{}, err
@@ -767,14 +789,29 @@ func (s *Service) Detach(runID string) (WorkflowSnapshot, error) {
 }
 
 func (s *Service) Cancel(ctx context.Context, runID string) (WorkflowSnapshot, error) {
+	return s.cancel(ctx, CancelRequest{RunID: runID})
+}
+
+func (s *Service) CancelWithPrecondition(ctx context.Context, request CancelRequest) (WorkflowSnapshot, error) {
+	if request.ExpectedStateVersion == nil {
+		return WorkflowSnapshot{}, errors.New("expected state version is required")
+	}
+	return s.cancel(ctx, request)
+}
+
+func (s *Service) cancel(ctx context.Context, cancelRequest CancelRequest) (WorkflowSnapshot, error) {
+	runID := cancelRequest.RunID
 	run, _, err := s.loadRunForCancellation(ctx, runID)
 	if err != nil {
 		return WorkflowSnapshot{}, err
 	}
+	if cancelRequest.ExpectedStateVersion != nil && run.StateVersion != *cancelRequest.ExpectedStateVersion {
+		return WorkflowSnapshot{}, fmt.Errorf("state version conflict: expected %d, current %d", *cancelRequest.ExpectedStateVersion, run.StateVersion)
+	}
 	if run.Phase == PhaseCompleted {
 		return run, nil
 	}
-	request, err := s.store.RequestCancellation(runID, s.now().UTC())
+	request, err := s.store.RequestCancellationWithPrecondition(runID, s.now().UTC(), cancelRequest.ExpectedStateVersion, cancelRequest.ActionID, cancelRequest.ActionRequestHash)
 	if err != nil {
 		return WorkflowSnapshot{}, fmt.Errorf("persist cancellation request: %w", err)
 	}
@@ -1905,6 +1942,7 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 				}
 				now := s.now().UTC()
 				run.Nodes[node.ID], run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = summarizeNode(node), PhaseRunning, "", "", "", "approval "+decision, now
+				s.recordActionReceipt(run, action.ActionID, action.ActionRequestHash)
 				return s.persistRun(run, &node, "node.approval_decided", run.Summary)
 			}
 			return fmt.Errorf("approval node %q already has conflicting decision %q", node.ID, node.Result.Decision)
@@ -1924,6 +1962,7 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 			return err
 		}
 		run.Nodes[node.ID], run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = summarizeNode(node), PhaseRunning, "", "", "", "approval "+decision, now
+		s.recordActionReceipt(run, action.ActionID, action.ActionRequestHash)
 		return s.persistRun(run, &node, "node.approval_decided", run.Summary)
 	case "retry":
 		allowed := node.Phase == NodePhaseWaiting && (node.Reason == ReasonAgentWaitingInput || node.Reason == ReasonCompletionMissing || node.Reason == ReasonInvalidResult)
@@ -1944,6 +1983,7 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 			return err
 		}
 		run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.CancelRequested, run.UpdatedAt = PhaseRunning, "", "", "", "explicit retry requested", false, now
+		s.recordActionReceipt(run, action.ActionID, action.ActionRequestHash)
 		return s.persistRun(run, &node, "node.retry_requested", run.Summary)
 	case "answer":
 		if node.Type != "agent" || node.Phase != NodePhaseWaiting || node.Reason != ReasonAgentWaitingInput || node.Result == nil || len(node.Result.Questions) == 0 {
@@ -1966,10 +2006,21 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 			return err
 		}
 		run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.CancelRequested, run.UpdatedAt = PhaseRunning, "", "", "", "input answer submitted", false, now
+		s.recordActionReceipt(run, action.ActionID, action.ActionRequestHash)
 		return s.persistRun(run, &node, "node.answer_submitted", run.Summary)
 	default:
 		return fmt.Errorf("unknown resume action %q", action.Type)
 	}
+}
+
+func (s *Service) recordActionReceipt(run *WorkflowSnapshot, actionID, requestHash string) {
+	if actionID == "" {
+		return
+	}
+	if run.ActionReceipts == nil {
+		run.ActionReceipts = map[string]ActionReceipt{}
+	}
+	run.ActionReceipts[actionID] = ActionReceipt{ActionID: actionID, RequestHash: requestHash, StateVersion: run.StateVersion + 1, Phase: run.Phase, Conclusion: run.Conclusion}
 }
 
 func validateResumeAction(action ResumeAction) error {

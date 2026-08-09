@@ -79,9 +79,21 @@ type WorkflowSnapshot struct {
 	Nodes                map[string]NodeSummary `json:"nodes"`
 	ActiveNodeID         string                 `json:"activeNodeId,omitempty"`
 	CancelRequested      bool                   `json:"cancelRequested"`
-	StateDir             string                 `json:"stateDir"`
-	CreatedAt            time.Time              `json:"createdAt"`
-	UpdatedAt            time.Time              `json:"updatedAt"`
+	// ActionReceipts bind Agent-native action IDs and canonical requests to the
+	// state transition that accepted them. They are intentionally durable: the
+	// application journal alone cannot prove which action caused a later state.
+	ActionReceipts map[string]ActionReceipt `json:"actionReceipts,omitempty"`
+	StateDir       string                   `json:"stateDir"`
+	CreatedAt      time.Time                `json:"createdAt"`
+	UpdatedAt      time.Time                `json:"updatedAt"`
+}
+
+type ActionReceipt struct {
+	ActionID     string     `json:"actionId"`
+	RequestHash  string     `json:"requestHash"`
+	StateVersion uint64     `json:"stateVersion"`
+	Phase        Phase      `json:"phase"`
+	Conclusion   Conclusion `json:"conclusion,omitempty"`
 }
 
 type NodeSummary struct {
@@ -192,6 +204,14 @@ func ValidateWorkflowSnapshot(snapshot WorkflowSnapshot) error {
 	}
 	if snapshot.Phase != PhaseWaiting && snapshot.Phase != PhasePaused && snapshot.Phase != PhaseCancelling && snapshot.Reason != "" && !terminal {
 		return fmt.Errorf("active run phase %q cannot have reason %q", snapshot.Phase, snapshot.Reason)
+	}
+	for actionID, receipt := range snapshot.ActionReceipts {
+		if actionID == "" || receipt.ActionID != actionID || receipt.RequestHash == "" || receipt.StateVersion == 0 || receipt.StateVersion > snapshot.StateVersion || !validPhase(receipt.Phase) {
+			return fmt.Errorf("invalid action receipt %q", actionID)
+		}
+		if (receipt.Phase == PhaseCompleted) != (receipt.Conclusion != "") || (receipt.Conclusion != "" && !validConclusion(receipt.Conclusion)) {
+			return fmt.Errorf("invalid action receipt conclusion %q", actionID)
+		}
 	}
 	return nil
 }

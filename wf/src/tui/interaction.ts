@@ -162,21 +162,21 @@ export function resumeActionForMode(state: ConsoleInteractionState, targets: rea
   return undefined;
 }
 
-function parseAnswers(text: string, questionIds: readonly string[]): Record<string, string | number | boolean | null> | undefined {
+function parseAnswers(text: string, questionIds: readonly string[]): Record<string, string | number | boolean> | undefined {
   const trimmed = text.trim();
   if (questionIds.length === 1) {
     try {
       const parsed = JSON.parse(trimmed) as unknown;
-      if (parsed === null || typeof parsed === 'string' || typeof parsed === 'number' || typeof parsed === 'boolean') return {[questionIds[0]!]: parsed};
+      if (typeof parsed === 'string' || typeof parsed === 'number' || typeof parsed === 'boolean') return {[questionIds[0]!]: parsed};
     } catch {}
     return {[questionIds[0]!]: text};
   }
   try {
     const parsed = JSON.parse(trimmed) as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
-    const answers: Record<string, string | number | boolean | null> = {};
+    const answers: Record<string, string | number | boolean> = {};
     for (const [key, value] of Object.entries(parsed)) {
-      if (value !== null && typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return undefined;
+      if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return undefined;
       answers[key] = value;
     }
     return answers;

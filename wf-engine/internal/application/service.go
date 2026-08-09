@@ -26,6 +26,7 @@ type Core interface {
 	Status(string) (run.StatusView, error)
 	Resume(context.Context, run.ResumeRequest) (run.WorkflowSnapshot, error)
 	Cancel(context.Context, string) (run.WorkflowSnapshot, error)
+	CancelWithPrecondition(context.Context, run.CancelRequest) (run.WorkflowSnapshot, error)
 	ListRunIDs() ([]string, error)
 	ReadEvents(string) ([]run.WorkflowEvent, error)
 	ReadAttempt(string, string, int) (run.AttemptSnapshot, error)
@@ -353,7 +354,7 @@ func (s *Service) RunAction(ctx context.Context, request RunActionRequest) (RunA
 			return RunActionResponse{}, conflictError("actionId is already bound to a different payload", map[string]any{"id": request.ActionID})
 		}
 		if record.State == store.JournalMutated || record.State == store.JournalCommitted {
-			return replayJournalResponse[RunActionResponse](s, record)
+			return replayActionJournalResponse(s, record)
 		}
 	} else if !errors.Is(readErr, os.ErrNotExist) {
 		return RunActionResponse{}, internalError(readErr)
@@ -366,10 +367,16 @@ func (s *Service) RunAction(ctx context.Context, request RunActionRequest) (RunA
 		return RunActionResponse{}, NewError(CodeCapabilityUnavailable, "legacy run does not support Agent-native actions", map[string]any{"runId": request.RunID})
 	}
 	current := view.Run
+	if receipt, ok := current.ActionReceipts[request.ActionID]; ok {
+		if receipt.RequestHash != requestHash {
+			return RunActionResponse{}, conflictError("actionId is already bound to a different payload", map[string]any{"id": request.ActionID})
+		}
+		return persistJournalResponse(s, "action", request.ActionID, requestHash, actionResponse(request, *current))
+	}
 	if current.StateVersion != request.ExpectedStateVersion {
-		if readErr == nil && actionWasApplied(request, view) {
-			response := actionResponse(request, *current)
-			return persistJournalResponse(s, "action", request.ActionID, requestHash, response)
+		if readErr == nil {
+			appErr := conflictError("state version conflict", map[string]any{"expectedStateVersion": request.ExpectedStateVersion, "currentStateVersion": current.StateVersion})
+			return RunActionResponse{}, persistActionError(s, request.ActionID, requestHash, appErr)
 		}
 		return RunActionResponse{}, conflictError("state version conflict", map[string]any{"expectedStateVersion": request.ExpectedStateVersion, "currentStateVersion": current.StateVersion})
 	}
@@ -385,13 +392,18 @@ func (s *Service) RunAction(ctx context.Context, request RunActionRequest) (RunA
 	}
 	var snapshot run.WorkflowSnapshot
 	if request.Type == ActionCancel {
-		snapshot, err = s.core.Cancel(ctx, request.RunID)
+		expected := request.ExpectedStateVersion
+		snapshot, err = s.core.CancelWithPrecondition(ctx, run.CancelRequest{RunID: request.RunID, ExpectedStateVersion: &expected, ActionID: request.ActionID, ActionRequestHash: requestHash})
 	} else {
 		expected := request.ExpectedStateVersion
-		snapshot, err = s.core.Resume(ctx, run.ResumeRequest{RunID: request.RunID, ExpectedStateVersion: &expected, Action: &run.ResumeAction{Type: string(request.Type), NodeID: request.NodeID, ExpectedAttempt: request.ExpectedAttempt, Reason: request.Reason, Answers: request.Answers, AcknowledgeDuplicateRisk: request.AcknowledgeDuplicateRisk}})
+		snapshot, err = s.core.Resume(ctx, run.ResumeRequest{RunID: request.RunID, ExpectedStateVersion: &expected, Action: &run.ResumeAction{ActionID: request.ActionID, ActionRequestHash: requestHash, Type: string(request.Type), NodeID: request.NodeID, ExpectedAttempt: request.ExpectedAttempt, Reason: request.Reason, Answers: request.Answers, AcknowledgeDuplicateRisk: request.AcknowledgeDuplicateRisk}})
 	}
 	if err != nil {
-		return RunActionResponse{}, mapActionError(err)
+		appErr := mapActionError(err)
+		if terminalActionError(appErr) {
+			return RunActionResponse{}, persistActionError(s, request.ActionID, requestHash, appErr)
+		}
+		return RunActionResponse{}, appErr
 	}
 	return persistJournalResponse(s, "action", request.ActionID, requestHash, actionResponse(request, snapshot))
 }
@@ -446,7 +458,7 @@ func (s *Service) Recover(ctx context.Context) *Error {
 			if err := json.Unmarshal(record.Request, &request); err != nil {
 				return internalError(fmt.Errorf("decode pending action journal %q: %w", record.ID, err))
 			}
-			if _, appErr := s.RunAction(ctx, request); appErr != nil {
+			if _, appErr := s.RunAction(ctx, request); appErr != nil && !terminalActionError(appErr) {
 				return appErr
 			}
 		default:
@@ -461,39 +473,10 @@ func startResponse(snapshot run.WorkflowSnapshot) RunStartResponse {
 }
 
 func actionResponse(request RunActionRequest, snapshot run.WorkflowSnapshot) RunActionResponse {
+	if receipt, ok := snapshot.ActionReceipts[request.ActionID]; ok {
+		return RunActionResponse{APIVersion: APIVersion, ActionID: request.ActionID, RunID: request.RunID, Type: request.Type, StateVersion: receipt.StateVersion, Phase: string(receipt.Phase), Conclusion: string(receipt.Conclusion)}
+	}
 	return RunActionResponse{APIVersion: APIVersion, ActionID: request.ActionID, RunID: request.RunID, Type: request.Type, StateVersion: snapshot.StateVersion, Phase: string(snapshot.Phase), Conclusion: string(snapshot.Conclusion)}
-}
-
-func actionWasApplied(request RunActionRequest, view run.StatusView) bool {
-	if view.Run == nil {
-		return false
-	}
-	if request.Type == ActionCancel {
-		return view.Run.CancelRequested || view.Run.Conclusion == run.ConclusionCancelled
-	}
-	var node *run.NodeSnapshot
-	for index := range view.Nodes {
-		if view.Nodes[index].ID == request.NodeID {
-			node = &view.Nodes[index]
-			break
-		}
-	}
-	if node == nil {
-		return false
-	}
-	switch request.Type {
-	case ActionApprove:
-		return node.Result != nil && node.Result.Decision == "approved"
-	case ActionReject:
-		return node.Result != nil && node.Result.Decision == "rejected" && node.Result.Reason == request.Reason
-	case ActionAnswer, ActionRetry:
-		if request.ExpectedAttempt == nil {
-			return false
-		}
-		return node.CurrentAttempt > *request.ExpectedAttempt || node.CurrentAttempt == *request.ExpectedAttempt && node.Result == nil && (node.Phase == run.NodePhaseReady || node.Phase == run.NodePhaseRunning || node.Phase == run.NodePhaseCompleted)
-	default:
-		return false
-	}
 }
 
 func canonicalRequest(value any) (string, json.RawMessage, error) {
@@ -544,6 +527,41 @@ func replayJournalResponse[T any](s *Service, record store.ApplicationJournalRec
 		record = committed
 	}
 	return decodeJournalResponse[T](record)
+}
+
+type actionJournalError struct {
+	Error *Error `json:"error"`
+}
+
+func terminalActionError(err *Error) bool {
+	return err != nil && (err.Code == CodeConflict || err.Code == CodeInvalidArgument || err.Code == CodeNotFound || err.Code == CodeCapabilityUnavailable || err.Code == CodeNotReady)
+}
+
+func persistActionError(s *Service, id, requestHash string, appErr *Error) *Error {
+	encoded, err := json.Marshal(actionJournalError{Error: appErr})
+	if err != nil {
+		return internalError(err)
+	}
+	if _, err := s.journal.MarkApplicationJournalMutated("action", id, requestHash, encoded, s.now()); err != nil {
+		return mapJournalError(err, id)
+	}
+	if _, err := s.journal.CommitApplicationJournal("action", id, requestHash, s.now()); err != nil {
+		return mapJournalError(err, id)
+	}
+	return appErr
+}
+
+func replayActionJournalResponse(s *Service, record store.ApplicationJournalRecord) (RunActionResponse, *Error) {
+	if record.State == store.JournalMutated {
+		if _, err := s.journal.CommitApplicationJournal(record.Kind, record.ID, record.RequestHash, s.now()); err != nil {
+			return RunActionResponse{}, mapJournalError(err, record.ID)
+		}
+	}
+	var terminal actionJournalError
+	if err := json.Unmarshal(record.Response, &terminal); err == nil && terminal.Error != nil {
+		return RunActionResponse{}, terminal.Error
+	}
+	return decodeJournalResponse[RunActionResponse](record)
 }
 
 func decodeJournalResponse[T any](record store.ApplicationJournalRecord) (T, *Error) {
@@ -867,7 +885,7 @@ func ensureResponseBound(value any, maximum int) error {
 
 func mapActionError(err error) *Error {
 	message := err.Error()
-	if strings.Contains(message, "conflict") || strings.Contains(message, "already has conflicting") {
+	if strings.Contains(message, "conflict") || strings.Contains(message, "already has conflicting") || strings.Contains(message, "already pending for a different action") {
 		return conflictError("action no longer applies", map[string]any{"detail": message})
 	}
 	if strings.Contains(message, "not waiting") || strings.Contains(message, "not in a retryable") || strings.Contains(message, "not the current") {

@@ -1,6 +1,9 @@
 package application
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 type ErrorCode string
 
@@ -40,5 +43,18 @@ func (e *Error) Error() string {
 }
 
 func NewError(code ErrorCode, message string, data map[string]any) *Error {
-	return &Error{Code: code, Message: message, Data: data}
+	return &Error{Code: code, Message: message, Data: boundErrorData(data)}
+}
+
+func boundErrorData(data map[string]any) map[string]any {
+	if len(data) == 0 {
+		return nil
+	}
+	encoded, err := json.Marshal(data)
+	if err == nil && len(encoded) <= MaxErrorDataBytes {
+		return data
+	}
+	// Keep the stable error code and message intact while making oversized or
+	// non-serializable diagnostic detail safe for every adapter to emit.
+	return map[string]any{"truncated": true}
 }

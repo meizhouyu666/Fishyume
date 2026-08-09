@@ -48,5 +48,5 @@ export interface RunStatusView {
 
 export interface RunEvent {protocolVersion: 2; runId: string; sequence: number; type: string; phase: RunPhase; conclusion?: Conclusion; reason?: Reason; nodeId?: string; nodePhase?: NodePhase; message?: string; timestamp: string}
 
-export interface ResumeAction {type: 'approve' | 'reject' | 'answer' | 'retry'; nodeId: string; expectedAttempt?: number; reason?: string; answers?: Record<string, string | number | boolean | null>; acknowledgeDuplicateRisk?: boolean}
+export interface ResumeAction {type: 'approve' | 'reject' | 'answer' | 'retry'; nodeId: string; expectedAttempt?: number; reason?: string; answers?: Record<string, JsonScalar>; acknowledgeDuplicateRisk?: boolean}
 export interface EngineHello {engineVersion: string; protocolVersion: 2; supportedMethods: string[]; supportedDrivers: string[]; supportedBackends?: string[]; backendReady: boolean; backendDiagnostic: string; projectChecked: boolean; projectReady: boolean; projectDiagnostic?: string}

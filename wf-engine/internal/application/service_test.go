@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -16,18 +17,19 @@ import (
 )
 
 type fakeCore struct {
-	mu          sync.Mutex
-	reports     []run.DriverCapabilityReport
-	views       map[string]run.StatusView
-	events      map[string][]run.WorkflowEvent
-	attempts    map[string]run.AttemptSnapshot
-	sinks       map[int]run.EventSink
-	nextSink    int
-	started     run.StartWorkflowRequest
-	startCount  int
-	resumed     run.ResumeRequest
-	resumeCount int
-	cancelled   string
+	mu                       sync.Mutex
+	reports                  []run.DriverCapabilityReport
+	views                    map[string]run.StatusView
+	events                   map[string][]run.WorkflowEvent
+	attempts                 map[string]run.AttemptSnapshot
+	sinks                    map[int]run.EventSink
+	nextSink                 int
+	started                  run.StartWorkflowRequest
+	startCount               int
+	resumed                  run.ResumeRequest
+	resumeCount              int
+	cancelled                string
+	cancelBeforePrecondition func(*run.WorkflowSnapshot)
 }
 
 func (f *fakeCore) DriverCapabilityReports(context.Context, string) []run.DriverCapabilityReport {
@@ -62,6 +64,12 @@ func (f *fakeCore) Resume(_ context.Context, request run.ResumeRequest) (run.Wor
 	snapshot := *view.Run
 	snapshot.StateVersion++
 	snapshot.Phase = run.PhaseRunning
+	if request.Action != nil && request.Action.ActionID != "" {
+		if snapshot.ActionReceipts == nil {
+			snapshot.ActionReceipts = map[string]run.ActionReceipt{}
+		}
+		snapshot.ActionReceipts[request.Action.ActionID] = run.ActionReceipt{ActionID: request.Action.ActionID, RequestHash: request.Action.ActionRequestHash, StateVersion: snapshot.StateVersion, Phase: snapshot.Phase, Conclusion: snapshot.Conclusion}
+	}
 	if request.Action != nil && request.Action.NodeID != "" {
 		for index := range view.Nodes {
 			if view.Nodes[index].ID == request.Action.NodeID {
@@ -79,6 +87,30 @@ func (f *fakeCore) Cancel(_ context.Context, id string) (run.WorkflowSnapshot, e
 	snapshot := *view.Run
 	snapshot.StateVersion++
 	snapshot.Phase, snapshot.Conclusion = run.PhaseCompleted, run.ConclusionCancelled
+	return snapshot, nil
+}
+func (f *fakeCore) CancelWithPrecondition(ctx context.Context, request run.CancelRequest) (run.WorkflowSnapshot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	view := f.views[request.RunID]
+	snapshot := *view.Run
+	if f.cancelBeforePrecondition != nil {
+		f.cancelBeforePrecondition(&snapshot)
+		view.Run = &snapshot
+		f.views[request.RunID] = view
+	}
+	if request.ExpectedStateVersion == nil || snapshot.StateVersion != *request.ExpectedStateVersion {
+		return run.WorkflowSnapshot{}, fmt.Errorf("state version conflict: expected %v, current %d", request.ExpectedStateVersion, snapshot.StateVersion)
+	}
+	f.cancelled = request.RunID
+	snapshot.StateVersion++
+	snapshot.Phase, snapshot.Conclusion = run.PhaseCompleted, run.ConclusionCancelled
+	if snapshot.ActionReceipts == nil {
+		snapshot.ActionReceipts = map[string]run.ActionReceipt{}
+	}
+	snapshot.ActionReceipts[request.ActionID] = run.ActionReceipt{ActionID: request.ActionID, RequestHash: request.ActionRequestHash, StateVersion: snapshot.StateVersion, Phase: snapshot.Phase, Conclusion: snapshot.Conclusion}
+	view.Run = &snapshot
+	f.views[request.RunID] = view
 	return snapshot, nil
 }
 func (f *fakeCore) ListRunIDs() ([]string, error) {
@@ -357,6 +389,79 @@ func TestDurableActionIdempotencyAcrossRestartAndFaultWindows(t *testing.T) {
 				t.Fatalf("conflicting replay error = %v", appErr)
 			}
 		})
+	}
+}
+
+func TestPendingStaleActionIsTerminalAndDoesNotBlockRecovery(t *testing.T) {
+	core := newFakeCore()
+	state := store.New(t.TempDir())
+	service := NewService(core, "codex", state)
+	attempt := 1
+	request := RunActionRequest{ActionID: "stale-intent", RunID: "run-waiting", Type: ActionAnswer, ExpectedStateVersion: 4, NodeID: "plan", ExpectedAttempt: &attempt, Answers: map[string]any{"scope": "core"}}
+	hash, canonical, err := canonicalRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.BeginApplicationJournal("action", request.ActionID, hash, canonical, request.RunID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	core.mu.Lock()
+	view := core.views[request.RunID]
+	advanced := *view.Run
+	advanced.StateVersion++
+	view.Run = &advanced
+	core.views[request.RunID] = view
+	core.mu.Unlock()
+	if appErr := service.Recover(context.Background()); appErr != nil {
+		t.Fatalf("recovery should terminalize stale intent: %v", appErr)
+	}
+	if core.resumeCount != 0 {
+		t.Fatalf("stale intent resumed %d times", core.resumeCount)
+	}
+	if _, appErr := service.RunAction(context.Background(), request); appErr == nil || appErr.Code != CodeConflict {
+		t.Fatalf("stale replay error = %v", appErr)
+	}
+	if appErr := NewService(core, "codex", state).Recover(context.Background()); appErr != nil {
+		t.Fatalf("idempotent recovery error = %v", appErr)
+	}
+}
+
+func TestDifferentActionCannotSatisfyPendingActionIntent(t *testing.T) {
+	core := newFakeCore()
+	state := store.New(t.TempDir())
+	attempt := 1
+	pending := RunActionRequest{ActionID: "pending-answer", RunID: "run-waiting", Type: ActionAnswer, ExpectedStateVersion: 4, NodeID: "plan", ExpectedAttempt: &attempt, Answers: map[string]any{"scope": "core"}}
+	hash, canonical, err := canonicalRequest(pending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.BeginApplicationJournal("action", pending.ActionID, hash, canonical, pending.RunID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	different := pending
+	different.ActionID = "different-answer"
+	different.Answers = map[string]any{"scope": "all"}
+	if _, appErr := NewService(core, "codex", state).RunAction(context.Background(), different); appErr != nil {
+		t.Fatal(appErr)
+	}
+	if appErr := NewService(core, "codex", state).Recover(context.Background()); appErr != nil {
+		t.Fatalf("recovery should not be bricked by another action: %v", appErr)
+	}
+	if _, appErr := NewService(core, "codex", state).RunAction(context.Background(), pending); appErr == nil || appErr.Code != CodeConflict {
+		t.Fatalf("pending action was misattributed: %v", appErr)
+	}
+}
+
+func TestCancelPreconditionIsRecheckedInsideCoreMutation(t *testing.T) {
+	core := newFakeCore()
+	core.cancelBeforePrecondition = func(snapshot *run.WorkflowSnapshot) { snapshot.StateVersion++ }
+	service := NewService(core, "codex", store.New(t.TempDir()))
+	_, appErr := service.RunAction(context.Background(), RunActionRequest{ActionID: "stale-cancel", RunID: "run-waiting", Type: ActionCancel, ExpectedStateVersion: 4})
+	if appErr == nil || appErr.Code != CodeConflict {
+		t.Fatalf("cancel error = %v", appErr)
+	}
+	if core.cancelled != "" {
+		t.Fatalf("stale cancel recorded side effect for %q", core.cancelled)
 	}
 }
 

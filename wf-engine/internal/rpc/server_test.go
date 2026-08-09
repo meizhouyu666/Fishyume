@@ -28,6 +28,23 @@ type fakeBackend struct {
 	starts  int
 }
 
+func TestApplicationRPCErrorBoundsOversizedData(t *testing.T) {
+	var output bytes.Buffer
+	server := &Server{writer: &output}
+	server.writeApplicationError(1, application.NewError(application.CodeInvalidArgument, "stable message", map[string]any{"detail": strings.Repeat("x", application.MaxErrorDataBytes*2)}))
+	var response Response
+	if err := json.Unmarshal(output.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error == nil || response.Error.Message != "stable message" {
+		t.Fatalf("error=%+v", response.Error)
+	}
+	data, err := json.Marshal(response.Error.Data)
+	if err != nil || len(data) > application.MaxErrorDataBytes {
+		t.Fatalf("data len=%d err=%v", len(data), err)
+	}
+}
+
 func TestFormalApplicationRPCAndConnectionConcurrency(t *testing.T) {
 	state := store.New(t.TempDir())
 	service := run.NewService(&fakeBackend{}, state)

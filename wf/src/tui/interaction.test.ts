@@ -107,4 +107,8 @@ test('needs_input answer stays bound to Attempt and question identity and emits 
   assert.equal(resumeActionForMode(state, changed), undefined);
   state = transitionConsoleState(state, {type: 'reconcile', nodeIds, actionTargets: changed});
   assert.equal(state.mode, 'idle');
+  const multiQuestion = [{...targets[1]!, questionIds: ['scope', 'detail']}];
+  let nullState = transitionConsoleState({...initialConsoleInteractionState}, {type: 'begin-answer', target: multiQuestion[0]!});
+  nullState = transitionConsoleState(nullState, {type: 'append-answer', text: '{"scope":null,"detail":"x"}'});
+  assert.equal(resumeActionForMode(nullState, multiQuestion), undefined);
 });
