@@ -3,6 +3,7 @@ import React from 'react';
 import {render, type Instance} from 'ink';
 import type {EngineClient} from '../bridge/engine.js';
 import type {ResumeAction, RunEvent, RunStatusView, WorkflowSnapshot} from '../bridge/types.js';
+import {applicationRunToStatus, callApplication, newActionId, type RunActionRequest, type RunGetResponse} from '../bridge/application.js';
 import {RunApp} from './run-app.js';
 
 export type LiveConsoleMode = 'run' | 'watch';
@@ -54,7 +55,8 @@ export class LiveConsoleController {
     const revision = ++this.#revision;
     const task = this.#refreshChain.then(async () => {
       if (this.#closed) return;
-      const view = await this.#client.call<RunStatusView>('run.status', {runId: this.#runId});
+      const response = await callApplication(this.#client, 'run.get', {runId: this.#runId}) as RunGetResponse;
+      const view = applicationRunToStatus(response);
       if (this.#closed || revision !== this.#revision) return;
       if (!view.run || view.run.id !== this.#runId) throw new Error(`run ${this.#runId} returned a missing or mismatched status`);
       this.#view = view;
@@ -67,12 +69,14 @@ export class LiveConsoleController {
 
   async resume(action: ResumeAction): Promise<ActionResult> {
     const expected = this.#view?.run?.stateVersion;
-    return this.#mutate('run.resume', {runId: this.#runId, ...(expected === undefined ? {} : {expectedStateVersion: expected}), action}, `${action.type} ${action.nodeId}`);
+    const node = this.#view?.run?.nodes[action.nodeId];
+    const request: RunActionRequest = {actionId: newActionId(), runId: this.#runId, type: action.type, expectedStateVersion: expected ?? 0, nodeId: action.nodeId, ...((action.type === 'retry' || action.type === 'answer') && node?.currentAttempt !== undefined ? {expectedAttempt: node.currentAttempt} : {}), ...(action.reason === undefined ? {} : {reason: action.reason}), ...(action.answers === undefined ? {} : {answers: action.answers}), ...(action.acknowledgeDuplicateRisk === undefined ? {} : {acknowledgeDuplicateRisk: action.acknowledgeDuplicateRisk})};
+    return this.#mutate(request, `${action.type} ${action.nodeId}`);
   }
 
   async cancel(): Promise<ActionResult> {
     const expected = this.#view?.run?.stateVersion;
-    return this.#mutate('run.cancel', {runId: this.#runId, ...(expected === undefined ? {} : {expectedStateVersion: expected})}, 'cancel run');
+    return this.#mutate({actionId: newActionId(), runId: this.#runId, type: 'cancel', expectedStateVersion: expected ?? 0}, 'cancel run');
   }
 
   detach(): Promise<void> {
@@ -106,20 +110,20 @@ export class LiveConsoleController {
     await this.#refreshChain;
   }
 
-  #mutate(method: 'run.resume' | 'run.cancel', params: unknown, label: string): Promise<ActionResult> {
+  #mutate(request: RunActionRequest, label: string): Promise<ActionResult> {
     if (this.#pendingMutation) return Promise.resolve({accepted: false, ok: false, message: 'ignored · another action is already pending'});
     this.#pendingMutation = true;
-    const task = this.#executeMutation(method, params, label);
+    const task = this.#executeMutation(request, label);
     this.#mutationTask = task;
     void task.finally(() => {if (this.#mutationTask === task) this.#mutationTask = undefined});
     return task;
   }
 
-  async #executeMutation(method: 'run.resume' | 'run.cancel', params: unknown, label: string): Promise<ActionResult> {
+  async #executeMutation(request: RunActionRequest, label: string): Promise<ActionResult> {
     ++this.#revision;
     try {
-      await this.#client.call<WorkflowSnapshot>(method, params);
-      if (method === 'run.resume') this.#mayOwnController = true;
+      await callApplication(this.#client, 'run.action', request);
+      if (request.type !== 'cancel') this.#mayOwnController = true;
       return {accepted: true, ok: true, message: `${label} submitted`};
     } catch (error) {
       return {accepted: true, ok: false, message: `${label} failed · ${error instanceof Error ? error.message : String(error)}`};

@@ -46,7 +46,7 @@ export function RunApp({view, startedAt, width: fixedWidth, now: fixedNow, color
   const targets = actionableNodes(view); const nodeIds = run?.topologicalOrder.filter(id => Boolean(run.nodes[id])) ?? [];
   const visualNodeId = selectedNodeId(interaction, nodeIds); const target = targets.find(item => item.nodeId === visualNodeId);
   const boundTarget = boundActionableNode(interaction, targets); const interactive = Boolean(onResume && onCancel && onExit);
-  const targetSignature = targets.map(item => `${item.nodeId}:${item.kind}:${item.duplicateRisk}`).join('|');
+  const targetSignature = targets.map(item => `${item.nodeId}:${item.kind}:${item.duplicateRisk}:${item.expectedAttempt ?? ''}:${item.questionIds?.join(',') ?? ''}`).join('|');
   const nodeSignature = nodeIds.join('|');
   useEffect(() => {dispatch({type: 'reconcile', nodeIds, actionTargets: targets})}, [nodeSignature, targetSignature]);
 
@@ -77,6 +77,12 @@ export function RunApp({view, startedAt, width: fixedWidth, now: fixedNow, color
       if (!key.ctrl && !key.meta && input) dispatch({type: 'append-reason', text: input});
       return;
     }
+    if (interaction.mode === 'answer') {
+      if (key.return) {const current = currentAction(); if (current) void submitResume(current.action, current.target); return}
+      if (key.backspace || key.delete) {dispatch({type: 'backspace'}); return}
+      if (!key.ctrl && !key.meta && input) dispatch({type: 'append-answer', text: input});
+      return;
+    }
     if (interaction.mode === 'retry-confirm' || interaction.mode === 'retry-risk-confirm') {
       if (key.return || input.toLowerCase() === 'y') {const current = currentAction(); if (current) void submitResume(current.action, current.target)}
       return;
@@ -85,7 +91,10 @@ export function RunApp({view, startedAt, width: fixedWidth, now: fixedNow, color
     if (key.ctrl && input.toLowerCase() === 'c') {onExit?.(); return}
     const basicEvent = basicConsoleKeyEvent(input, key, nodeIds);
     if (basicEvent) {setMessage(undefined); setPendingTarget(undefined); dispatch(basicEvent); return}
-    if (input === 'a') {const action = approveAction(target); if (action && target) void submitResume(action, target); return}
+    if (input === 'a') {
+      if (target?.kind === 'answer') {dispatch({type: 'begin-answer', target}); return}
+      const action = approveAction(target); if (action && target) void submitResume(action, target); return
+    }
     if (input === 'r' && target?.kind === 'approval') {dispatch({type: 'begin-reject', target}); return}
     if (input === 'R' && target?.kind === 'retry') {dispatch({type: 'begin-retry', target}); return}
     if (input === 'c' && run.phase !== 'completed' && run.phase !== 'cancelling') {dispatch({type: 'begin-cancel'}); return}

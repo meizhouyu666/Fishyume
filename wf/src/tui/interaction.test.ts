@@ -24,7 +24,7 @@ const nodes: Record<string, NodeSummary> = {
 };
 const nodeIds = Object.keys(nodes);
 const run: WorkflowSnapshot = {protocolVersion: 2, id: 'run-1', workflowName: 'fixture', project: 'p', backend: 'direct', phase: 'waiting', topologicalOrder: nodeIds, nodes, cancelRequested: false, stateDir: 'state', createdAt, updatedAt: createdAt};
-const view: RunStatusView = {protocolVersion: 2, legacy: false, run};
+const view: RunStatusView = {protocolVersion: 2, legacy: false, run, nodes: [{protocolVersion: 2, runId: 'run-1', id: 'input', type: 'agent', phase: 'waiting', reason: 'agent_waiting_input', currentAttempt: 1, result: {summary: 'scope required', questions: [{id: 'scope', prompt: 'Which scope?', choices: ['core', 'all'], required: true}]}, createdAt, updatedAt: createdAt}]};
 
 function reconcile(state = initialConsoleInteractionState, actionTargets = actionableNodes(view)) {
   return transitionConsoleState(state, {type: 'reconcile', nodeIds, actionTargets});
@@ -33,7 +33,7 @@ function reconcile(state = initialConsoleInteractionState, actionTargets = actio
 test('actionable nodes are derived only from Engine retry and approval state', () => {
   assert.deepEqual(actionableNodes(view), [
     {nodeId: 'approve', kind: 'approval', duplicateRisk: false},
-    {nodeId: 'input', kind: 'retry', duplicateRisk: false},
+    {nodeId: 'input', kind: 'answer', duplicateRisk: false, expectedAttempt: 1, questionIds: ['scope']},
     {nodeId: 'failed', kind: 'retry', duplicateRisk: false},
     {nodeId: 'unknown', kind: 'retry', duplicateRisk: true},
   ]);
@@ -95,4 +95,16 @@ test('approve, reject, retry, cancel, Escape, and backspace remain pure transiti
   state = transitionConsoleState(state, {type: 'escape'}); assert.equal(state.mode, 'idle'); assert.equal(state.rejectReason, '');
   state = transitionConsoleState(state, {type: 'begin-cancel'}); assert.equal(state.mode, 'cancel-confirm');
   state = transitionConsoleState(state, {type: 'submitted'}); assert.equal(state.mode, 'idle');
+});
+
+test('needs_input answer stays bound to Attempt and question identity and emits scalar answers', () => {
+  const targets = actionableNodes(view);
+  let state = reconcile({...initialConsoleInteractionState, selectedIndex: 1, selectedNodeId: 'input'});
+  state = transitionConsoleState(state, {type: 'begin-answer', target: targets[1]!});
+  state = transitionConsoleState(state, {type: 'append-answer', text: 'core'});
+  assert.deepEqual(resumeActionForMode(state, targets), {type: 'answer', nodeId: 'input', expectedAttempt: 1, answers: {scope: 'core'}});
+  const changed = targets.map(target => target.nodeId === 'input' ? {...target, questionIds: ['scope-v2']} : target);
+  assert.equal(resumeActionForMode(state, changed), undefined);
+  state = transitionConsoleState(state, {type: 'reconcile', nodeIds, actionTargets: changed});
+  assert.equal(state.mode, 'idle');
 });

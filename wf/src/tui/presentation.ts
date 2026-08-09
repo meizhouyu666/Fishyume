@@ -205,6 +205,7 @@ function actionDetail(view: RunStatusView, context: PresentationActionContext, w
   const lines: string[] = [];
   if (context.pending) lines.push(`working${separator}target fixed${target ? `${separator}${target.nodeId}` : ''}`);
   else if (state.mode === 'reject') lines.push(`reason${separator}${state.rejectReason || '(empty; rejection will still be submitted)'}`);
+  else if (state.mode === 'answer') lines.push(`${target?.questionIds?.length === 1 ? 'answer' : 'answers'}${separator}${state.answerText || '(empty)'}`);
   else if (state.mode === 'retry-risk-confirm') lines.push('Retry may repeat external effects. Explicit duplicate-risk acknowledgement is required.');
   else if (state.mode === 'retry-confirm') lines.push('Retry this node using the Engine current actionable identity?');
   else if (state.mode === 'cancel-confirm') lines.push('Cancel this run? Active executions may be stopped; cancellation is not complete until confirmed by the Engine.');
@@ -216,7 +217,7 @@ function actionDetail(view: RunStatusView, context: PresentationActionContext, w
 function helpDetail(width: number): DetailPresentation {
   return {title: 'HELP', role: 'brand', lines: [
     'Select any Workflow node with ↑/↓ or j/k; action keys only apply to the selected Engine-actionable node.',
-    'Enter folds or expands Focus Detail. a approves; r rejects with a reason; R retries after confirmation.',
+    'Enter folds or expands Focus Detail. a approves or answers input; r rejects with a reason; R retries after confirmation.',
     'd/q/Ctrl+C detach or stop observing. They never cancel; c is the explicit run cancellation action.',
     'Action input and confirmation stay bound to nodeId, kind, and duplicate-risk identity.',
   ].map(line => fitText(line, width))};
@@ -245,6 +246,7 @@ function footerItems(view: RunStatusView, options: RunPresentationOptions, selec
   if (selectedNode && action) {
     const target = action.actionable.find(item => item.nodeId === selectedNode.id);
     if (target?.kind === 'approval') items.push('a approve', 'r reject');
+    if (target?.kind === 'answer') items.push('a answer');
     if (target?.kind === 'retry') items.push('R retry');
     if (run.phase !== 'cancelling') items.push('c cancel');
     items.push(state?.helpVisible ? '? close' : '? help', 'q detach');

@@ -1,14 +1,16 @@
 import type {NodeSummary, ResumeAction, RunStatusView} from '../bridge/types.js';
 
-const retryableWaitingReasons = new Set(['agent_waiting_input', 'completion_missing', 'invalid_result']);
+const retryableWaitingReasons = new Set(['completion_missing', 'invalid_result']);
 
 export interface ActionableNode {
   nodeId: string;
-  kind: 'approval' | 'retry';
+  kind: 'approval' | 'answer' | 'retry';
   duplicateRisk: boolean;
+  expectedAttempt?: number;
+  questionIds?: string[];
 }
 
-export type ConsoleMode = 'idle' | 'reject' | 'retry-confirm' | 'retry-risk-confirm' | 'cancel-confirm';
+export type ConsoleMode = 'idle' | 'reject' | 'answer' | 'retry-confirm' | 'retry-risk-confirm' | 'cancel-confirm';
 export interface ConsoleInteractionState {
   selectedIndex: number;
   selectedNodeId?: string;
@@ -16,6 +18,7 @@ export interface ConsoleInteractionState {
   helpVisible: boolean;
   mode: ConsoleMode;
   rejectReason: string;
+  answerText: string;
   actionTarget?: ActionableNode;
 }
 
@@ -27,14 +30,16 @@ export type ConsoleInteractionEvent =
   | {type: 'toggle-help'}
   | {type: 'escape'}
   | {type: 'begin-reject'; target: ActionableNode}
+  | {type: 'begin-answer'; target: ActionableNode}
   | {type: 'begin-retry'; target: ActionableNode}
   | {type: 'begin-cancel'}
   | {type: 'append-reason'; text: string}
+  | {type: 'append-answer'; text: string}
   | {type: 'backspace'}
   | {type: 'submitted'};
 
 export const initialConsoleInteractionState: ConsoleInteractionState = {
-  selectedIndex: 0, detailExpanded: true, helpVisible: false, mode: 'idle', rejectReason: '',
+  selectedIndex: 0, detailExpanded: true, helpVisible: false, mode: 'idle', rejectReason: '', answerText: '',
 };
 
 export function basicConsoleKeyEvent(
@@ -63,11 +68,16 @@ export function isRetryableNode(node: NodeSummary): boolean {
 export function actionableNodes(view: RunStatusView): ActionableNode[] {
   const run = view.run;
   if (!run) return [];
+  const snapshots = new Map((view.nodes ?? []).map(node => [node.id, node]));
   const result: ActionableNode[] = [];
   for (const nodeId of run.topologicalOrder) {
     const node = run.nodes[nodeId];
     if (!node) continue;
     if (isWaitingApproval(node)) result.push({nodeId, kind: 'approval', duplicateRisk: false});
+    else if (node.phase === 'waiting' && node.reason === 'agent_waiting_input' && node.currentAttempt) {
+      const questionIds = snapshots.get(nodeId)?.result?.questions?.map(question => question.id) ?? [];
+      if (questionIds.length) result.push({nodeId, kind: 'answer', duplicateRisk: false, expectedAttempt: node.currentAttempt, questionIds});
+    }
     else if (isRetryableNode(node)) result.push({nodeId, kind: 'retry', duplicateRisk: node.conclusion === 'indeterminate'});
   }
   return result;
@@ -79,7 +89,7 @@ export function reconcileSelection(selectedIndex: number, count: number): number
 }
 
 function sameActionableNode(left: ActionableNode, right: ActionableNode): boolean {
-  return left.nodeId === right.nodeId && left.kind === right.kind && left.duplicateRisk === right.duplicateRisk;
+  return left.nodeId === right.nodeId && left.kind === right.kind && left.duplicateRisk === right.duplicateRisk && left.expectedAttempt === right.expectedAttempt && JSON.stringify(left.questionIds ?? []) === JSON.stringify(right.questionIds ?? []);
 }
 
 export function selectedNodeId(state: ConsoleInteractionState, nodeIds: readonly string[]): string | undefined {
@@ -110,7 +120,7 @@ export function transitionConsoleState(state: ConsoleInteractionState, event: Co
       const selectedIndex = preservedIndex >= 0 ? preservedIndex : reconcileSelection(state.selectedIndex, event.nodeIds.length);
       const selectedNodeId = event.nodeIds[selectedIndex];
       const actionTarget = boundActionableNode(state, event.actionTargets);
-      if (state.actionTarget && !actionTarget) return {...state, selectedIndex, selectedNodeId, mode: 'idle', rejectReason: '', actionTarget: undefined};
+      if (state.actionTarget && !actionTarget) return {...state, selectedIndex, selectedNodeId, mode: 'idle', rejectReason: '', answerText: '', actionTarget: undefined};
       return {...state, selectedIndex, selectedNodeId, ...(actionTarget ? {actionTarget} : {})};
     }
     case 'toggle-detail':
@@ -118,19 +128,24 @@ export function transitionConsoleState(state: ConsoleInteractionState, event: Co
     case 'toggle-help':
       return state.mode === 'idle' ? {...state, helpVisible: !state.helpVisible} : state;
     case 'escape':
-      return state.mode === 'idle' ? {...state, helpVisible: false} : {...state, mode: 'idle', rejectReason: '', actionTarget: undefined};
+      return state.mode === 'idle' ? {...state, helpVisible: false} : {...state, mode: 'idle', rejectReason: '', answerText: '', actionTarget: undefined};
     case 'begin-reject':
       return state.mode === 'idle' && event.target.kind === 'approval' ? {...state, mode: 'reject', rejectReason: '', actionTarget: {...event.target}, helpVisible: false} : state;
+    case 'begin-answer':
+      return state.mode === 'idle' && event.target.kind === 'answer' ? {...state, mode: 'answer', answerText: '', actionTarget: {...event.target}, helpVisible: false} : state;
     case 'begin-retry':
       return state.mode === 'idle' && event.target.kind === 'retry' ? {...state, mode: event.target.duplicateRisk ? 'retry-risk-confirm' : 'retry-confirm', actionTarget: {...event.target}, helpVisible: false} : state;
     case 'begin-cancel':
       return state.mode === 'idle' ? {...state, mode: 'cancel-confirm', actionTarget: undefined, helpVisible: false} : state;
     case 'append-reason':
       return state.mode === 'reject' ? {...state, rejectReason: state.rejectReason + event.text.replace(/[\u0000-\u001f\u007f]/g, '')} : state;
+    case 'append-answer':
+      return state.mode === 'answer' ? {...state, answerText: state.answerText + event.text.replace(/[\u0000-\u001f\u007f]/g, '')} : state;
     case 'backspace':
-      return state.mode === 'reject' ? {...state, rejectReason: Array.from(state.rejectReason).slice(0, -1).join('')} : state;
+      if (state.mode === 'reject') return {...state, rejectReason: Array.from(state.rejectReason).slice(0, -1).join('')};
+      return state.mode === 'answer' ? {...state, answerText: Array.from(state.answerText).slice(0, -1).join('')} : state;
     case 'submitted':
-      return {...state, mode: 'idle', rejectReason: '', actionTarget: undefined};
+      return {...state, mode: 'idle', rejectReason: '', answerText: '', actionTarget: undefined};
   }
 }
 
@@ -138,9 +153,34 @@ export function resumeActionForMode(state: ConsoleInteractionState, targets: rea
   const target = boundActionableNode(state, targets);
   if (!target) return undefined;
   if (state.mode === 'reject' && target.kind === 'approval') return {type: 'reject', nodeId: target.nodeId, reason: state.rejectReason};
+  if (state.mode === 'answer' && target.kind === 'answer' && target.expectedAttempt && target.questionIds?.length) {
+    const answers = parseAnswers(state.answerText, target.questionIds);
+    return answers ? {type: 'answer', nodeId: target.nodeId, expectedAttempt: target.expectedAttempt, answers} : undefined;
+  }
   if (state.mode === 'retry-confirm' && target.kind === 'retry') return {type: 'retry', nodeId: target.nodeId, acknowledgeDuplicateRisk: false};
   if (state.mode === 'retry-risk-confirm' && target.kind === 'retry') return {type: 'retry', nodeId: target.nodeId, acknowledgeDuplicateRisk: true};
   return undefined;
+}
+
+function parseAnswers(text: string, questionIds: readonly string[]): Record<string, string | number | boolean | null> | undefined {
+  const trimmed = text.trim();
+  if (questionIds.length === 1) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (parsed === null || typeof parsed === 'string' || typeof parsed === 'number' || typeof parsed === 'boolean') return {[questionIds[0]!]: parsed};
+    } catch {}
+    return {[questionIds[0]!]: text};
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+    const answers: Record<string, string | number | boolean | null> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (value !== null && typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return undefined;
+      answers[key] = value;
+    }
+    return answers;
+  } catch {return undefined}
 }
 
 export function approveAction(target: ActionableNode | undefined): ResumeAction | undefined {

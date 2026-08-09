@@ -84,6 +84,7 @@ const indeterminateInteraction: ConsoleInteractionState = {
   helpVisible: false,
   mode: 'retry-risk-confirm',
   rejectReason: '',
+  answerText: '',
   actionTarget: {nodeId: 'publish-artifact', kind: 'retry', duplicateRisk: true},
 };
 
