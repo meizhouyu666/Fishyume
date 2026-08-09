@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {PassThrough} from 'node:stream';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import type {SystemCapabilitiesResponse} from '../bridge/application.js';
@@ -37,6 +38,21 @@ test('MCP transport close settles the command and closes the EngineClient exactl
   await Promise.race([running, new Promise<void>((_, reject) => setTimeout(() => reject(new Error('MCP command did not settle after host EOF')), 250))]);
   assert.equal(engine.closed, true);
   assert.equal(engine.closeCount, 1);
+});
+
+test('MCP stdio input EOF settles without an explicit transport close', async () => {
+  const engine = new FakeApplicationClient();
+  const input = new PassThrough();
+  const [hostTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const running = runMCPTransport(engine, serverTransport, input);
+  await hostTransport.start();
+  input.resume();
+  input.end();
+  await Promise.race([running, new Promise<void>((_, reject) => setTimeout(() => reject(new Error('MCP command did not settle after stdin EOF')), 250))]);
+  assert.equal(engine.closeCount, 1);
+  assert.equal(input.listenerCount('end'), 0);
+  assert.equal(input.listenerCount('close'), 0);
+  assert.equal(input.listenerCount('error'), 0);
 });
 
 test('MCP and Machine CLI expose identical Application response JSON', async () => {

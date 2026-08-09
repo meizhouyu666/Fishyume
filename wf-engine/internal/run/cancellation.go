@@ -65,11 +65,11 @@ func (s *Service) markConcurrentCancellationIntent(runID string, request store.C
 	if err != nil {
 		return nil, false, err
 	}
-	if run.Phase == PhaseCompleted {
-		return nil, false, nil
-	}
 	if request.ExpectedStateVersion != nil && run.StateVersion != *request.ExpectedStateVersion {
 		return nil, false, fmt.Errorf("state version conflict: expected %d, current %d", *request.ExpectedStateVersion, run.StateVersion)
+	}
+	if run.Phase == PhaseCompleted {
+		return nil, false, nil
 	}
 	if !run.CancelRequested || run.Phase != PhaseCancelling {
 		run.CancelRequested, run.Phase, run.Conclusion, run.Reason, run.Summary, run.UpdatedAt = true, PhaseCancelling, "", "", "workflow cancellation requested", s.now().UTC()

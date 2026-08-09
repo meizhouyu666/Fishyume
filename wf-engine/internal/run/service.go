@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -65,6 +66,23 @@ type ResumeAction struct {
 	Answers                  map[string]any `json:"answers,omitempty"`
 	AcknowledgeDuplicateRisk bool           `json:"acknowledgeDuplicateRisk,omitempty"`
 }
+
+type actionIntent struct {
+	ActionID        string       `json:"actionId"`
+	RequestHash     string       `json:"requestHash"`
+	Type            string       `json:"type"`
+	NodeID          string       `json:"nodeId"`
+	ExpectedAttempt *int         `json:"expectedAttempt,omitempty"`
+	Phase           string       `json:"phase"`
+	Action          ResumeAction `json:"action"`
+}
+
+const (
+	actionIntentPrepared          = "prepared"
+	actionIntentNodeApplied       = "node_applied"
+	actionIntentDownstreamApplied = "downstream_applied"
+	maxActionReceipts             = 256
+)
 
 type ResumeRequest struct {
 	RunID                string        `json:"runId"`
@@ -701,7 +719,33 @@ func (s *Service) Resume(_ context.Context, request ResumeRequest) (WorkflowSnap
 			if receipt.RequestHash != request.Action.ActionRequestHash {
 				return WorkflowSnapshot{}, fmt.Errorf("actionId %q is already bound to a different request", request.Action.ActionID)
 			}
+			_ = s.store.RemoveActionIntent(request.RunID, request.Action.ActionID)
 			return run, nil
+		}
+		var intent actionIntent
+		intentErr := s.store.ReadActionIntent(request.RunID, request.Action.ActionID, &intent)
+		if intentErr == nil {
+			if intent.RequestHash != request.Action.ActionRequestHash || intent.Type != request.Action.Type || intent.NodeID != request.Action.NodeID || !reflect.DeepEqual(intent.Action, *request.Action) {
+				return WorkflowSnapshot{}, fmt.Errorf("actionId %q is already bound to a different request", request.Action.ActionID)
+			}
+			if intent.Phase != actionIntentPrepared {
+				if err := s.resumeActionIntent(&run, *request.Action, intent); err != nil {
+					return WorkflowSnapshot{}, err
+				}
+				if run.Phase == PhaseCompleted {
+					return run, nil
+				}
+				if run.Phase != PhaseCompleted {
+					releaseLease = false
+					s.startController(request.RunID, lease, func(ctx context.Context, generation uint64) { s.control(ctx, request.RunID, generation) })
+				}
+				return s.Get(request.RunID)
+			}
+			if err := s.store.RemoveActionIntent(request.RunID, request.Action.ActionID); err != nil {
+				return WorkflowSnapshot{}, err
+			}
+		} else if !errors.Is(intentErr, os.ErrNotExist) {
+			return WorkflowSnapshot{}, intentErr
 		}
 	}
 	if request.ExpectedStateVersion != nil && run.StateVersion != *request.ExpectedStateVersion {
@@ -1927,6 +1971,9 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 	if err := s.store.ReadNode(run.ID, action.NodeID, &node); err != nil {
 		return err
 	}
+	if err := s.prepareActionIntent(run.ID, action); err != nil {
+		return err
+	}
 	switch action.Type {
 	case "approve", "reject":
 		decision := strings.TrimSuffix(action.Type, "e")
@@ -1940,10 +1987,7 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 				if run.Phase == PhaseCompleted {
 					return nil
 				}
-				now := s.now().UTC()
-				run.Nodes[node.ID], run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = summarizeNode(node), PhaseRunning, "", "", "", "approval "+decision, now
-				s.recordActionReceipt(run, action.ActionID, action.ActionRequestHash)
-				return s.persistRun(run, &node, "node.approval_decided", run.Summary)
+				return s.finalizeAction(run, &node, action, "node.approval_decided", "approval "+decision)
 			}
 			return fmt.Errorf("approval node %q already has conflicting decision %q", node.ID, node.Result.Decision)
 		}
@@ -1961,9 +2005,10 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 		if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
 			return err
 		}
-		run.Nodes[node.ID], run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = summarizeNode(node), PhaseRunning, "", "", "", "approval "+decision, now
-		s.recordActionReceipt(run, action.ActionID, action.ActionRequestHash)
-		return s.persistRun(run, &node, "node.approval_decided", run.Summary)
+		if err := s.markActionIntent(run.ID, action, actionIntentNodeApplied); err != nil {
+			return err
+		}
+		return s.finalizeAction(run, &node, action, "node.approval_decided", "approval "+decision)
 	case "retry":
 		allowed := node.Phase == NodePhaseWaiting && (node.Reason == ReasonAgentWaitingInput || node.Reason == ReasonCompletionMissing || node.Reason == ReasonInvalidResult)
 		allowed = allowed || (node.Phase == NodePhaseCompleted && (node.Conclusion == ConclusionFailed || node.Conclusion == ConclusionIndeterminate))
@@ -1978,13 +2023,16 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 		if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
 			return err
 		}
-		run.Nodes[node.ID] = summarizeNode(node)
+		if err := s.markActionIntent(run.ID, action, actionIntentNodeApplied); err != nil {
+			return err
+		}
 		if err := s.resetDownstream(run, node.ID); err != nil {
 			return err
 		}
-		run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.CancelRequested, run.UpdatedAt = PhaseRunning, "", "", "", "explicit retry requested", false, now
-		s.recordActionReceipt(run, action.ActionID, action.ActionRequestHash)
-		return s.persistRun(run, &node, "node.retry_requested", run.Summary)
+		if err := s.markActionIntent(run.ID, action, actionIntentDownstreamApplied); err != nil {
+			return err
+		}
+		return s.finalizeAction(run, &node, action, "node.retry_requested", "explicit retry requested")
 	case "answer":
 		if node.Type != "agent" || node.Phase != NodePhaseWaiting || node.Reason != ReasonAgentWaitingInput || node.Result == nil || len(node.Result.Questions) == 0 {
 			return fmt.Errorf("node %q is not waiting for structured input", node.ID)
@@ -2001,15 +2049,75 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 		if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
 			return err
 		}
-		run.Nodes[node.ID] = summarizeNode(node)
+		if err := s.markActionIntent(run.ID, action, actionIntentNodeApplied); err != nil {
+			return err
+		}
 		if err := s.resetDownstream(run, node.ID); err != nil {
 			return err
 		}
-		run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.CancelRequested, run.UpdatedAt = PhaseRunning, "", "", "", "input answer submitted", false, now
-		s.recordActionReceipt(run, action.ActionID, action.ActionRequestHash)
-		return s.persistRun(run, &node, "node.answer_submitted", run.Summary)
+		if err := s.markActionIntent(run.ID, action, actionIntentDownstreamApplied); err != nil {
+			return err
+		}
+		return s.finalizeAction(run, &node, action, "node.answer_submitted", "input answer submitted")
 	default:
 		return fmt.Errorf("unknown resume action %q", action.Type)
+	}
+}
+
+func (s *Service) prepareActionIntent(runID string, action ResumeAction) error {
+	if action.ActionID == "" {
+		return nil
+	}
+	return s.store.WriteActionIntent(runID, action.ActionID, actionIntent{ActionID: action.ActionID, RequestHash: action.ActionRequestHash, Type: action.Type, NodeID: action.NodeID, ExpectedAttempt: action.ExpectedAttempt, Phase: actionIntentPrepared, Action: action})
+}
+
+func (s *Service) markActionIntent(runID string, action ResumeAction, phase string) error {
+	if action.ActionID == "" {
+		return nil
+	}
+	return s.store.WriteActionIntent(runID, action.ActionID, actionIntent{ActionID: action.ActionID, RequestHash: action.ActionRequestHash, Type: action.Type, NodeID: action.NodeID, ExpectedAttempt: action.ExpectedAttempt, Phase: phase, Action: action})
+}
+
+func (s *Service) finalizeAction(run *WorkflowSnapshot, node *NodeSnapshot, action ResumeAction, eventType, summary string) error {
+	now := s.now().UTC()
+	run.Nodes[node.ID] = summarizeNode(*node)
+	run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.CancelRequested, run.UpdatedAt = PhaseRunning, "", "", "", summary, false, now
+	s.recordActionReceipt(run, action.ActionID, action.ActionRequestHash)
+	if err := s.persistRun(run, node, eventType, summary); err != nil {
+		return err
+	}
+	if action.ActionID == "" {
+		return nil
+	}
+	return s.store.RemoveActionIntent(run.ID, action.ActionID)
+}
+
+func (s *Service) resumeActionIntent(run *WorkflowSnapshot, action ResumeAction, intent actionIntent) error {
+	var node NodeSnapshot
+	if err := s.store.ReadNode(run.ID, intent.NodeID, &node); err != nil {
+		return err
+	}
+	if intent.Phase == actionIntentNodeApplied && (intent.Type == "answer" || intent.Type == "retry") {
+		if err := s.resetDownstream(run, intent.NodeID); err != nil {
+			return err
+		}
+		if err := s.markActionIntent(run.ID, action, actionIntentDownstreamApplied); err != nil {
+			return err
+		}
+	}
+	switch intent.Type {
+	case "approve", "reject":
+		decision := "approved"
+		if intent.Type == "reject" {
+			decision = "rejected"
+		}
+		return s.finalizeAction(run, &node, action, "node.approval_decided", "approval "+decision)
+	case "retry":
+		return s.finalizeAction(run, &node, action, "node.retry_requested", "explicit retry requested")
+	case "answer":
+		return s.finalizeAction(run, &node, action, "node.answer_submitted", "input answer submitted")
+	default:
+		return fmt.Errorf("invalid action intent type %q", intent.Type)
 	}
 }
 
@@ -2021,6 +2129,16 @@ func (s *Service) recordActionReceipt(run *WorkflowSnapshot, actionID, requestHa
 		run.ActionReceipts = map[string]ActionReceipt{}
 	}
 	run.ActionReceipts[actionID] = ActionReceipt{ActionID: actionID, RequestHash: requestHash, StateVersion: run.StateVersion + 1, Phase: run.Phase, Conclusion: run.Conclusion}
+	for len(run.ActionReceipts) > maxActionReceipts {
+		var oldestID string
+		var oldestVersion uint64
+		for id, receipt := range run.ActionReceipts {
+			if oldestID == "" || receipt.StateVersion < oldestVersion || (receipt.StateVersion == oldestVersion && id < oldestID) {
+				oldestID, oldestVersion = id, receipt.StateVersion
+			}
+		}
+		delete(run.ActionReceipts, oldestID)
+	}
 }
 
 func validateResumeAction(action ResumeAction) error {

@@ -380,8 +380,14 @@ func (s *Service) RunAction(ctx context.Context, request RunActionRequest) (RunA
 		}
 		return RunActionResponse{}, conflictError("state version conflict", map[string]any{"expectedStateVersion": request.ExpectedStateVersion, "currentStateVersion": current.StateVersion})
 	}
-	if appErr := validateActionShape(request, view); appErr != nil {
-		return RunActionResponse{}, appErr
+	// A pending Application journal may be resuming a durable Core action intent
+	// after its Node mutation committed but before the Run receipt did. The
+	// current Node view then no longer describes the original actionable shape;
+	// Core owns the exact intent replay and must be allowed to complete it.
+	if readErr != nil {
+		if appErr := validateActionShape(request, view); appErr != nil {
+			return RunActionResponse{}, appErr
+		}
 	}
 	if readErr != nil {
 		var beginErr error

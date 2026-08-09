@@ -1,6 +1,8 @@
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {StdioServerTransport} from '@modelcontextprotocol/sdk/server/stdio.js';
 import type {Transport} from '@modelcontextprotocol/sdk/shared/transport.js';
+import type {Readable} from 'node:stream';
+import process from 'node:process';
 import {z} from 'zod';
 import {ApplicationCallError, callApplication, type ApplicationMethod} from '../bridge/application.js';
 import {EngineBridge, type EngineClient} from '../bridge/engine.js';
@@ -44,25 +46,41 @@ export function createMCPServer(client: EngineClient): McpServer {
 }
 
 export async function runMCP(client: EngineClient = new EngineBridge()): Promise<void> {
-  await runMCPTransport(client, new StdioServerTransport());
+  await runMCPTransport(client, new StdioServerTransport(), process.stdin);
 }
 
 // Exported for lifecycle tests; production always uses stdio above.
-export async function runMCPTransport(client: EngineClient, transport: Transport): Promise<void> {
+export async function runMCPTransport(client: EngineClient, transport: Transport, eofSource?: Readable): Promise<void> {
   const server = createMCPServer(client);
-  let closed = false;
+  let closing: Promise<void> | undefined;
   let settle!: () => void;
   const settled = new Promise<void>(resolve => {settle = resolve});
-  const closeClient = async (): Promise<void> => {
-    if (closed) return;
-    closed = true;
-    try {await client.close()} finally {settle()}
+  const onEOF = (): void => {void closeAll()};
+  const removeEOFListeners = (): void => {
+    if (!eofSource) return;
+    eofSource.off('end', onEOF);
+    eofSource.off('close', onEOF);
+    eofSource.off('error', onEOF);
+  };
+  const closeAll = async (): Promise<void> => {
+    if (closing) return closing;
+    closing = (async () => {
+      try {await server.close()} catch { /* transport may already be closed */ }
+      try {await transport.close()} catch { /* best effort during EOF */ }
+      try {await client.close()} finally {removeEOFListeners(); settle()}
+    })();
+    return closing;
   };
   // Protocol.connect preserves an already-registered transport close hook.
   // This covers host EOF as well as an explicit transport close without
   // emitting anything on stdout.
-  transport.onclose = () => {void closeClient()};
+  transport.onclose = () => {void closeAll()};
+  if (eofSource) {
+    eofSource.once('end', onEOF);
+    eofSource.once('close', onEOF);
+    eofSource.once('error', onEOF);
+  }
   try {await server.connect(transport)}
-  catch (error) {await closeClient(); throw error}
+  catch (error) {await closeAll(); throw error}
   await settled;
 }

@@ -465,6 +465,32 @@ func TestCancelPreconditionIsRecheckedInsideCoreMutation(t *testing.T) {
 	}
 }
 
+func TestRecoverReplaysPendingActionAfterCoreNodeMutation(t *testing.T) {
+	core := newFakeCore()
+	state := store.New(t.TempDir())
+	service := NewService(core, "codex", state)
+	attempt := 1
+	request := RunActionRequest{ActionID: "node-applied", RunID: "run-waiting", Type: ActionAnswer, ExpectedStateVersion: 4, NodeID: "plan", ExpectedAttempt: &attempt, Answers: map[string]any{"scope": "core"}}
+	hash, canonical, err := canonicalRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.BeginApplicationJournal("action", request.ActionID, hash, canonical, request.RunID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// This is the durable Core window: Node is already applied while the Run
+	// snapshot still exposes the observed stateVersion and no receipt.
+	view := core.views[request.RunID]
+	view.Nodes[0].Phase, view.Nodes[0].Reason, view.Nodes[0].Result = run.NodePhaseReady, "", nil
+	core.views[request.RunID] = view
+	if appErr := service.Recover(context.Background()); appErr != nil {
+		t.Fatalf("recovery rejected node-applied action: %v", appErr)
+	}
+	if core.resumeCount != 1 || core.resumed.Action == nil || core.resumed.Action.ActionID != request.ActionID {
+		t.Fatalf("recovery did not replay exact action: count=%d request=%+v", core.resumeCount, core.resumed)
+	}
+}
+
 func newFakeCore() *fakeCore {
 	created := time.Unix(10, 0).UTC()
 	waitingRun := run.WorkflowSnapshot{ProtocolVersion: 2, StateSchemaVersion: 3, StateVersion: 4, ID: "run-waiting", WorkflowName: "example", Project: "project", ResolvedDriver: "codex", ResolvedTarget: "local", Phase: run.PhaseWaiting, Reason: run.ReasonAgentWaitingInput, TopologicalOrder: []string{"plan"}, Nodes: map[string]run.NodeSummary{"plan": {ID: "plan", Type: "agent", Phase: run.NodePhaseWaiting, Reason: run.ReasonAgentWaitingInput, CurrentAttempt: 1}}, CreatedAt: created, UpdatedAt: created.Add(time.Second)}

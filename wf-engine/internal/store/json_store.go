@@ -2,6 +2,8 @@ package store
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -83,6 +85,44 @@ func (s *Store) WorkflowPath(runID string) string {
 
 func (s *Store) NodePath(runID, nodeID string) string {
 	return filepath.Join(s.RunDir(runID), "nodes", nodeID, "node.json")
+}
+
+func (s *Store) ActionIntentPath(runID, actionID string) string {
+	digest := sha256.Sum256([]byte(actionID))
+	return filepath.Join(s.RunDir(runID), "action-intents", hex.EncodeToString(digest[:])+".json")
+}
+
+func (s *Store) WriteActionIntent(runID, actionID string, intent any) error {
+	if err := validateID("run", runID); err != nil {
+		return err
+	}
+	if actionID == "" {
+		return fmt.Errorf("action id is required")
+	}
+	return s.writeJSON(s.ActionIntentPath(runID, actionID), intent)
+}
+
+func (s *Store) ReadActionIntent(runID, actionID string, target any) error {
+	if err := validateID("run", runID); err != nil {
+		return err
+	}
+	if actionID == "" {
+		return fmt.Errorf("action id is required")
+	}
+	return readJSON(s.ActionIntentPath(runID, actionID), target)
+}
+
+func (s *Store) RemoveActionIntent(runID, actionID string) error {
+	if err := validateID("run", runID); err != nil {
+		return err
+	}
+	if actionID == "" {
+		return fmt.Errorf("action id is required")
+	}
+	if err := os.Remove(s.ActionIntentPath(runID, actionID)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove action intent %q: %w", actionID, err)
+	}
+	return nil
 }
 
 func (s *Store) AttemptDir(runID, nodeID string, number int) string {
