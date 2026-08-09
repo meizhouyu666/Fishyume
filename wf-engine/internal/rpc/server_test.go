@@ -1,23 +1,265 @@
 package rpc
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"wf.local/wf-engine/internal/application"
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/run"
 	"wf.local/wf-engine/internal/store"
 )
 
 type fakeBackend struct {
-	name   string
-	result backend.AgentResult
-	wait   chan struct{}
+	name    string
+	result  backend.AgentResult
+	results []backend.AgentResult
+	wait    chan struct{}
+	mu      sync.Mutex
+	starts  int
+}
+
+func TestFormalApplicationRPCAndConnectionConcurrency(t *testing.T) {
+	state := store.New(t.TempDir())
+	service := run.NewService(&fakeBackend{}, state)
+	applicationService := application.NewService(service, "codex", state)
+	serverConnection, clientConnection := net.Pipe()
+	clientReader := bufio.NewReader(clientConnection)
+	server := NewConnectionServer(serverConnection, serverConnection, service, applicationService, &sync.Mutex{})
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(context.Background()) }()
+	defer func() {
+		_ = clientConnection.Close()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("Serve() error=%v", err)
+			}
+		case <-time.After(time.Second):
+			t.Error("connection server did not stop")
+		}
+	}()
+
+	workflowDocument := map[string]any{
+		"apiVersion": "fishyume/v1", "name": "approval-rpc",
+		"execution": map[string]any{"maxConcurrency": 1},
+		"nodes":     map[string]any{"approve": map[string]any{"type": "approval", "prompt": "Approve?"}},
+	}
+	writeRPCRequest(t, clientConnection, 1, "system.capabilities", map[string]any{})
+	capabilities := readRPCResponse(t, clientConnection, clientReader)
+	if capabilities.ID != 1 || capabilities.Error != nil {
+		t.Fatalf("capabilities response=%+v", capabilities)
+	}
+	writeRPCRequest(t, clientConnection, 2, "workflow.validate", map[string]any{"workflow": map[string]any{"document": workflowDocument}})
+	if response := readRPCResponse(t, clientConnection, clientReader); response.ID != 2 || response.Error != nil {
+		t.Fatalf("validate response=%+v", response)
+	}
+	writeRPCRequest(t, clientConnection, 3, "run.start", map[string]any{"project": "p", "workflow": map[string]any{"document": workflowDocument}, "clientRequestId": "rpc-start-1"})
+	started := readRPCResponse(t, clientConnection, clientReader)
+	var startResult application.RunStartResponse
+	decodeRPCResult(t, started, &startResult)
+	if startResult.RunID == "" {
+		t.Fatalf("start response=%+v", started)
+	}
+
+	var view application.RunGetResponse
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		writeRPCRequest(t, clientConnection, 4, "run.get", map[string]any{"runId": startResult.RunID})
+		decodeRPCResult(t, readRPCResponse(t, clientConnection, clientReader), &view)
+		if view.Run.Phase == string(run.PhaseWaiting) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if view.Run.Phase != string(run.PhaseWaiting) {
+		t.Fatalf("run did not wait for approval: %+v", view.Run)
+	}
+	writeRPCRequest(t, clientConnection, 5, "run.events", map[string]any{"runId": startResult.RunID, "limit": 100})
+	var firstPage application.RunEventsResponse
+	decodeRPCResult(t, readRPCResponse(t, clientConnection, clientReader), &firstPage)
+
+	writeRPCRequest(t, clientConnection, 6, "run.events", map[string]any{"runId": startResult.RunID, "afterSequence": firstPage.NextAfterSequence, "waitMs": 1000})
+	writeRPCRequest(t, clientConnection, 7, "run.action", map[string]any{"actionId": "rpc-action-1", "runId": startResult.RunID, "type": "approve", "expectedStateVersion": view.Run.StateVersion, "nodeId": "approve"})
+	responses := map[int]rpcTestResponse{}
+	for len(responses) < 2 {
+		response := readRPCResponse(t, clientConnection, clientReader)
+		responses[response.ID] = response
+	}
+	if responses[7].Error != nil {
+		t.Fatalf("action response=%+v", responses[7])
+	}
+	var eventPage application.RunEventsResponse
+	decodeRPCResult(t, responses[6], &eventPage)
+	if len(eventPage.Events) == 0 || eventPage.NextAfterSequence <= firstPage.NextAfterSequence {
+		t.Fatalf("event wait was not woken by concurrent action: %+v", eventPage)
+	}
+}
+
+func TestFakeHostAgentFormalApplicationLifecycle(t *testing.T) {
+	needsInput := backend.AgentResult{Status: "needs_input", Summary: "scope required", Questions: []backend.InputQuestion{{ID: "scope", Prompt: "Which scope?", Choices: []string{"core", "all"}, Required: true}}}
+	succeeded := backend.AgentResult{Status: "succeeded", Summary: "implemented", Checks: []string{"tests"}}
+	state := store.New(t.TempDir())
+	service := run.NewService(&fakeBackend{results: []backend.AgentResult{needsInput, succeeded}}, state)
+	applicationService := application.NewService(service, "codex", state)
+	serverConnection, clientConnection := net.Pipe()
+	clientReader := bufio.NewReader(clientConnection)
+	server := NewConnectionServer(serverConnection, serverConnection, service, applicationService, &sync.Mutex{})
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(context.Background()) }()
+	defer func() {
+		_ = clientConnection.Close()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("Serve() error=%v", err)
+			}
+		case <-time.After(time.Second):
+			t.Error("host-agent connection did not stop")
+		}
+	}()
+	document := map[string]any{
+		"apiVersion": "fishyume/v1", "name": "host-agent-e2e", "execution": map[string]any{"maxConcurrency": 1},
+		"nodes": map[string]any{
+			"approve": map[string]any{"type": "approval", "prompt": "Ship?"},
+			"agent":   map[string]any{"type": "agent", "dependsOn": []string{"approve"}, "task": "Implement"},
+		},
+	}
+	writeRPCRequest(t, clientConnection, 1, "system.capabilities", nil)
+	decodeRPCResult(t, readRPCResponse(t, clientConnection, clientReader), new(application.SystemCapabilitiesResponse))
+	for id, method := range map[int]string{2: "workflow.validate", 3: "workflow.explain"} {
+		writeRPCRequest(t, clientConnection, id, method, map[string]any{"workflow": map[string]any{"document": document}})
+		response := readRPCResponse(t, clientConnection, clientReader)
+		if response.Error != nil {
+			t.Fatalf("%s error=%+v", method, response.Error)
+		}
+	}
+	writeRPCRequest(t, clientConnection, 4, "run.start", map[string]any{"project": "p", "workflow": map[string]any{"document": document}, "clientRequestId": "host-start-1"})
+	var started application.RunStartResponse
+	decodeRPCResult(t, readRPCResponse(t, clientConnection, clientReader), &started)
+	if started.Attach != "fishyume attach "+started.RunID {
+		t.Fatalf("attach command=%q", started.Attach)
+	}
+
+	var approval application.RunGetResponse
+	pollRunGet(t, clientConnection, clientReader, started.RunID, func(response application.RunGetResponse) bool {
+		approval = response
+		return response.Run.Phase == string(run.PhaseWaiting) && len(response.Run.Nodes) > 0 && response.Run.Nodes[0].NodeID == "approve"
+	})
+	writeRPCRequest(t, clientConnection, 5, "run.action", map[string]any{"actionId": "host-approve-1", "runId": started.RunID, "type": "approve", "expectedStateVersion": approval.Run.StateVersion, "nodeId": "approve"})
+	if response := readRPCResponse(t, clientConnection, clientReader); response.Error != nil {
+		t.Fatalf("approval error=%+v", response.Error)
+	}
+
+	var needsInputView application.RunGetResponse
+	pollRunGet(t, clientConnection, clientReader, started.RunID, func(response application.RunGetResponse) bool {
+		needsInputView = response
+		for _, node := range response.Run.Nodes {
+			if node.NodeID == "agent" {
+				return node.Reason == "agent_waiting_input"
+			}
+		}
+		return false
+	})
+	var expectedAttempt int
+	for _, node := range needsInputView.Run.Nodes {
+		if node.NodeID == "agent" {
+			expectedAttempt = node.CurrentAttempt
+		}
+	}
+	writeRPCRequest(t, clientConnection, 6, "run.action", map[string]any{"actionId": "host-answer-1", "runId": started.RunID, "type": "answer", "expectedStateVersion": needsInputView.Run.StateVersion, "nodeId": "agent", "expectedAttempt": expectedAttempt, "answers": map[string]any{"scope": "core"}})
+	if response := readRPCResponse(t, clientConnection, clientReader); response.Error != nil {
+		t.Fatalf("answer error=%+v", response.Error)
+	}
+	var result application.RunResultResponse
+	pollResult(t, clientConnection, clientReader, started.RunID, &result)
+	if result.Conclusion != string(run.ConclusionSucceeded) || len(result.Results) != 2 {
+		t.Fatalf("result=%+v", result)
+	}
+}
+
+func pollRunGet(t *testing.T, connection net.Conn, reader *bufio.Reader, runID string, done func(application.RunGetResponse) bool) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		writeRPCRequest(t, connection, 20, "run.get", map[string]any{"runId": runID})
+		var response application.RunGetResponse
+		decodeRPCResult(t, readRPCResponse(t, connection, reader), &response)
+		if done(response) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("run.get polling timed out")
+}
+
+func pollResult(t *testing.T, connection net.Conn, reader *bufio.Reader, runID string, result *application.RunResultResponse) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		writeRPCRequest(t, connection, 21, "run.result", map[string]any{"runId": runID})
+		response := readRPCResponse(t, connection, reader)
+		if response.Error != nil {
+			if response.Error.Code == -32011 {
+				time.Sleep(25 * time.Millisecond)
+				continue
+			}
+			t.Fatalf("run.result error=%+v", response.Error)
+		}
+		decodeRPCResult(t, response, result)
+		return
+	}
+	t.Fatal("run.result polling timed out")
+}
+
+type rpcTestResponse struct {
+	ID     int             `json:"id"`
+	Result json.RawMessage `json:"result"`
+	Error  *RPCError       `json:"error"`
+}
+
+func writeRPCRequest(t *testing.T, writer io.Writer, id int, method string, params any) {
+	t.Helper()
+	if _, err := io.WriteString(writer, request(id, method, params)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readRPCResponse(t *testing.T, connection net.Conn, reader *bufio.Reader) rpcTestResponse {
+	t.Helper()
+	for {
+		_ = connection.SetReadDeadline(time.Now().Add(2 * time.Second))
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response rpcTestResponse
+		if err := json.Unmarshal(line, &response); err != nil {
+			t.Fatalf("decode %q: %v", line, err)
+		}
+		if response.ID != 0 {
+			return response
+		}
+	}
+}
+
+func decodeRPCResult(t *testing.T, response rpcTestResponse, target any) {
+	t.Helper()
+	if response.Error != nil {
+		t.Fatalf("RPC error=%+v", response.Error)
+	}
+	if err := json.Unmarshal(response.Result, target); err != nil {
+		t.Fatalf("decode result %s: %v", response.Result, err)
+	}
 }
 
 func (f *fakeBackend) Name() string {
@@ -33,13 +275,23 @@ func (f *fakeBackend) Doctor(context.Context, backend.DoctorRequest) backend.Doc
 	return backend.DoctorReport{Backend: f.Name(), Ready: true}
 }
 func (f *fakeBackend) Start(context.Context, backend.AgentExecutionSpec) (*backend.ExecutionHandle, error) {
-	return &backend.ExecutionHandle{Backend: f.Name(), SchemaVersion: 1, ID: "session-1"}, nil
+	f.mu.Lock()
+	f.starts++
+	start := f.starts
+	f.mu.Unlock()
+	return &backend.ExecutionHandle{Backend: f.Name(), SchemaVersion: 1, ID: fmt.Sprintf("session-%d", start)}, nil
 }
 func (f *fakeBackend) Observe(context.Context, backend.ExecutionHandle) (*backend.ExecutionObservation, error) {
 	if f.wait != nil {
 		<-f.wait
 	}
+	f.mu.Lock()
+	index := f.starts - 1
 	value := f.result
+	if index >= 0 && index < len(f.results) {
+		value = f.results[index]
+	}
+	f.mu.Unlock()
 	if value.Status == "" {
 		return &backend.ExecutionObservation{State: backend.ObservationResultPending}, nil
 	}

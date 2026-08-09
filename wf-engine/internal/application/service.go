@@ -29,6 +29,8 @@ type Core interface {
 	ListRunIDs() ([]string, error)
 	ReadEvents(string) ([]run.WorkflowEvent, error)
 	ReadAttempt(string, string, int) (run.AttemptSnapshot, error)
+	Detach(string) (run.WorkflowSnapshot, error)
+	WaitControllers(context.Context) error
 	AddEventSink(run.EventSink) func()
 }
 
@@ -152,6 +154,10 @@ func (s *Service) RunStart(ctx context.Context, request RunStartRequest) (RunSta
 	if len(issues) > 0 {
 		return RunStartResponse{}, NewError(CodeInvalidWorkflow, "workflow is invalid", map[string]any{"issues": issues})
 	}
+	return s.runStartNormalized(ctx, request, project, normalized)
+}
+
+func (s *Service) runStartNormalized(ctx context.Context, request RunStartRequest, project string, normalized workflow.Normalized) (RunStartResponse, *Error) {
 	if s.journal == nil {
 		return RunStartResponse{}, NewError(CodeInternal, "durable application journal is unavailable", nil)
 	}

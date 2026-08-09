@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"wf.local/wf-engine/internal/application"
 	"wf.local/wf-engine/internal/run"
 )
 
@@ -19,14 +22,16 @@ const (
 	MaxMessageSize = 1 << 20
 )
 
-var supportedMethods = []string{"engine.hello", "run.start", "run.startWorkflow", "run.status", "run.resume", "run.cancel", "run.detach"}
+var supportedMethods = []string{"engine.hello", "run.start", "run.startWorkflow", "run.status", "run.resume", "run.cancel", "run.detach", "system.capabilities", "workflow.validate", "workflow.explain", "run.list", "run.get", "run.events", "run.action", "run.result"}
 
 type Server struct {
 	reader               *bufio.Reader
 	writer               io.Writer
 	service              *run.Service
+	application          *application.Service
 	writeMu              sync.Mutex
 	mutationMu           *sync.Mutex
+	requestWG            sync.WaitGroup
 	waitControllersOnEOF bool
 	unsubscribe          func()
 	notifications        chan run.WorkflowEvent
@@ -34,16 +39,23 @@ type Server struct {
 	notificationDoneOnce sync.Once
 }
 
-func NewServer(input io.Reader, output io.Writer, service *run.Service) *Server {
-	return newServer(input, output, service, nil, true)
+func NewServer(input io.Reader, output io.Writer, service *run.Service, applications ...*application.Service) *Server {
+	return newServer(input, output, service, selectApplication(service, applications), nil, true)
 }
 
-func NewConnectionServer(input io.Reader, output io.Writer, service *run.Service, mutationMu *sync.Mutex) *Server {
-	return newServer(input, output, service, mutationMu, false)
+func NewConnectionServer(input io.Reader, output io.Writer, service *run.Service, applicationService *application.Service, mutationMu *sync.Mutex) *Server {
+	return newServer(input, output, service, applicationService, mutationMu, false)
 }
 
-func newServer(input io.Reader, output io.Writer, service *run.Service, mutationMu *sync.Mutex, waitControllersOnEOF bool) *Server {
-	server := &Server{reader: bufio.NewReaderSize(input, 64*1024), writer: output, service: service, mutationMu: mutationMu, waitControllersOnEOF: waitControllersOnEOF}
+func selectApplication(service *run.Service, applications []*application.Service) *application.Service {
+	if len(applications) > 0 && applications[0] != nil {
+		return applications[0]
+	}
+	return application.NewService(service, "codex", service.ApplicationJournal())
+}
+
+func newServer(input io.Reader, output io.Writer, service *run.Service, applicationService *application.Service, mutationMu *sync.Mutex, waitControllersOnEOF bool) *Server {
+	server := &Server{reader: bufio.NewReaderSize(input, 64*1024), writer: output, service: service, application: applicationService, mutationMu: mutationMu, waitControllersOnEOF: waitControllersOnEOF}
 	sink := func(event run.WorkflowEvent) {
 		_ = server.write(Notification{JSONRPC: "2.0", ProtocolVersion: ProtocolVersion, Method: "run.event", Params: event})
 	}
@@ -81,9 +93,10 @@ func (s *Server) Serve(ctx context.Context) error {
 	for {
 		line, err := readLine(s.reader, MaxMessageSize)
 		if errors.Is(err, io.EOF) {
+			s.requestWG.Wait()
 			if s.waitControllersOnEOF {
 				waitContext, cancel := context.WithTimeout(context.Background(), time.Second)
-				_ = s.service.WaitControllers(waitContext)
+				_ = s.application.CompatibilityWaitControllers(waitContext)
 				cancel()
 			}
 			return nil
@@ -103,7 +116,11 @@ func (s *Server) Serve(ctx context.Context) error {
 			s.writeError(nil, -32700, "parse error", nil)
 			continue
 		}
-		s.handle(ctx, request)
+		s.requestWG.Add(1)
+		go func() {
+			defer s.requestWG.Done()
+			s.handle(ctx, request)
+		}()
 	}
 }
 
@@ -134,6 +151,12 @@ func (s *Server) handle(ctx context.Context, request Request) {
 	}
 
 	switch request.Method {
+	case "system.capabilities":
+		invokeApplication(ctx, s, id, request.Params, application.SystemCapabilitiesRequest{}, s.application.SystemCapabilities)
+	case "workflow.validate":
+		invokeApplication(ctx, s, id, request.Params, application.WorkflowValidateRequest{}, s.application.WorkflowValidate)
+	case "workflow.explain":
+		invokeApplication(ctx, s, id, request.Params, application.WorkflowExplainRequest{}, s.application.WorkflowExplain)
 	case "engine.hello":
 		var params helloParams
 		if len(request.Params) > 0 && string(request.Params) != "null" {
@@ -153,37 +176,31 @@ func (s *Server) handle(ctx context.Context, request Request) {
 			ProjectChecked: doctor.ProjectChecked, ProjectReady: doctor.ProjectReady,
 			ProjectDiagnostic: doctor.ProjectDiagnostic})
 	case "run.start":
-		var params run.StartRequest
-		if err := decodeParams(request.Params, &params); err != nil {
-			s.writeError(id, -32602, "invalid run.start params", err.Error())
+		if isFormalStart(request.Params) {
+			invokeApplication(ctx, s, id, request.Params, application.RunStartRequest{}, s.application.RunStart)
 			return
 		}
-		snapshot, err := s.service.Start(ctx, params)
-		if err != nil {
-			s.writeError(id, -32602, "could not start run", err.Error())
-			return
-		}
-		s.writeResult(id, StartResult{ProtocolVersion: ProtocolVersion, RunID: snapshot.ID})
+		s.compatibilityStart(ctx, id, request.Params)
 	case "run.startWorkflow":
-		var params run.StartWorkflowRequest
-		if err := decodeParams(request.Params, &params); err != nil {
-			s.writeError(id, -32602, "invalid run.startWorkflow params", err.Error())
-			return
-		}
-		snapshot, err := s.service.StartWorkflow(ctx, params)
-		if err != nil {
-			s.writeError(id, -32602, "could not start workflow", err.Error())
-			return
-		}
-		s.writeResult(id, StartResult{ProtocolVersion: ProtocolVersion, RunID: snapshot.ID})
-	case "run.status", "run.get":
+		s.compatibilityStartWorkflow(ctx, id, request.Params)
+	case "run.list":
+		invokeApplication(ctx, s, id, request.Params, application.RunListRequest{}, s.application.RunList)
+	case "run.get":
+		invokeApplication(ctx, s, id, request.Params, application.RunGetRequest{}, s.application.RunGet)
+	case "run.events":
+		invokeApplication(ctx, s, id, request.Params, application.RunEventsRequest{}, s.application.RunEvents)
+	case "run.action":
+		invokeApplication(ctx, s, id, request.Params, application.RunActionRequest{}, s.application.RunAction)
+	case "run.result":
+		invokeApplication(ctx, s, id, request.Params, application.RunResultRequest{}, s.application.RunResult)
+	case "run.status":
 		params, ok := s.parseRunID(id, request.Params)
 		if !ok {
 			return
 		}
-		snapshot, err := s.service.Status(params.RunID)
-		if err != nil {
-			s.writeError(id, -32004, "run not found", err.Error())
+		snapshot, appErr := s.application.CompatibilityStatus(params.RunID)
+		if appErr != nil {
+			s.writeApplicationError(id, appErr)
 			return
 		}
 		s.writeResult(id, snapshot)
@@ -197,20 +214,15 @@ func (s *Server) handle(ctx context.Context, request Request) {
 			s.writeError(id, -32602, "invalid run.resume action", params.Action.Type)
 			return
 		}
-		snapshot, err := s.service.Resume(ctx, params)
-		if err != nil {
-			s.writeError(id, -32009, "could not resume run", err.Error())
-			return
-		}
-		s.writeResult(id, snapshot)
+		s.compatibilityResume(ctx, id, params)
 	case "run.detach":
 		params, ok := s.parseRunID(id, request.Params)
 		if !ok {
 			return
 		}
-		snapshot, err := s.service.Detach(params.RunID)
-		if err != nil {
-			s.writeError(id, -32000, "could not detach run", err.Error())
+		snapshot, appErr := s.application.CompatibilityDetach(params.RunID)
+		if appErr != nil {
+			s.writeApplicationError(id, appErr)
 			return
 		}
 		s.writeResult(id, snapshot)
@@ -219,23 +231,7 @@ func (s *Server) handle(ctx context.Context, request Request) {
 		if !ok {
 			return
 		}
-		if params.ExpectedStateVersion != nil {
-			current, statusErr := s.service.Get(params.RunID)
-			if statusErr != nil {
-				s.writeError(id, -32004, "run not found", statusErr.Error())
-				return
-			}
-			if current.StateVersion != *params.ExpectedStateVersion {
-				s.writeError(id, -32009, "state version conflict", map[string]uint64{"expected": *params.ExpectedStateVersion, "current": current.StateVersion})
-				return
-			}
-		}
-		snapshot, err := s.service.Cancel(ctx, params.RunID)
-		if err != nil {
-			s.writeError(id, -32000, "could not cancel run", err.Error())
-			return
-		}
-		s.writeResult(id, snapshot)
+		s.compatibilityCancel(ctx, id, params)
 	default:
 		s.writeError(id, -32601, "method not found", request.Method)
 	}
@@ -243,11 +239,157 @@ func (s *Server) handle(ctx context.Context, request Request) {
 
 func isMutation(method string) bool {
 	switch method {
-	case "run.start", "run.startWorkflow", "run.resume", "run.cancel":
+	case "run.start", "run.startWorkflow", "run.resume", "run.cancel", "run.action":
 		return true
 	default:
 		return false
 	}
+}
+
+func isFormalStart(raw json.RawMessage) bool {
+	var value map[string]json.RawMessage
+	if json.Unmarshal(raw, &value) != nil {
+		return true
+	}
+	_, hasWorkflow := value["workflow"]
+	_, hasRequestID := value["clientRequestId"]
+	return hasWorkflow || hasRequestID
+}
+
+func invokeApplication[Request any, Response any](ctx context.Context, s *Server, id any, raw json.RawMessage, request Request, call func(context.Context, Request) (Response, *application.Error)) {
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := decodeParams(raw, &request); err != nil {
+			s.writeApplicationError(id, application.NewError(application.CodeInvalidArgument, "invalid application request", map[string]any{"detail": err.Error()}))
+			return
+		}
+	}
+	response, appErr := call(ctx, request)
+	if appErr != nil {
+		s.writeApplicationError(id, appErr)
+		return
+	}
+	s.writeResult(id, response)
+}
+
+func (s *Server) compatibilityStart(ctx context.Context, id any, raw json.RawMessage) {
+	var params run.StartRequest
+	if err := decodeParams(raw, &params); err != nil {
+		s.writeError(id, -32602, "invalid run.start params", err.Error())
+		return
+	}
+	document, err := json.Marshal(map[string]any{
+		"apiVersion": "fishyume/v1", "name": "ad-hoc",
+		"defaults":  map[string]any{"agent": map[string]any{"driver": firstNonEmpty(params.Driver, params.Backend, params.Tool, "codex"), "target": firstNonEmpty(params.Target, params.Runtime, "local")}},
+		"execution": map[string]any{"maxConcurrency": 1},
+		"nodes":     map[string]any{"agent-1": map[string]any{"type": "agent", "task": params.Task}},
+	})
+	if err != nil {
+		s.writeError(id, -32603, "could not build compatibility workflow", nil)
+		return
+	}
+	response, appErr := s.application.RunStart(ctx, application.RunStartRequest{Project: params.Project, Workflow: application.WorkflowInput{Document: document}, ClientRequestID: compatibilityID("start")})
+	if appErr != nil {
+		s.writeApplicationError(id, appErr)
+		return
+	}
+	s.writeResult(id, StartResult{ProtocolVersion: ProtocolVersion, RunID: response.RunID})
+}
+
+func (s *Server) compatibilityStartWorkflow(ctx context.Context, id any, raw json.RawMessage) {
+	var params run.StartWorkflowRequest
+	if err := decodeParams(raw, &params); err != nil {
+		s.writeError(id, -32602, "invalid run.startWorkflow params", err.Error())
+		return
+	}
+	response, appErr := s.application.CompatibilityStartWorkflow(ctx, params, compatibilityID("start"))
+	if appErr != nil {
+		s.writeApplicationError(id, appErr)
+		return
+	}
+	s.writeResult(id, StartResult{ProtocolVersion: ProtocolVersion, RunID: response.RunID})
+}
+
+func (s *Server) compatibilityResume(ctx context.Context, id any, params run.ResumeRequest) {
+	view, appErr := s.application.CompatibilityStatus(params.RunID)
+	if appErr != nil || view.Run == nil {
+		if appErr == nil {
+			appErr = application.NewError(application.CodeNotFound, "run not found", nil)
+		}
+		s.writeApplicationError(id, appErr)
+		return
+	}
+	if params.Action == nil {
+		snapshot, resumeErr := s.application.CompatibilityResume(ctx, params)
+		if resumeErr != nil {
+			s.writeApplicationError(id, resumeErr)
+			return
+		}
+		s.writeResult(id, snapshot)
+		return
+	}
+	expected := view.Run.StateVersion
+	if params.ExpectedStateVersion != nil {
+		expected = *params.ExpectedStateVersion
+	}
+	action := application.RunActionRequest{ActionID: compatibilityID("action"), RunID: params.RunID, Type: application.ActionType(params.Action.Type), ExpectedStateVersion: expected, NodeID: params.Action.NodeID, ExpectedAttempt: params.Action.ExpectedAttempt, Reason: params.Action.Reason, Answers: params.Action.Answers, AcknowledgeDuplicateRisk: params.Action.AcknowledgeDuplicateRisk}
+	if action.Type == application.ActionRetry && action.ExpectedAttempt == nil {
+		for _, node := range view.Nodes {
+			if node.ID == action.NodeID {
+				attempt := node.CurrentAttempt
+				action.ExpectedAttempt = &attempt
+				break
+			}
+		}
+	}
+	if _, appErr = s.application.RunAction(ctx, action); appErr != nil {
+		s.writeApplicationError(id, appErr)
+		return
+	}
+	updated, appErr := s.application.CompatibilityStatus(params.RunID)
+	if appErr != nil || updated.Run == nil {
+		s.writeApplicationError(id, appErr)
+		return
+	}
+	s.writeResult(id, *updated.Run)
+}
+
+func (s *Server) compatibilityCancel(ctx context.Context, id any, params runIDParams) {
+	view, appErr := s.application.CompatibilityStatus(params.RunID)
+	if appErr != nil || view.Run == nil {
+		s.writeApplicationError(id, appErr)
+		return
+	}
+	expected := view.Run.StateVersion
+	if params.ExpectedStateVersion != nil {
+		expected = *params.ExpectedStateVersion
+	}
+	if _, appErr = s.application.RunAction(ctx, application.RunActionRequest{ActionID: compatibilityID("action"), RunID: params.RunID, Type: application.ActionCancel, ExpectedStateVersion: expected}); appErr != nil {
+		s.writeApplicationError(id, appErr)
+		return
+	}
+	updated, appErr := s.application.CompatibilityStatus(params.RunID)
+	if appErr != nil || updated.Run == nil {
+		s.writeApplicationError(id, appErr)
+		return
+	}
+	s.writeResult(id, *updated.Run)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func compatibilityID(prefix string) string {
+	value := make([]byte, 12)
+	if _, err := rand.Read(value); err != nil {
+		return fmt.Sprintf("compat-%s-%d", prefix, time.Now().UnixNano())
+	}
+	return "compat-" + prefix + "-" + hex.EncodeToString(value)
 }
 
 func (s *Server) parseRunID(id any, raw json.RawMessage) (runIDParams, bool) {
@@ -303,6 +445,33 @@ func (s *Server) writeResult(id, result any) {
 func (s *Server) writeError(id any, code int, message string, data any) {
 	_ = s.write(Response{JSONRPC: "2.0", ProtocolVersion: ProtocolVersion, ID: id,
 		Error: &RPCError{Code: code, Message: message, Data: data}})
+}
+
+func (s *Server) writeApplicationError(id any, appErr *application.Error) {
+	if appErr == nil {
+		appErr = application.NewError(application.CodeInternal, "internal application error", nil)
+	}
+	_ = s.write(Response{JSONRPC: "2.0", ProtocolVersion: ProtocolVersion, ID: id,
+		Error: &RPCError{Code: applicationRPCCode(appErr.Code), Message: appErr.Message, Data: appErr}})
+}
+
+func applicationRPCCode(code application.ErrorCode) int {
+	switch code {
+	case application.CodeInvalidArgument, application.CodeInvalidWorkflow:
+		return -32602
+	case application.CodeNotFound:
+		return -32004
+	case application.CodeConflict:
+		return -32009
+	case application.CodeCapabilityUnavailable:
+		return -32010
+	case application.CodeNotReady:
+		return -32011
+	case application.CodeProtocolMismatch:
+		return -32012
+	default:
+		return -32603
+	}
 }
 
 func (s *Server) write(message any) error {

@@ -6,7 +6,12 @@ import (
 	"fmt"
 
 	"wf.local/wf-engine/internal/backend"
+	"wf.local/wf-engine/internal/store"
 )
+
+// ApplicationJournal exposes the durable state repository only to the
+// in-process Application Service composition root.
+func (s *Service) ApplicationJournal() *store.Store { return s.store }
 
 type DriverCapabilityReport struct {
 	Driver                   string

@@ -18,7 +18,7 @@ test('Fishyume exposes help and version', () => {
 });
 
 test('command help remains available', () => {
-  for (const command of ['run', 'status', 'resume', 'cancel', 'doctor']) {
+  for (const command of ['run', 'status', 'resume', 'cancel', 'doctor', 'attach', 'machine', 'mcp']) {
     const result = invoke(command, '--help');
     assert.equal(result.status, 0, `${command}: ${result.stderr}`);
     assert.match(result.stdout, new RegExp(`fishyume ${command}`));

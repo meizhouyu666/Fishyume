@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"wf.local/wf-engine/internal/agent"
+	"wf.local/wf-engine/internal/application"
 	"wf.local/wf-engine/internal/rpc"
 	"wf.local/wf-engine/internal/run"
 )
@@ -27,13 +28,14 @@ type Server struct {
 	owner       *Owner
 	listener    net.Listener
 	service     *run.Service
+	application *application.Service
 	mutationMu  sync.Mutex
 	connections atomic.Int64
 	closed      chan struct{}
 	closeOnce   sync.Once
 }
 
-func NewServer(owner *Owner, service *run.Service) (*Server, error) {
+func NewServer(owner *Owner, service *run.Service, applications ...*application.Service) (*Server, error) {
 	if owner == nil || service == nil {
 		return nil, errors.New("control plane owner and Run service are required")
 	}
@@ -46,7 +48,11 @@ func NewServer(owner *Owner, service *run.Service) (*Server, error) {
 		_ = cleanupEndpoint(owner.Record())
 		return nil, fmt.Errorf("publish control plane owner: %w", err)
 	}
-	return &Server{owner: owner, listener: listener, service: service, closed: make(chan struct{})}, nil
+	applicationService := application.NewService(service, "codex", service.ApplicationJournal())
+	if len(applications) > 0 && applications[0] != nil {
+		applicationService = applications[0]
+	}
+	return &Server{owner: owner, listener: listener, service: service, application: applicationService, closed: make(chan struct{})}, nil
 }
 
 func (s *Server) Serve(ctx context.Context) error {
@@ -74,7 +80,7 @@ func (s *Server) Serve(ctx context.Context) error {
 			if err := s.handshake(connection); err != nil {
 				return
 			}
-			server := rpc.NewConnectionServer(connection, connection, s.service, &s.mutationMu)
+			server := rpc.NewConnectionServer(connection, connection, s.service, s.application, &s.mutationMu)
 			_ = server.Serve(context.Background())
 		}()
 	}

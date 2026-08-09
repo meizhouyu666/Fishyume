@@ -96,6 +96,14 @@ func (f *fakeCore) ReadEvents(id string) ([]run.WorkflowEvent, error) {
 func (f *fakeCore) ReadAttempt(runID, nodeID string, number int) (run.AttemptSnapshot, error) {
 	return f.attempts[runID+"/"+nodeID], nil
 }
+func (f *fakeCore) Detach(id string) (run.WorkflowSnapshot, error) {
+	view, err := f.Status(id)
+	if err != nil || view.Run == nil {
+		return run.WorkflowSnapshot{}, err
+	}
+	return *view.Run, nil
+}
+func (f *fakeCore) WaitControllers(context.Context) error { return nil }
 func (f *fakeCore) AddEventSink(sink run.EventSink) func() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -188,6 +196,15 @@ func TestRunApplicationQueriesActionsAndResult(t *testing.T) {
 	result, appErr := service.RunResult(context.Background(), RunResultRequest{RunID: "run-complete"})
 	if appErr != nil || result.Conclusion != "succeeded" || len(result.Results) != 1 || result.Results[0].Result == nil || result.Results[0].Result.Summary != "done" {
 		t.Fatalf("result = %+v, error = %v", result, appErr)
+	}
+}
+
+func TestCompatibilityResumeWithoutActionUsesApplicationBoundary(t *testing.T) {
+	core := newFakeCore()
+	service := NewService(core, "codex", store.New(t.TempDir()))
+	snapshot, appErr := service.CompatibilityResume(context.Background(), run.ResumeRequest{RunID: "run-waiting"})
+	if appErr != nil || snapshot.ID != "run-waiting" || core.resumeCount != 1 || core.resumed.Action != nil {
+		t.Fatalf("snapshot=%+v error=%v request=%+v resumes=%d", snapshot, appErr, core.resumed, core.resumeCount)
 	}
 }
 

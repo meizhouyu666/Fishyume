@@ -5,6 +5,9 @@ import {RunCommand} from './commands/run.js';
 import {StatusCommand} from './commands/status.js';
 import {ResumeCommand} from './commands/resume.js';
 import {CancelCommand} from './commands/cancel.js';
+import {AttachCommand} from './commands/attach.js';
+import {MachineCommand} from './commands/machine.js';
+import {MCPCommand} from './commands/mcp.js';
 
 const cli = new Cli({binaryLabel: 'Fishyume', binaryName: 'fishyume', binaryVersion: '0.2.1-alpha.1'});
 cli.register(Builtins.HelpCommand);
@@ -14,4 +17,7 @@ cli.register(RunCommand);
 cli.register(StatusCommand);
 cli.register(ResumeCommand);
 cli.register(CancelCommand);
+cli.register(AttachCommand);
+cli.register(MachineCommand);
+cli.register(MCPCommand);
 await cli.runExit(process.argv.slice(2), Cli.defaultContext);

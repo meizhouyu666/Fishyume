@@ -1,6 +1,6 @@
 # Fishyume M4 分阶段实施计划
 
-> 状态：M4.0 + M4.1 + M4.2 已完成；M4.3 未开始
+> 状态：M4.0 + M4.1 + M4.2 + M4.3.0-M4.3.3 已实现；本地 Go/TS 收口门禁已通过，真实 Provider/live smoke 仍后置
 >
 > 对应架构：[`fishyume-m4-agent-native-control-plane.md`](./fishyume-m4-agent-native-control-plane.md)
 
@@ -133,7 +133,7 @@
 
 ## 5. M4.3：Agent-Native MCP 与 Machine API
 
-> 实施状态：未开始；2026-08-08 已补充正式 Application Service、`answer` 动作、跨重启幂等与有界查询合同。
+> 实施状态：M4.3.0-M4.3.3 已实现（Application Service、持久化 journal、MCP/Machine CLI、attach 与 TUI 迁移）；本地自动化门禁已通过，真实 Provider/live smoke 属于后续收口验证。
 
 ### M4.3.0：Application Contract
 
@@ -203,6 +203,13 @@
 - TUI 只消费 Application API 返回的 Control Plane 状态，并与 MCP 共享 `actionId`/expected state 真相。
 - 新 M4.3 测试不调用 LLM、不要求 Provider 登录、不依赖 CC-Panes 或人工 MCP allow。
 - `go test ./...`、`go vet ./...`、`go build ./cmd/wf-engine`、`npm --prefix wf run verify` 与 `git diff --check` 全通过。
+
+### 实施记录
+
+- M4.3.0 已冻结 Application request/response、稳定错误、限制、schema 与 fixture；公开新合同只使用 `driver/target`。
+- M4.3.1 已提供 transport-neutral Application Service：capabilities、validate/explain、start/list/get/events/action/result；answer 创建新 Attempt 并通过 Context Compiler 写入回答 Envelope。
+- M4.3.2 已加入文件型 intent/mutated/committed journal；`clientRequestId`、`actionId`、canonical hash、故障注入与跨重启恢复测试已覆盖。
+- M4.3.3 已将正式 RPC、兼容 RPC、Machine CLI、MCP 与 TUI 接入同一 Application Service；RPC 连接内 request 并发、Fake Host Agent E2E、MCP/Machine JSON parity 已覆盖。
 
 ## 6. M4.4：产品化、迁移与发布验证
 
