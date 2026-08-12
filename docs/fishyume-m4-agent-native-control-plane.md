@@ -267,7 +267,7 @@ Application Service 是 transport-neutral 产品边界：它拥有公开 request
 ### 幂等与冲突
 
 - `run.start` 使用 `clientRequestId` 持久化去重；
-- `run.action` 使用 `actionId` 持久化去重，并把 canonical request 与接受它的状态版本持久化到 Run 状态；Node/downstream mutation 与 Run receipt 之间由 phased action intent 连接，journal recovery 只会按相同 `actionId`+request hash 续作该动作，不重新创建 Attempt。已提交 receipt 保留最近 256 条，活动 intent 独立保留至 receipt 提交后清理；已不适用的 intent 会以稳定的 terminal error 结束，不阻塞 Control Plane 启动；
+- `run.action` 使用 `actionId` 持久化去重，并把 canonical request 与接受它的状态版本持久化到 Run 状态；每个 approve/reject/answer/retry 都会在首个 Node 写入前保存带 `before`/`after` 快照的可重放 mutation plan，按 `applied` 边界逐个落盘 Node 与 downstream reset，恢复时仅对相同 `actionId`+request hash 且匹配记录效果的状态幂等续作，不重新创建 Attempt，也不把任意 prepared intent 猜测为成功。已提交 receipt 保留最近 256 条；未跨越不可逆写入的 planned intent 在 Application 终止错误路径清理，applying intent 保留至 receipt 提交后清理，避免无界增长或删除恢复证据；
 - MCP stdio Host EOF/transport close 会关闭 Engine client 并使命令退出，不向 stdout 输出生命周期日志；
 - 同一 ID 与相同 canonical request hash 返回原 response，同一 ID 与不同 payload 返回 conflict；
 - 幂等记录跨客户端和 Control Plane crash/restart 生效，不允许只存放在进程内；

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -123,6 +124,38 @@ func (s *Store) RemoveActionIntent(runID, actionID string) error {
 		return fmt.Errorf("remove action intent %q: %w", actionID, err)
 	}
 	return nil
+}
+
+func (s *Store) ListActionIntentIDs(runID string) ([]string, error) {
+	if err := validateID("run", runID); err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(s.RunDir(runID), "action-intents")
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list action intents for run %q: %w", runID, err)
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		var header struct {
+			ActionID string `json:"actionId"`
+		}
+		if err := readJSON(filepath.Join(dir, entry.Name()), &header); err != nil {
+			return nil, err
+		}
+		if header.ActionID == "" {
+			return nil, fmt.Errorf("action intent %q has no actionId", entry.Name())
+		}
+		ids = append(ids, header.ActionID)
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
 
 func (s *Store) AttemptDir(runID, nodeID string, number int) string {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -68,20 +69,29 @@ type ResumeAction struct {
 }
 
 type actionIntent struct {
-	ActionID        string       `json:"actionId"`
-	RequestHash     string       `json:"requestHash"`
-	Type            string       `json:"type"`
-	NodeID          string       `json:"nodeId"`
-	ExpectedAttempt *int         `json:"expectedAttempt,omitempty"`
-	Phase           string       `json:"phase"`
-	Action          ResumeAction `json:"action"`
+	Version     int                  `json:"version"`
+	ActionID    string               `json:"actionId"`
+	RequestHash string               `json:"requestHash"`
+	Type        string               `json:"type"`
+	NodeID      string               `json:"nodeId"`
+	Phase       string               `json:"phase"`
+	Applied     int                  `json:"applied"`
+	EventType   string               `json:"eventType"`
+	Summary     string               `json:"summary"`
+	Action      ResumeAction         `json:"action"`
+	Mutations   []actionNodeMutation `json:"mutations"`
+}
+
+type actionNodeMutation struct {
+	Before NodeSnapshot `json:"before"`
+	After  NodeSnapshot `json:"after"`
 }
 
 const (
-	actionIntentPrepared          = "prepared"
-	actionIntentNodeApplied       = "node_applied"
-	actionIntentDownstreamApplied = "downstream_applied"
-	maxActionReceipts             = 256
+	actionIntentVersion  = 2
+	actionIntentPlanned  = "planned"
+	actionIntentApplying = "applying"
+	maxActionReceipts    = 256
 )
 
 type ResumeRequest struct {
@@ -728,22 +738,15 @@ func (s *Service) Resume(_ context.Context, request ResumeRequest) (WorkflowSnap
 			if intent.RequestHash != request.Action.ActionRequestHash || intent.Type != request.Action.Type || intent.NodeID != request.Action.NodeID || !reflect.DeepEqual(intent.Action, *request.Action) {
 				return WorkflowSnapshot{}, fmt.Errorf("actionId %q is already bound to a different request", request.Action.ActionID)
 			}
-			if intent.Phase != actionIntentPrepared {
-				if err := s.resumeActionIntent(&run, *request.Action, intent); err != nil {
-					return WorkflowSnapshot{}, err
-				}
-				if run.Phase == PhaseCompleted {
-					return run, nil
-				}
-				if run.Phase != PhaseCompleted {
-					releaseLease = false
-					s.startController(request.RunID, lease, func(ctx context.Context, generation uint64) { s.control(ctx, request.RunID, generation) })
-				}
-				return s.Get(request.RunID)
-			}
-			if err := s.store.RemoveActionIntent(request.RunID, request.Action.ActionID); err != nil {
+			if err := s.resumeActionIntent(&run, *request.Action, intent); err != nil {
 				return WorkflowSnapshot{}, err
 			}
+			if run.Phase == PhaseCompleted {
+				return run, nil
+			}
+			releaseLease = false
+			s.startController(request.RunID, lease, func(ctx context.Context, generation uint64) { s.control(ctx, request.RunID, generation) })
+			return s.Get(request.RunID)
 		} else if !errors.Is(intentErr, os.ErrNotExist) {
 			return WorkflowSnapshot{}, intentErr
 		}
@@ -1971,11 +1974,11 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 	if err := s.store.ReadNode(run.ID, action.NodeID, &node); err != nil {
 		return err
 	}
-	if err := s.prepareActionIntent(run.ID, action); err != nil {
-		return err
-	}
+	mutations := make([]actionNodeMutation, 0, 1)
+	eventType, summary := "", ""
 	switch action.Type {
 	case "approve", "reject":
+		before := node
 		decision := strings.TrimSuffix(action.Type, "e")
 		if action.Type == "approve" {
 			decision = "approved"
@@ -2002,14 +2005,10 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 		} else {
 			node.Conclusion = ConclusionRejected
 		}
-		if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
-			return err
-		}
-		if err := s.markActionIntent(run.ID, action, actionIntentNodeApplied); err != nil {
-			return err
-		}
-		return s.finalizeAction(run, &node, action, "node.approval_decided", "approval "+decision)
+		mutations = append(mutations, actionNodeMutation{Before: before, After: node})
+		eventType, summary = "node.approval_decided", "approval "+decision
 	case "retry":
+		before := node
 		allowed := node.Phase == NodePhaseWaiting && (node.Reason == ReasonAgentWaitingInput || node.Reason == ReasonCompletionMissing || node.Reason == ReasonInvalidResult)
 		allowed = allowed || (node.Phase == NodePhaseCompleted && (node.Conclusion == ConclusionFailed || node.Conclusion == ConclusionIndeterminate))
 		if !allowed || node.CurrentAttempt < 1 {
@@ -2020,20 +2019,15 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 		}
 		now := s.now().UTC()
 		node.Phase, node.Conclusion, node.Reason, node.Result, node.UpdatedAt = NodePhaseReady, "", "", nil, now
-		if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
+		mutations = append(mutations, actionNodeMutation{Before: before, After: node})
+		downstream, err := s.planDownstreamReset(run, node.ID)
+		if err != nil {
 			return err
 		}
-		if err := s.markActionIntent(run.ID, action, actionIntentNodeApplied); err != nil {
-			return err
-		}
-		if err := s.resetDownstream(run, node.ID); err != nil {
-			return err
-		}
-		if err := s.markActionIntent(run.ID, action, actionIntentDownstreamApplied); err != nil {
-			return err
-		}
-		return s.finalizeAction(run, &node, action, "node.retry_requested", "explicit retry requested")
+		mutations = append(mutations, downstream...)
+		eventType, summary = "node.retry_requested", "explicit retry requested"
 	case "answer":
+		before := node
 		if node.Type != "agent" || node.Phase != NodePhaseWaiting || node.Reason != ReasonAgentWaitingInput || node.Result == nil || len(node.Result.Questions) == 0 {
 			return fmt.Errorf("node %q is not waiting for structured input", node.ID)
 		}
@@ -2046,36 +2040,42 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 		}
 		now := s.now().UTC()
 		node.Phase, node.Conclusion, node.Reason, node.Diagnostic, node.PendingInputAnswer, node.Result, node.UpdatedAt = NodePhaseReady, "", "", "", inputAnswer, nil, now
-		if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
+		mutations = append(mutations, actionNodeMutation{Before: before, After: node})
+		downstream, err := s.planDownstreamReset(run, node.ID)
+		if err != nil {
 			return err
 		}
-		if err := s.markActionIntent(run.ID, action, actionIntentNodeApplied); err != nil {
-			return err
-		}
-		if err := s.resetDownstream(run, node.ID); err != nil {
-			return err
-		}
-		if err := s.markActionIntent(run.ID, action, actionIntentDownstreamApplied); err != nil {
-			return err
-		}
-		return s.finalizeAction(run, &node, action, "node.answer_submitted", "input answer submitted")
+		mutations = append(mutations, downstream...)
+		eventType, summary = "node.answer_submitted", "input answer submitted"
 	default:
 		return fmt.Errorf("unknown resume action %q", action.Type)
 	}
+	intent := actionIntent{Version: actionIntentVersion, ActionID: action.ActionID, RequestHash: action.ActionRequestHash, Type: action.Type, NodeID: action.NodeID, Phase: actionIntentPlanned, EventType: eventType, Summary: summary, Action: action, Mutations: mutations}
+	if action.ActionID == "" {
+		intent.Phase = actionIntentApplying
+		return s.applyActionIntent(run, action, intent)
+	}
+	if err := s.prepareActionIntent(run.ID, intent); err != nil {
+		return err
+	}
+	intent.Phase = actionIntentApplying
+	if err := s.store.WriteActionIntent(run.ID, action.ActionID, intent); err != nil {
+		return err
+	}
+	return s.applyActionIntent(run, action, intent)
 }
 
-func (s *Service) prepareActionIntent(runID string, action ResumeAction) error {
-	if action.ActionID == "" {
-		return nil
+func (s *Service) prepareActionIntent(runID string, intent actionIntent) error {
+	ids, err := s.store.ListActionIntentIDs(runID)
+	if err != nil {
+		return err
 	}
-	return s.store.WriteActionIntent(runID, action.ActionID, actionIntent{ActionID: action.ActionID, RequestHash: action.ActionRequestHash, Type: action.Type, NodeID: action.NodeID, ExpectedAttempt: action.ExpectedAttempt, Phase: actionIntentPrepared, Action: action})
-}
-
-func (s *Service) markActionIntent(runID string, action ResumeAction, phase string) error {
-	if action.ActionID == "" {
-		return nil
+	for _, id := range ids {
+		if id != intent.ActionID {
+			return fmt.Errorf("run %q already has pending action intent %q", runID, id)
+		}
 	}
-	return s.store.WriteActionIntent(runID, action.ActionID, actionIntent{ActionID: action.ActionID, RequestHash: action.ActionRequestHash, Type: action.Type, NodeID: action.NodeID, ExpectedAttempt: action.ExpectedAttempt, Phase: phase, Action: action})
+	return s.store.WriteActionIntent(runID, intent.ActionID, intent)
 }
 
 func (s *Service) finalizeAction(run *WorkflowSnapshot, node *NodeSnapshot, action ResumeAction, eventType, summary string) error {
@@ -2093,32 +2093,67 @@ func (s *Service) finalizeAction(run *WorkflowSnapshot, node *NodeSnapshot, acti
 }
 
 func (s *Service) resumeActionIntent(run *WorkflowSnapshot, action ResumeAction, intent actionIntent) error {
-	var node NodeSnapshot
-	if err := s.store.ReadNode(run.ID, intent.NodeID, &node); err != nil {
+	if intent.Version != actionIntentVersion || (intent.Phase != actionIntentPlanned && intent.Phase != actionIntentApplying) || len(intent.Mutations) == 0 {
+		return fmt.Errorf("action intent %q lacks exact replay evidence and was preserved", intent.ActionID)
+	}
+	if intent.Phase == actionIntentPlanned {
+		intent.Phase = actionIntentApplying
+		if err := s.store.WriteActionIntent(run.ID, action.ActionID, intent); err != nil {
+			return err
+		}
+	}
+	return s.applyActionIntent(run, action, intent)
+}
+
+func (s *Service) applyActionIntent(run *WorkflowSnapshot, action ResumeAction, intent actionIntent) error {
+	for index, mutation := range intent.Mutations {
+		var current NodeSnapshot
+		if err := s.store.ReadNode(run.ID, mutation.After.ID, &current); err != nil {
+			return err
+		}
+		// A persisted Applied count is the only evidence that a prior mutation
+		// crossed its durable boundary. Before that marker exists, recovery may
+		// accept only the exact before/after snapshots from the intent plan.
+		if index < intent.Applied {
+			run.Nodes[current.ID] = summarizeNode(current)
+			continue
+		}
+		if !reflect.DeepEqual(current, mutation.After) {
+			if !reflect.DeepEqual(current, mutation.Before) {
+				return fmt.Errorf("action intent %q conflicts with unrelated mutation of node %q", intent.ActionID, current.ID)
+			}
+			if err := s.store.WriteNode(run.ID, current.ID, mutation.After); err != nil {
+				return err
+			}
+		}
+		run.Nodes[mutation.After.ID] = summarizeNode(mutation.After)
+		if action.ActionID != "" && intent.Applied < index+1 {
+			intent.Applied = index + 1
+			if err := s.store.WriteActionIntent(run.ID, action.ActionID, intent); err != nil {
+				return err
+			}
+		}
+	}
+	target := intent.Mutations[0].After
+	return s.finalizeAction(run, &target, action, intent.EventType, intent.Summary)
+}
+
+// AbortActionIntent deletes only a plan that durably proves no business write
+// could have begun. Applying intents are recovery evidence and are preserved.
+func (s *Service) AbortActionIntent(runID, actionID, requestHash string) error {
+	var intent actionIntent
+	if err := s.store.ReadActionIntent(runID, actionID, &intent); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
 		return err
 	}
-	if intent.Phase == actionIntentNodeApplied && (intent.Type == "answer" || intent.Type == "retry") {
-		if err := s.resetDownstream(run, intent.NodeID); err != nil {
-			return err
-		}
-		if err := s.markActionIntent(run.ID, action, actionIntentDownstreamApplied); err != nil {
-			return err
-		}
+	if intent.RequestHash != requestHash {
+		return fmt.Errorf("action intent request hash conflict")
 	}
-	switch intent.Type {
-	case "approve", "reject":
-		decision := "approved"
-		if intent.Type == "reject" {
-			decision = "rejected"
-		}
-		return s.finalizeAction(run, &node, action, "node.approval_decided", "approval "+decision)
-	case "retry":
-		return s.finalizeAction(run, &node, action, "node.retry_requested", "explicit retry requested")
-	case "answer":
-		return s.finalizeAction(run, &node, action, "node.answer_submitted", "input answer submitted")
-	default:
-		return fmt.Errorf("invalid action intent type %q", intent.Type)
+	if intent.Version == actionIntentVersion && intent.Phase == actionIntentPlanned && intent.Applied == 0 {
+		return s.store.RemoveActionIntent(runID, actionID)
 	}
+	return nil
 }
 
 func (s *Service) recordActionReceipt(run *WorkflowSnapshot, actionID, requestHash string) {
@@ -2232,10 +2267,10 @@ func containsString(values []string, wanted string) bool {
 	return false
 }
 
-func (s *Service) resetDownstream(run *WorkflowSnapshot, target string) error {
+func (s *Service) planDownstreamReset(run *WorkflowSnapshot, target string) ([]actionNodeMutation, error) {
 	var normalized workflow.Normalized
 	if err := s.store.ReadWorkflow(run.ID, &normalized); err != nil {
-		return err
+		return nil, err
 	}
 	descendants := map[string]bool{target: true}
 	for _, id := range normalized.TopologicalOrder {
@@ -2245,23 +2280,26 @@ func (s *Service) resetDownstream(run *WorkflowSnapshot, target string) error {
 			}
 		}
 	}
+	ids := make([]string, 0, len(descendants))
 	for id := range descendants {
-		if id == target {
-			continue
-		}
-		var node NodeSnapshot
-		if err := s.store.ReadNode(run.ID, id, &node); err != nil {
-			return err
-		}
-		if node.Phase == NodePhaseSkipped {
-			node.Phase, node.Reason, node.Conclusion, node.Result, node.UpdatedAt = NodePhasePending, "", "", nil, s.now().UTC()
-			if err := s.store.WriteNode(run.ID, id, node); err != nil {
-				return err
-			}
-			run.Nodes[id] = summarizeNode(node)
+		if id != target {
+			ids = append(ids, id)
 		}
 	}
-	return nil
+	sort.Strings(ids)
+	mutations := make([]actionNodeMutation, 0, len(ids))
+	for _, id := range ids {
+		var node NodeSnapshot
+		if err := s.store.ReadNode(run.ID, id, &node); err != nil {
+			return nil, err
+		}
+		if node.Phase == NodePhaseSkipped {
+			before := node
+			node.Phase, node.Reason, node.Conclusion, node.Result, node.UpdatedAt = NodePhasePending, "", "", nil, s.now().UTC()
+			mutations = append(mutations, actionNodeMutation{Before: before, After: node})
+		}
+	}
+	return mutations, nil
 }
 
 func (s *Service) skipUnstarted(run *WorkflowSnapshot, reason Reason) error {

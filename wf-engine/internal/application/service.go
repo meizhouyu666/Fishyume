@@ -407,6 +407,13 @@ func (s *Service) RunAction(ctx context.Context, request RunActionRequest) (RunA
 	if err != nil {
 		appErr := mapActionError(err)
 		if terminalActionError(appErr) {
+			if aborter, ok := s.core.(interface {
+				AbortActionIntent(string, string, string) error
+			}); ok {
+				if abortErr := aborter.AbortActionIntent(request.RunID, request.ActionID, requestHash); abortErr != nil {
+					return RunActionResponse{}, internalError(abortErr)
+				}
+			}
 			return RunActionResponse{}, persistActionError(s, request.ActionID, requestHash, appErr)
 		}
 		return RunActionResponse{}, appErr

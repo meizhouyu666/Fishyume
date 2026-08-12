@@ -3,6 +3,7 @@ import test from 'node:test';
 import {PassThrough} from 'node:stream';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
+import {StdioServerTransport} from '@modelcontextprotocol/sdk/server/stdio.js';
 import type {SystemCapabilitiesResponse} from '../bridge/application.js';
 import type {EngineClient, EventListener} from '../bridge/engine.js';
 import type {EngineHello} from '../bridge/types.js';
@@ -53,6 +54,21 @@ test('MCP stdio input EOF settles without an explicit transport close', async ()
   assert.equal(input.listenerCount('end'), 0);
   assert.equal(input.listenerCount('close'), 0);
   assert.equal(input.listenerCount('error'), 0);
+});
+
+test('production StdioServerTransport path settles cleanly on stdin EOF', async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let stdout = '';
+  output.setEncoding('utf8').on('data', chunk => {stdout += chunk});
+  const engine = new FakeApplicationClient();
+  const transport = new StdioServerTransport(input, output);
+  const running = runMCPTransport(engine, transport, input);
+  input.resume();
+  input.end();
+  await Promise.race([running, new Promise<never>((_, reject) => setTimeout(() => reject(new Error('production MCP transport did not settle after stdin EOF')), 1000))]);
+  assert.equal(stdout, '');
+  assert.equal(engine.closeCount, 1);
 });
 
 test('MCP and Machine CLI expose identical Application response JSON', async () => {
