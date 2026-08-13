@@ -25,3 +25,28 @@ That gate is manual and must record the Codex version, project path, Driver read
 the exact Workflow, event/result transcript, and whether the Control Plane was reused
 or started fresh. It must never be required by public CI or silently fall back to an
 interactive TUI/MCP approval.
+
+## Real Codex Driver Smoke (2026-08-13)
+
+The local native Codex executable was verified with `codex-cli 0.147.0` using
+`--ephemeral --sandbox read-only --json --output-schema`. The complete Engine path was
+then exercised with a temporary `wf-engine` binary, `FISHYUME_CODEX_PATH` pointing to
+that native executable, and the TypeScript `EngineBridge` calling the Application API.
+The one-node Workflow returned `conclusion=succeeded` with summary
+`codex-engine-live-smoke`; no TUI, dangerous bypass flag, or manual MCP allow was used.
+
+This is an opt-in local acceptance result, not a public CI guarantee: it depends on a
+locally installed and authenticated Codex CLI. The deterministic fake-Agent MCP smoke
+remains the reproducible CI-safe gate.
+
+Run the repeatable real Driver gate explicitly:
+
+```powershell
+$env:FISHYUME_LIVE_CODEX = '1'
+npm --prefix wf run smoke:codex-live
+```
+
+`FISHYUME_LIVE_PROJECT` may override the read-only workspace. The script always forces
+the Fishyume Driver sandbox to `read-only`, uses a temporary state directory, and shuts
+down its temporary Control Plane. Without `FISHYUME_LIVE_CODEX=1` it fails before any
+Provider call.

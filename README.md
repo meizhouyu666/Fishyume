@@ -141,6 +141,8 @@ npm --prefix wf run test:mcp-host
 
 该测试使用仓库内 deterministic fake Agent；真实 Codex Provider smoke 仍是独立手动验收，不会退化为 TUI 或人工 MCP allow。流程说明见 [`docs/fishyume-m4-live-smoke.md`](./docs/fishyume-m4-live-smoke.md)。
 
+真实 Codex Driver 的本地验收要求已安装并认证 `codex-cli`，并强制使用 headless `--ephemeral --json` 与显式 sandbox；它不属于公共 CI。
+
 ## 终端体验
 
 交互式终端中的 `fishyume run` 使用 Calm Operator Console：Header 展示完整 Run 状态，紧凑 Workflow 行使用符号与短标签，当前焦点节点集中展示 Attempt、Approval、result 和 diagnostic 详情，底部只保留非零状态汇总与当前有效快捷键。界面不再为 Attempts、Approvals、Diagnostics 分别重复绘制 Panel，并在 80/120/160 columns 下保持有界、稳定和 scrollback 友好。`fishyume status <run-id> --watch` 可重新进入同一 Console；终态停止轮询并明确显示 summary、state 与下一步命令。
