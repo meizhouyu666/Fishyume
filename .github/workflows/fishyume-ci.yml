@@ -24,16 +24,7 @@ jobs:
           cache-dependency-path: wf/package-lock.json
       - name: Go tests (Backend fixtures included)
         working-directory: wf-engine
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Keep package/test names in the Actions log. A second run is only
-          # diagnostic for transient process teardown; it cannot hide a
-          # deterministic failure because its exit status is preserved.
-          if ! go test -json ./... -count=1 -timeout 10m; then
-            echo 'Initial Go test run failed; retrying once with a fresh process state.' >&2
-            go test -json ./... -count=1 -timeout 10m
-          fi
+        run: go test -json ./... -count=1 -timeout 10m
       - name: Go vet
         working-directory: wf-engine
         run: go vet ./...
@@ -43,13 +34,7 @@ jobs:
       - name: Linux race check
         if: runner.os == 'Linux'
         working-directory: wf-engine
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! go test -race ./... -count=1 -timeout 15m; then
-            echo 'Initial race run failed; retrying once with a fresh process state.' >&2
-            go test -race ./... -count=1 -timeout 15m
-          fi
+        run: go test -race ./... -count=1 -timeout 15m
       - name: TypeScript checks
         working-directory: wf
         run: npm ci && npm run verify

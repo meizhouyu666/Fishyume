@@ -55,7 +55,7 @@ func TestWindowsLockedExitRecordRemainsResultPending(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	var locked windows.Handle
 	for {
-		locked, err = windows.CreateFile(path, windows.GENERIC_READ, 0, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+		locked, err = windows.CreateFile(path, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
 		if err == nil {
 			break
 		}
@@ -69,10 +69,20 @@ func TestWindowsLockedExitRecordRemainsResultPending(t *testing.T) {
 			_ = windows.CloseHandle(locked)
 		}
 	}()
+	var lockOffset windows.Overlapped
+	if err := windows.LockFileEx(locked, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, ^uint32(0), ^uint32(0), &lockOffset); err != nil {
+		t.Fatalf("lock Direct exit record bytes: %v", err)
+	}
+	defer func() {
+		_ = windows.UnlockFileEx(locked, 0, ^uint32(0), ^uint32(0), &lockOffset)
+	}()
 
 	observation, err := candidate.Observe(context.Background(), handle)
 	if err != nil || observation.State != backend.ObservationResultPending || observation.Result != nil || !strings.Contains(observation.Diagnostic, "temporarily inaccessible") {
 		t.Fatalf("observation=%+v err=%v", observation, err)
+	}
+	if err := windows.UnlockFileEx(locked, 0, ^uint32(0), ^uint32(0), &lockOffset); err != nil {
+		t.Fatal(err)
 	}
 	if err := windows.CloseHandle(locked); err != nil {
 		t.Fatal(err)
