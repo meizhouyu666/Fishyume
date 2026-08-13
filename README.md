@@ -62,6 +62,8 @@ npm ci
 npm run verify
 ```
 
+跨平台可靠性预检、确定性 stress gate、测试生命周期约定和交付策略见 [`docs/fishyume-development.md`](./docs/fishyume-development.md)。
+
 开发 checkout 可显式设置 Engine：
 
 ```powershell

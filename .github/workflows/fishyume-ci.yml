@@ -26,20 +26,33 @@ jobs:
         working-directory: wf-engine
         run: go test -json ./... -count=1 -timeout 10m
       - name: Go vet
-        working-directory: wf-engine
-        run: go vet ./...
+        run: node wf/scripts/preflight.mjs --step go-vet
       - name: Go build
-        working-directory: wf-engine
-        run: go build ./cmd/wf-engine
+        run: node wf/scripts/preflight.mjs --step go-build
       - name: Linux race check
         if: runner.os == 'Linux'
         working-directory: wf-engine
         run: go test -race ./... -count=1 -timeout 15m
       - name: TypeScript checks
-        working-directory: wf
-        run: npm ci && npm run verify
+        run: |
+          npm --prefix wf ci
+          node wf/scripts/preflight.mjs --step typescript
       - name: Diff check
-        run: git diff --check
+        run: node wf/scripts/preflight.mjs --step diff-check
+      - name: Reliability script tests
+        run: node --test wf/scripts/reliability-scripts.test.mjs
+
+  stress:
+    name: Deterministic high-risk stress gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: wf-engine/go.sum
+      - name: Stress internal lifecycle packages (20 repetitions)
+        run: node wf/scripts/stress.mjs
 
   artifacts:
     runs-on: windows-latest
