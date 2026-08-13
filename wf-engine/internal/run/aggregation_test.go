@@ -151,6 +151,11 @@ nodes:
 	if waiting.ActiveNodeID != "approve" {
 		t.Fatalf("waiting=%+v", waiting)
 	}
+	waitCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := service.WaitControllers(waitCtx); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestUnchangedActiveObservationDoesNotAppendAggregateEvents(t *testing.T) {
