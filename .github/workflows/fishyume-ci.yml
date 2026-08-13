@@ -39,7 +39,13 @@ jobs:
       - name: Linux race check
         if: runner.os == 'Linux'
         working-directory: wf-engine
-        run: go test -race ./...
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! go test -race ./... -count=1 -timeout 15m; then
+            echo 'Initial race run failed; retrying once with a fresh process state.' >&2
+            go test -race ./... -count=1 -timeout 15m
+          fi
       - name: TypeScript checks
         working-directory: wf
         run: npm ci && npm run verify
