@@ -51,6 +51,7 @@ async function main() {
     FISHYUME_DIRECT_SANDBOX: 'read-only',
   };
   let bridge;
+  let primaryError;
   try {
     await run('go', ['build', '-o', enginePath, './cmd/wf-engine'], {cwd: engineRoot, env: environment});
     const {EngineBridge} = await import(pathToFileURL(join(wfRoot, 'dist', 'bridge', 'engine.js')).href);
@@ -86,10 +87,16 @@ async function main() {
       throw new Error(`unexpected Codex live result: ${JSON.stringify(result)}`);
     }
     console.log(JSON.stringify({ok: true, runId: started.runId, conclusion: result.conclusion, summary: node.result.summary, sandbox: 'read-only'}));
+  } catch (error) {
+    primaryError = error;
   } finally {
-    await bridge?.close().catch(() => undefined);
-    await stopControlPlane(stateDir).catch(() => undefined);
-    await rm(temporary, {recursive: true, force: true, maxRetries: 3, retryDelay: 100}).catch(() => undefined);
+    const cleanupErrors = [];
+    try {await bridge?.close()} catch (error) {cleanupErrors.push(error)}
+    try {await stopControlPlane(stateDir)} catch (error) {cleanupErrors.push(error)}
+    try {await rm(temporary, {recursive: true, force: true, maxRetries: 5, retryDelay: 100})} catch (error) {cleanupErrors.push(error)}
+    if (primaryError && cleanupErrors.length) throw new AggregateError([primaryError, ...cleanupErrors], 'Codex live smoke and cleanup failed');
+    if (primaryError) throw primaryError;
+    if (cleanupErrors.length) throw new AggregateError(cleanupErrors, 'Codex live smoke cleanup failed');
   }
 }
 
