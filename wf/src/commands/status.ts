@@ -31,7 +31,11 @@ export async function watchStatus(client: EngineClient, runId: string, output: T
 }
 
 export class StatusCommand extends Command {
-  static paths = [['status']]; runId = Option.String({required: true}); json = Option.Boolean('--json', false); watch = Option.Boolean('--watch', false);
+  static paths = [['status']];
+  static usage = Command.Usage({description: 'Read a durable Run snapshot or watch it in the human TUI.'});
+  runId = Option.String({required: true, name: 'run-id'});
+  json = Option.Boolean('--json', false, {description: 'Print one compatibility status JSON object'});
+  watch = Option.Boolean('--watch', false, {description: 'Attach the interactive TUI until the Run stops'});
   async execute(): Promise<number> {
     if (this.watch) {
       const error = statusWatchError(this.json, process.stdout.isTTY);

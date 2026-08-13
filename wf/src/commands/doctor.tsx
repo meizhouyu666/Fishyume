@@ -23,9 +23,10 @@ export async function runDoctor(client: EngineClient, project: string | undefine
 
 export class DoctorCommand extends Command {
   static paths = [['doctor']];
-  project = Option.String('--project');
-  driver = Option.String('--driver');
-  backend = Option.String('--backend');
+  static usage = Command.Usage({description: 'Check the Engine, Application protocol, Driver, and optional project readiness.'});
+  project = Option.String('--project', {description: 'Project directory to check'});
+  driver = Option.String('--driver', {description: 'Agent Driver to check (currently codex)'});
+  backend = Option.String('--backend', {description: 'Deprecated compatibility alias for --driver'});
 
   async execute(): Promise<number> {
     if (this.driver && this.backend && this.driver !== (this.backend === 'direct' ? 'codex' : this.backend)) {

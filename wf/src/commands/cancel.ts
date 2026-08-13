@@ -15,6 +15,8 @@ export async function cancelRun(client: EngineClient, runId: string, output: Tex
 }
 
 export class CancelCommand extends Command {
-  static paths = [['cancel']]; runId = Option.String({required: true});
+  static paths = [['cancel']];
+  static usage = Command.Usage({description: 'Request cancellation of every active Attempt in a Run.'});
+  runId = Option.String({required: true, name: 'run-id'});
   async execute(): Promise<number> {return cancelRun(new EngineBridge(), this.runId, this.context.stdout)}
 }

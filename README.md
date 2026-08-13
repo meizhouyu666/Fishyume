@@ -1,8 +1,8 @@
 # Fishyume
 
-Fishyume 是一个面向 Codex、Claude、Kimi、OpenCode 等 Host Agent 的本地、可恢复 AI Agent 编排控制面。Host Agent 通过 MCP 或 Machine CLI 编排由 Agent 与人工审批组成的 DAG；人类通过 TUI 观察、审批、取消、重试和恢复。Fishyume 不是通用工作流编辑器，也不在 Core 中实现聊天 Agent 或模型 Tool loop。
+Fishyume 是一个面向 Codex、Claude、Kimi、OpenCode 等 Host Agent 的本地、可恢复 AI Agent 编排控制面。Host Agent 通过 MCP 或 Machine CLI 调用同一套 Application API，创建和管理由 Agent 与人工审批组成的 DAG；人类可随时用 TUI attach 到同一个持久化 Run，观察或提交审批、取消和重试。执行侧由 headless Agent Driver 负责，当前正式组合是 `codex + local`。Fishyume 的新 Run 与 CC-Panes 无关，也不在 Core 中实现聊天 Agent 或模型 Tool loop。
 
-当前 `0.2.1-alpha.1` 已完成 M4.0 + M4.1 + M4.2，并实现 M4.3.0-M4.3.3：统一 Application Service、持久化 start/action 幂等、MCP、Machine CLI、`fishyume attach` 和 TUI 的 `run.get/run.action` 迁移。Windows 使用 Named Pipe，Linux/macOS 使用 Unix Domain Socket；直接启动 `wf-engine` 时仍保留 stdio JSON-RPC。M4.4 的真实 Provider/live smoke 仍未宣称完成。
+当前 `0.2.1-alpha.1` 已完成 M4.0-M4.3：Agent Driver/Context Compiler、用户级 Local Control Plane、统一 Application Service、持久化 start/action 幂等、MCP、Machine CLI、`fishyume attach` 和 TUI 的 `run.get/run.action` 迁移。Windows 使用 Named Pipe，Linux/macOS 使用 Unix Domain Socket；直接启动 `wf-engine` 时仍保留 stdio JSON-RPC，供测试和受控嵌入使用。本批完成 M4.4 的产品、迁移和发布文档，但 M4.4 的真实 Host/Driver/TUI/crash live acceptance 仍待执行。
 
 当前版本：`0.2.1-alpha.1`
 
@@ -37,7 +37,7 @@ fishyume doctor --driver codex --project "E:\project"
 fishyume run --driver codex --target local --project "E:\project" "实现指定需求"
 ```
 
-旧 `--backend/--tool/--runtime`、Workflow `defaults.backend/tool/runtime` 与 `FISHYUME_BACKEND` 仍在兼容窗口读取并输出 deprecation warning；`direct` 会归一化为 `codex`。新状态只写 `resolvedDriver`、`resolvedTarget`、Driver Handle、Context manifest/version/hash，不写 CC-Panes Profile、TaskBinding 或 Session 身份。
+旧 `--backend/--tool/--runtime`、Workflow `defaults.backend/tool/runtime` 与 `FISHYUME_BACKEND` 仍在兼容窗口读取并输出 deprecation warning；`direct` 会归一化为 `codex`。请将新配置写成 `--driver codex --target local` 或 `defaults.agent.driver/target`；完整映射与冲突规则见 [`docs/fishyume-m4-migration-guide.md`](./docs/fishyume-m4-migration-guide.md)。兼容读取不会删除或重写历史 snapshot；新状态只写 `resolvedDriver`、`resolvedTarget`、Driver Handle、Context manifest/version/hash，不写 CC-Panes Profile、TaskBinding 或 Session 身份。
 
 ## Local Control Plane
 
@@ -147,20 +147,21 @@ Console 以 `j`/`k` 或上下方向键遍历全部 Workflow 节点，`Enter` 折
 
 ## 当前边界
 
-当前仍不支持通用 Shell/HTTP/容器节点、模型回退或动态节点。M4.3 不包含 Web/Desktop、Memory、模型路由、Prompt Library、Native Harness、Claude Driver 或第三方 Driver SDK；真实 Provider/live smoke 与动态发现、运行时热加载后置到后续里程碑。
+当前仍不支持通用 Shell/HTTP/容器节点、模型回退或动态节点。M4.4 batch 1 不包含 Web/Desktop、Memory、模型路由、Prompt Library、Native Harness、Claude Driver 或第三方 Driver SDK；真实 Provider 调用、live Codex smoke、动态发现和运行时热加载均不在本批范围。
 
 ## M4：Agent-Native Control Plane
 
-M4.0 + M4.1 + M4.2 + M4.3.0-M4.3.3 已完成合同冻结、Codex Driver、Context Compiler、CC-Panes 新 Run 退役、常驻服务/IPC 与 Agent-native Application API。完整 M4 仍需后续真实 Provider/live smoke 收口验证，包括：
+M4.0-M4.3 已完成合同冻结、Codex Driver、Context Compiler、CC-Panes 新 Run 退役、常驻服务/IPC 与 Agent-native Application API；M4.4 batch 1 已更新产品说明、迁移路径、help/MCP 描述和发布清单。完整 M4 仍需后续真实 Provider/live smoke 收口验证，包括：
 
 - 本地常驻 Control Plane 与 Named Pipe/Unix Domain Socket；
 - Headless Agent Process Protocol v1；
-- Codex Agent Driver 与 CC-Panes 新 Run 退役；
+- Codex Agent Driver 的真实 headless 执行；
 - 确定性 Context Compiler 骨架；
 - `capabilities`、Workflow validate/explain、Run list/get/events/action（含 answer）/result；
 - 有界事件读取、持久化幂等调用、跨进程动作和崩溃恢复；
 - MCP、Machine CLI、`fishyume attach` 与 TUI 共享同一 Application Service。
 
 正式架构见 [`docs/fishyume-m4-agent-native-control-plane.md`](./docs/fishyume-m4-agent-native-control-plane.md)，分批实施与门禁见 [`docs/fishyume-m4-implementation-plan.md`](./docs/fishyume-m4-implementation-plan.md)。
+当前自动化证据、历史证据和待完成的 M4.4 live gate 见 [`docs/fishyume-release-readiness.md`](./docs/fishyume-release-readiness.md)。
 
 更完整的需求、架构和里程碑说明见 [`docs/`](./docs/)。

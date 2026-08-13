@@ -85,9 +85,17 @@ export function parseInputValues(values: string[] | undefined, fileValues: Recor
 
 export class RunCommand extends Command {
   static paths = [['run']];
-  project = Option.String('--project'); driver = Option.String('--driver'); target = Option.String('--target');
-  backend = Option.String('--backend'); tool = Option.String('--tool'); runtime = Option.String('--runtime');
-  workflow = Option.String('--workflow'); input = Option.Array('--input'); inputsFile = Option.String('--inputs'); task = Option.Rest();
+  static usage = Command.Usage({description: 'Start an ad-hoc task or Workflow Run through the local Control Plane.'});
+  project = Option.String('--project', {description: 'Project directory used for Agent execution'});
+  driver = Option.String('--driver', {description: 'Agent Driver override (currently codex)'});
+  target = Option.String('--target', {description: 'Driver target override (currently local)'});
+  backend = Option.String('--backend', {description: 'Deprecated compatibility alias for --driver'});
+  tool = Option.String('--tool', {description: 'Deprecated compatibility Agent tool selection'});
+  runtime = Option.String('--runtime', {description: 'Deprecated compatibility target selection'});
+  workflow = Option.String('--workflow', {description: 'Workflow YAML or JSON file'});
+  input = Option.Array('--input', {description: 'Workflow input as key=value; repeatable'});
+  inputsFile = Option.String('--inputs', {description: 'JSON object containing Workflow inputs'});
+  task = Option.Rest({name: 'task'});
   async execute(): Promise<number> {
     if (this.driver && this.driver !== 'codex') {this.context.stderr.write(`unsupported driver ${this.driver}\n`); return 6}
     if (this.target && this.target !== 'local') {this.context.stderr.write(`unsupported target ${this.target}\n`); return 6}

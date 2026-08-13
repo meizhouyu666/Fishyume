@@ -22,7 +22,7 @@ jobs:
           node-version: '24.x'
           cache: npm
           cache-dependency-path: wf/package-lock.json
-      - name: Go tests (Backend fixtures included)
+      - name: Go tests (Driver and historical compatibility fixtures included)
         working-directory: wf-engine
         run: go test -json ./... -count=1 -timeout 10m
       - name: Go vet
@@ -150,5 +150,5 @@ jobs:
           if ($doctorOutput -notmatch 'ok engine 0.2.1-alpha.1 started') { throw 'installed Windows Engine did not start' }
           if ($doctorOutput -notmatch 'ok protocol 2 compatible') { throw 'installed Windows Engine protocol check failed' }
 
-# Go checks include executable fake CC-Panes/Direct and dual-Backend Workflow gates.
-# Real Codex authentication and the registered-project CC-Panes smoke remain manual.
+# Public CI uses fake Driver/compatibility fixtures and never requires Provider login.
+# M4.4 live Host/Driver/TUI/crash acceptance remains a separate manual gate.

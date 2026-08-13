@@ -19,7 +19,14 @@ export async function resumeRun(client: EngineClient, runId: string, action: Res
 }
 
 export class ResumeCommand extends Command {
-  static paths = [['resume']]; runId = Option.String({required: true}); approve = Option.String('--approve'); reject = Option.String('--reject'); retry = Option.String('--retry'); reason = Option.String('--reason'); acknowledge = Option.Boolean('--acknowledge-duplicate-risk', false);
+  static paths = [['resume']];
+  static usage = Command.Usage({description: 'Continue a waiting Run or submit one approval, rejection, or retry action.'});
+  runId = Option.String({required: true, name: 'run-id'});
+  approve = Option.String('--approve', {description: 'Approve the specified Approval node'});
+  reject = Option.String('--reject', {description: 'Reject the specified Approval node'});
+  retry = Option.String('--retry', {description: 'Retry the specified Agent node'});
+  reason = Option.String('--reason', {description: 'Reason for --reject'});
+  acknowledge = Option.Boolean('--acknowledge-duplicate-risk', false, {description: 'Acknowledge duplicate side-effect risk for retry'});
   async execute(): Promise<number> {
     const selected = [this.approve, this.reject, this.retry].filter(Boolean); if (selected.length > 1) {this.context.stderr.write('choose only one of --approve, --reject, or --retry\n'); return 6}
     if (this.reason && !this.reject) {this.context.stderr.write('--reason requires --reject\n'); return 6}

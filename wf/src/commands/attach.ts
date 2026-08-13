@@ -6,7 +6,8 @@ import {shouldUseTUI} from './run.js';
 
 export class AttachCommand extends Command {
   static paths = [['attach']];
-  runId = Option.String({required: true});
+  static usage = Command.Usage({description: 'Attach the human TUI to an existing durable Run.'});
+  runId = Option.String({required: true, name: 'run-id'});
   async execute(): Promise<number> {
     if (!shouldUseTUI(process.stdout.isTTY, process.env)) {
       this.context.stderr.write('fishyume attach requires an interactive TTY outside CI\n');

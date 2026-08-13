@@ -1,8 +1,9 @@
 apiVersion: fishyume/v1
 name: fishyume-live-smoke
 defaults:
-  tool: codex
-  runtime: local
+  agent:
+    driver: codex
+    target: local
 execution:
   maxConcurrency: 2
 nodes:

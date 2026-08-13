@@ -1,17 +1,52 @@
 # Fishyume CLI
 
-Install the `fishyume` package to use the primary `fishyume` command or the compatible `wf` alias. Installation does not download executable code; matching Engine packages are optional exact-version dependencies.
+Install `fishyume` to get the primary `fishyume` command and compatible `wf` alias. Installation does not download executable code; matching platform Engine packages are optional exact-version dependencies.
 
-Fishyume `0.2.1-alpha.1` includes M4.0 + M4.1 + M4.2 and M4.3.0-M4.3.3: Agent Driver contracts, Headless Protocol v1, Context Compiler v1, the formal `codex + local` Driver, user-level Local Control Plane, durable Application journal, MCP, Machine CLI, `fishyume attach`, and TUI migration to `run.get/run.action`. CLI/TUI clients automatically discover or detached-start the service and connect over a Windows Named Pipe or Linux/macOS Unix Domain Socket. Direct `wf-engine` invocation retains stdio JSON-RPC for tests and controlled embedding. Real Provider/live smoke remains outside this verified implementation boundary.
+Fishyume `0.2.1-alpha.1` implements the M4.0-M4.3 Agent-native Control Plane. A Host Agent calls the same Application API through MCP (`fishyume mcp`) or the one-response Machine CLI (`fishyume machine`). Humans attach the Calm Operator TUI to the same durable Run with `fishyume attach <run-id>` or `fishyume status <run-id> --watch`. The headless `codex` Driver executes Agent Attempts on the `local` target. New Runs do not require or use CC-Panes.
 
-New Runs use one formal Agent Driver:
+CLI/TUI clients discover or detached-start the user-level service, then connect over a Windows Named Pipe or Linux/macOS Unix Domain Socket. Closing a client does not stop a Run. The Control Plane owns durable state, serializes mutations, and reconciles persisted Attempts before scheduling after restart. Direct `wf-engine` invocation retains stdio JSON-RPC for tests and controlled embedding.
 
-- `codex` runs an installed and authenticated Codex CLI as a headless, non-interactive, one-shot process. Use `fishyume doctor --driver codex` and `fishyume run --driver codex --target local`; optionally set `FISHYUME_CODEX_PATH` and control its sandbox with `FISHYUME_DIRECT_SANDBOX`.
+## Start and observe a Run
 
-CC-Panes is not registered or selectable for new Runs. Historical CC-Panes snapshots remain readable and return an explicit compatibility diagnostic when the old execution cannot be recovered. Deprecated `--backend/--tool/--runtime`, Workflow `defaults.backend/tool/runtime`, and `FISHYUME_BACKEND` are normalized during the compatibility window; `direct` maps to `codex`.
+```powershell
+fishyume doctor --driver codex --project "E:\project"
+fishyume run --driver codex --target local --project "E:\project" "Implement the requested change"
+fishyume attach <run-id>
+```
 
-Fishyume supports bounded parallel Agent execution through `execution.maxConcurrency`. `fishyume status` reports the effective capacity, every active Attempt, waiting Approval, and per-node cancellation or recovery diagnostic. The Engine remains the sole state truth; only structured Results complete Attempts, and cancellation requires Driver confirmation against the persisted process fingerprint. Closing a client does not stop its Run; another CLI/TUI can observe and act on the same durable state. Control Plane restart reconciles persisted Attempts before scheduling and does not duplicate Start.
+For a Workflow file, use canonical Agent selection:
 
-On an interactive terminal, `fishyume run` uses the Calm Operator Console: a complete Run Header, compact Workflow rows, one selected-node Focus Detail, a low-noise status strip, and a context-sensitive footer. Active Attempt, Approval, result, and diagnostic data are merged into their Workflow node instead of repeated in separate panels. Reattach with `fishyume status <run-id> --watch`; use `j`/`k` or arrows to traverse every Workflow node and `Enter` to fold or expand detail. Action keys only appear for the selected Engine-actionable node: `a` approves, `r` rejects with a reason, `R` confirms retry, and `c` confirms cancellation. Indeterminate retries require explicit duplicate-risk acknowledgement and remain pinned by `nodeId/kind/duplicateRisk`. Mutations carry the displayed `stateVersion` as an expected-state condition. `d`, `q`, and `Ctrl+C` only disconnect observation without pausing or cancelling the Run.
+```yaml
+defaults:
+  agent:
+    driver: codex
+    target: local
+```
 
-The console targets 80/120/160 columns, handles CJK and long paths by display width, and degrades from TrueColor to ANSI256/ANSI16 or monochrome. `TERM=dumb` and `FISHYUME_ASCII=1` select the ASCII fallback. Non-TTY/CI output remains the stable line-oriented reporter. Non-interactive `--watch` is rejected with an actionable diagnostic, `--watch --json` is invalid, and plain `fishyume status --json` remains a single machine-readable object. Machine clients can use `fishyume machine system.capabilities --params '{}'`, `fishyume machine run.get --params '{"runId":"<run-id>"}'`, `fishyume attach <run-id>`, or `fishyume mcp`. Run `npm run gallery` to regenerate the six canonical visual fixtures in `docs/fishyume-m3.3-canonical-gallery.txt`.
+`execution.maxConcurrency` provides bounded parallel Agent execution. The effective capacity is bounded by the Workflow request, Driver capability, and Fishyume safety ceiling. Only structured Results complete Attempts, and cancellation requires Driver confirmation against the persisted process fingerprint.
+
+## Agent interfaces
+
+The MCP server and Machine CLI expose only the current Application API: `system.capabilities`, `workflow.validate`, `workflow.explain`, `run.start`, `run.list`, `run.get`, `run.events`, `run.action`, and `run.result`.
+
+```powershell
+fishyume machine system.capabilities --params '{}'
+fishyume machine run.get --params '{"runId":"<run-id>"}'
+fishyume mcp
+```
+
+Call `system.capabilities` before authoring automation. `run.start` is idempotent by caller-owned `clientRequestId`; `run.action` requires a unique `actionId` and the observed `stateVersion`. Event reads and responses are bounded. Machine output is one Application response JSON object; MCP returns the same response types.
+
+## Human console
+
+The TUI presents one Run, compact Workflow rows, one selected-node detail view, and only currently valid actions. `a` approves or answers, `r` rejects, `R` retries, and `c` cancels after confirmation. `d`, `q`, and `Ctrl+C` disconnect observation without pausing or cancelling the Run. Non-TTY/CI output remains line-oriented; `status --watch` requires an interactive terminal, and `status --json` emits one object.
+
+The console supports 80/120/160 columns, CJK display width, TrueColor through monochrome, `NO_COLOR`, and ASCII fallback through `TERM=dumb` or `FISHYUME_ASCII=1`.
+
+## Compatibility window
+
+Deprecated CLI `--backend/--tool/--runtime`, Workflow `defaults.backend/tool/runtime` and node `tool/runtime`, plus `FISHYUME_BACKEND`, remain compatibility inputs and emit warnings. `direct` normalizes to Driver `codex`; the supported current target is `local`. Historical CC-Panes snapshots remain readable for status and receive an explicit diagnostic if their old execution cannot be recovered. Compatibility does not destructively migrate or delete stored state.
+
+Use `--driver/--target` and `defaults.agent.driver/target` for all new automation. See [`../docs/fishyume-m4-migration-guide.md`](../docs/fishyume-m4-migration-guide.md) for exact mappings and conflict behavior.
+
+M4.4 batch 1 covers product, migration, help, example, and release-surface documentation. Real Provider acceptance is still pending: no live Host Agent MCP flow, live Codex Driver workflow, concurrent Host/TUI action flow, or Control Plane crash/restart smoke is claimed by this batch.

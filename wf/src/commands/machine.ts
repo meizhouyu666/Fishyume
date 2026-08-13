@@ -20,7 +20,8 @@ export async function runMachine(client: EngineClient, method: string, paramsTex
 
 export class MachineCommand extends Command {
   static paths = [['machine']];
-  method = Option.String({required: true});
-  params = Option.String('--params', {description: 'Application request as one JSON object'});
+  static usage = Command.Usage({description: 'Call one Agent-facing Application API method and print one JSON response.'});
+  method = Option.String({required: true, name: 'Application-method'});
+  params = Option.String('--params', {description: 'Application request as one JSON object; defaults to {}'});
   async execute(): Promise<number> {return runMachine(new EngineBridge(), this.method, this.params, this.context.stdout)}
 }

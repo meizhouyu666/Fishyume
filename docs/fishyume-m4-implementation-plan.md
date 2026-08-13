@@ -1,6 +1,6 @@
 # Fishyume M4 分阶段实施计划
 
-> 状态：M4.0 + M4.1 + M4.2 + M4.3.0-M4.3.3 已实现；本地 Go/TS 收口门禁已通过，真实 Provider/live smoke 仍后置
+> 状态：M4.0-M4.3 已实现；M4.4 batch 1 产品、迁移与发布文档已完成。真实 Host/Driver/TUI/crash live smoke 与最终独立审查仍待完成。
 >
 > 对应架构：[`fishyume-m4-agent-native-control-plane.md`](./fishyume-m4-agent-native-control-plane.md)
 
@@ -213,25 +213,27 @@
 
 ## 6. M4.4：产品化、迁移与发布验证
 
+> Batch 1 状态：README、CLI help、MCP tool descriptions、示例 Workflow、迁移指南、release readiness/安全清单与公开 CI/包描述审计已完成。以下 live acceptance 不因文档完成而视为通过。
+
 ### 工作项
 
 - 用真实 Codex Host Agent 通过 MCP 创建和运行 Workflow。
 - 用真实 Codex Driver 执行并行 Agent → Approval → Agent Workflow。
 - Host Agent 与 TUI 同时连接并分别提交动作。
 - 执行 Control Plane crash/restart live smoke。
-- 更新 README、CLI help、MCP tool descriptions 和示例 Workflow。
-- 提供 `backend/tool/runtime` 到 `agent.driver/target` 的迁移说明。
-- 移除发布包中的 CC-Panes Profile 和控制面要求。
-- 更新 CI，公开测试不依赖真实 Provider 登录。
-- 生成 release readiness 和安全检查清单。
+- [x] 更新 README、CLI help、MCP tool descriptions 和示例 Workflow。
+- [x] 提供 `backend/tool/runtime` 到 `agent.driver/target` 的迁移说明。
+- [x] 从当前发布表面移除 CC-Panes Profile 和控制面要求，同时保留历史兼容代码/测试。
+- [x] 审计 CI 与包脚本；公开测试保持不依赖真实 Provider 登录，且不削弱 Windows/Ubuntu 门禁。
+- [x] 生成当前 M4 release readiness 和安全检查清单。
 
 ### M4 收口门禁
 
 - Go test、vet、build 全通过。
 - TypeScript typecheck、test、build、diff check 全通过。
 - Windows 与 Linux IPC 集成测试通过。
-- Codex live smoke 通过。
-- P0/P1/P2 独立审查为零。
+- Codex Host Agent MCP、真实 Driver、Host/TUI 并发动作和 Control Plane crash/restart live smoke 全部通过。
+- 最终 P0/P1/P2 独立审查为零。
 - `main == origin/main`，工作树干净。
 - 架构文档、实施记录和 README 与实际行为一致。
 

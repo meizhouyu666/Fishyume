@@ -9,7 +9,7 @@
     "fishyume": "dist/cli.js",
     "wf": "dist/cli.js"
   },
-  "description": "Fishyume 本地优先、可恢复工作流引擎",
+  "description": "Agent-native local control plane for durable AI workflows",
   "license": "Apache-2.0",
   "files": [
     "dist",

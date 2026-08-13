@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -195,6 +197,34 @@ func TestWorkflowAuthoringApplicationAPI(t *testing.T) {
 	validated, appErr = service.WorkflowValidate(context.Background(), invalid)
 	if appErr != nil || validated.Valid || len(validated.Issues) != 1 || validated.Issues[0].Path != "$" {
 		t.Fatalf("invalid validate = %+v, error = %v", validated, appErr)
+	}
+}
+
+func TestDocumentedSmokeWorkflowValidatesThroughApplicationAPI(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "docs", "examples", "fishyume-smoke.yaml")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(newFakeCore(), "codex", store.New(t.TempDir()))
+	validated, appErr := service.WorkflowValidate(context.Background(), WorkflowValidateRequest{
+		Project: "project",
+		Workflow: WorkflowInput{Source: &WorkflowSource{Filename: filepath.Base(path), Content: string(content)}},
+	})
+	if appErr != nil || !validated.Valid || len(validated.Issues) != 0 || len(validated.CapabilityGaps) != 0 || len(validated.Warnings) != 0 {
+		t.Fatalf("documented smoke workflow validate = %+v, error = %v", validated, appErr)
+	}
+	explained, appErr := service.WorkflowExplain(context.Background(), WorkflowValidateRequest{
+		Project: "project",
+		Workflow: WorkflowInput{Source: &WorkflowSource{Filename: filepath.Base(path), Content: string(content)}},
+	})
+	if appErr != nil || !reflect.DeepEqual(explained.ParallelLayers[0], []string{"plan", "review"}) {
+		t.Fatalf("documented smoke workflow explain = %+v, error = %v", explained, appErr)
+	}
+	for _, node := range explained.Nodes {
+		if node.Agent != nil && (node.Agent.Driver != "codex" || node.Agent.Target != "local") {
+			t.Fatalf("documented smoke node %s resolved Agent = %+v", node.ID, node.Agent)
+		}
 	}
 }
 
