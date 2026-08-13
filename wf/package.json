@@ -28,6 +28,7 @@
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --import tsx src/**/*.test.ts src/**/*.test.tsx",
+    "test:mcp-host": "node --test --import tsx src/integration/mcp-host-agent.test.ts",
     "verify": "npm run typecheck && npm test && npm run build && npm run pack:audit && npm run pack:audit:real",
     "gallery": "tsx scripts/render-tui-gallery.ts",
     "pack:dry-run": "npm pack --dry-run",

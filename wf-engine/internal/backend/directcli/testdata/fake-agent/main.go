@@ -32,7 +32,7 @@ func main() {
 	if first := strings.SplitN(prompt, "\n", 2)[0]; strings.HasPrefix(first, "scenario:") {
 		scenario = strings.TrimSpace(strings.TrimPrefix(first, "scenario:"))
 	}
-	for _, candidate := range []string{"terminal-succeeded", "delayed-succeeded", "terminal-failed", "terminal-indeterminate", "terminal-needs-input", "malformed-result", "wrong-identity", "oversized-result", "conflict-result", "premature-result", "nonzero-missing", "result-pending", "waiting-input", "active", "large-output"} {
+	for _, candidate := range []string{"terminal-succeeded", "delayed-succeeded", "terminal-failed", "terminal-indeterminate", "terminal-needs-input", "needs-input-then-succeeded", "malformed-result", "wrong-identity", "oversized-result", "conflict-result", "premature-result", "nonzero-missing", "result-pending", "waiting-input", "active", "large-output"} {
 		if strings.Contains(prompt, "scenario:"+candidate) {
 			scenario = candidate
 			break
@@ -63,6 +63,14 @@ func main() {
 	case "terminal-needs-input":
 		writeNeedsInput(resultPath, id)
 		emit(map[string]any{"type": "fishyume.waiting_input"})
+		emitCompleted()
+	case "needs-input-then-succeeded":
+		if id.Attempt == 1 {
+			writeNeedsInput(resultPath, id)
+			emit(map[string]any{"type": "fishyume.waiting_input"})
+		} else {
+			writeResult(resultPath, id, "succeeded", "answered fixture in "+mustWorkingDirectory())
+		}
 		emitCompleted()
 	case "malformed-result":
 		_ = os.WriteFile(resultPath, []byte("{not-json"), 0o600)
