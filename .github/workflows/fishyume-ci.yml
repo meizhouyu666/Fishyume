@@ -22,20 +22,24 @@ jobs:
           node-version: '24.x'
           cache: npm
           cache-dependency-path: wf/package-lock.json
-      - name: Go checks (Backend fixtures included)
+      - name: Go tests (Backend fixtures included)
         working-directory: wf-engine
         shell: bash
         run: |
           set -euo pipefail
-          # Windows runners occasionally lose a child-process fixture during
-          # teardown. Retry the test suite once while preserving the first
-          # failure in the log; deterministic failures still fail the job.
-          if ! go test ./... -count=1 -timeout 10m; then
+          # Keep package/test names in the Actions log. A second run is only
+          # diagnostic for transient process teardown; it cannot hide a
+          # deterministic failure because its exit status is preserved.
+          if ! go test -json ./... -count=1 -timeout 10m; then
             echo 'Initial Go test run failed; retrying once with a fresh process state.' >&2
-            go test ./... -count=1 -timeout 10m
+            go test -json ./... -count=1 -timeout 10m
           fi
-          go vet ./...
-          go build ./cmd/wf-engine
+      - name: Go vet
+        working-directory: wf-engine
+        run: go vet ./...
+      - name: Go build
+        working-directory: wf-engine
+        run: go build ./cmd/wf-engine
       - name: Linux race check
         if: runner.os == 'Linux'
         working-directory: wf-engine
