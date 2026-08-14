@@ -45,6 +45,35 @@ The following gates are explicitly unverified by batch 1:
 
 Until these pass, describe the product as M4.0-M4.3 implemented with M4.4 batch-1 productization complete, not as M4 fully accepted or release-ready.
 
+## Closure attempt record (2026-08-14)
+
+The repeatable real Host Agent gate is now available as
+`npm --prefix wf run smoke:codex-host-mcp`. It launches `codex exec --ephemeral --json`
+with only the local `fishyume mcp` stdio server, a temporary state directory, and the
+read-only sandbox. The first local run reached the Codex process but stopped before any
+MCP call because the locally stored Codex credential returned `401 invalid_api_key`.
+No credential, prompt, or full JSONL was persisted. The repository does not currently
+have a Windows PTY harness (`winpty`/`node-pty`), so the rendered Host/TUI replay also
+remains an explicit manual gate rather than a claimed pass.
+
+To finish these gates on a machine with valid Codex authentication:
+
+1. Run `codex login status`. If invalid, authenticate with `codex login --device-auth`
+   or `codex login --with-api-key` without pasting the credential into the repository
+   or chat. If the endpoint is unreachable, set `HTTP_PROXY`, `HTTPS_PROXY`, and
+   `ALL_PROXY` to `http://127.0.0.1:7897` for the login command only.
+2. From the repository root, run
+   `$env:FISHYUME_LIVE_CODEX='1'; npm --prefix wf run smoke:codex-host-mcp` and retain
+   only its final JSON summary (Codex version, Run ID, tool sequence, sandbox, cleanup).
+3. Run the existing real Driver parallel gate:
+   `$env:FISHYUME_LIVE_CODEX='1'; npm --prefix wf run smoke:codex-live:parallel`.
+4. In two real terminal windows, start the Host Agent MCP flow in one and attach the
+   returned Run with `fishyume attach <run-id>` in the other. Submit one Approval from
+   each client against the same observed state; exactly one must succeed, the other must
+   report `conflict`, and detaching the TUI must leave the Run active. Record terminal
+   dimensions, rendered output, Run ID, and cleanup result without recording prompts or
+   credentials.
+
 ## Security and release checklist
 
 - [ ] Credentials: packages, archives, fixtures, logs, docs, and CI output contain no Provider tokens, auth files, complete environment maps, or local profile secrets.
