@@ -1,6 +1,6 @@
 # Fishyume M4 release readiness
 
-Fishyume M4.0-M4.3 is implemented. M4.4 now includes the product/migration release surface, deterministic and real Codex MCP Host, rendered Host/PTY handoff, Host/TUI-controller concurrency, Application crash/restart acceptance, and local real-Codex single-node and parallel Driver smoke. All technical gates are complete; final independent review remains before closure. A real Provider crash record is optional supplemental evidence, not a duplicate release blocker. No version bump, publish, or GitHub Release is part of this batch.
+Fishyume M4 is technically closed. M4.4 includes the product/migration release surface, deterministic and real Codex MCP Host, rendered Host/PTY handoff, Host/TUI-controller concurrency, Application crash/restart acceptance, and local real-Codex single-node and parallel Driver smoke. Independent review of `b6aa2752c76642a9eaf3235df1a3e43d1dcd1804` returned APPROVE with P0/P1/P2 `0/0/0`, and GitHub Actions run [`31783982777`](https://github.com/meizhouyu666/Fishyume/actions/runs/31783982777) passed all six jobs. A real Provider crash record remains optional supplemental evidence. No version bump, publish, or GitHub Release is part of this closure.
 
 ## Current release surface
 
@@ -41,11 +41,11 @@ The live gates now have the following status:
 - [x] A real Codex Host Agent calls capabilities, validates/explains, starts, observes, acts on, and reads the result of a Workflow through MCP.
 - [x] A real Host Agent plus rendered human PTY session shares one Run with `fishyume attach`; the TUI action succeeds, the Host stale action receives `conflict`, both converge terminal, and detach preserves the result.
 - [x] Provider-independent Application crash/restart acceptance verifies live fake-Driver Attempt reconciliation, action-receipt replay, and no duplicate Start. A real Provider/live crash record remains optional evidence.
-- [ ] Final independent review reports no blocking P0/P1/P2 findings against the M4 acceptance criteria.
+- [x] Final independent review reports no blocking P0/P1/P2 findings against the M4 acceptance criteria.
 
-Until the final review passes, describe this snapshot as the M4 release candidate, not as a published release.
+M4 is closed as an accepted technical baseline. It is not a published release; package publication and a GitHub Release remain separate explicitly authorized operations.
 
-## Closure attempt record (2026-08-14)
+## Closure evidence record (2026-08-14)
 
 The repeatable real Host Agent gate is now available as
 `npm --prefix wf run smoke:codex-host-mcp`. It launches `codex exec --ephemeral --json`
@@ -84,16 +84,16 @@ To repeat these supplemental local gates on a machine with valid Codex authentic
 
 ## Security and release checklist
 
-- [ ] Credentials: packages, archives, fixtures, logs, docs, and CI output contain no Provider tokens, auth files, complete environment maps, or local profile secrets.
-- [ ] Prompt and log bounds: complete prompts are not persisted in general logs; request frames, summaries, Results, artifacts, event reads, schemas, errors, and Driver output retain enforced byte/item bounds.
-- [ ] State and IPC ownership: one compatible owner holds each state directory; Windows Named Pipe ACL and Unix directory/socket permissions are verified; endpoints are identity-bound and TCP is not enabled by default.
-- [ ] Durable actions: `clientRequestId`, `actionId`, `expectedStateVersion`, and `expectedAttempt` behavior remains crash-safe and conflict-detecting.
-- [ ] Process safety: Driver executable identity, PID/fingerprint reuse protection, cancellation confirmation, and crash reconciliation are covered on supported platforms.
-- [ ] Artifacts and checksums: archives are built with `CGO_ENABLED=0`, `-trimpath`, stripped symbols, expected package contents, executable Linux mode, and non-empty SHA-256 checksum files.
-- [ ] Provider-independent CI: Windows and Ubuntu public gates pass without Provider login, live Codex calls, CC-Panes, Docker, or private infrastructure.
-- [ ] Release independence: published packages and current instructions contain no CC-Panes Profile/control-plane requirement; retained CC-Panes code is historical compatibility only.
+- [x] Credentials: packages, archives, fixtures, logs, docs, and CI output contain no Provider tokens, auth files, complete environment maps, or local profile secrets.
+- [x] Prompt and log bounds: complete prompts are not persisted in general logs; request frames, summaries, Results, artifacts, event reads, schemas, errors, and Driver output retain enforced byte/item bounds.
+- [x] State and IPC ownership: one compatible owner holds each state directory; Windows Named Pipe ACL and Unix directory/socket permissions are verified; endpoints are identity-bound and TCP is not enabled by default.
+- [x] Durable actions: `clientRequestId`, `actionId`, `expectedStateVersion`, and `expectedAttempt` behavior remains crash-safe and conflict-detecting.
+- [x] Process safety: Driver executable identity, PID/fingerprint reuse protection, cancellation confirmation, and crash reconciliation are covered on supported platforms.
+- [x] Artifacts and checksums: archives are built with `CGO_ENABLED=0`, `-trimpath`, stripped symbols, expected package contents, executable Linux mode, and non-empty SHA-256 checksum files.
+- [x] Provider-independent CI: Windows and Ubuntu public gates pass without Provider login, live Codex calls, CC-Panes, Docker, or private infrastructure.
+- [x] Release independence: package audits and current instructions contain no CC-Panes Profile/control-plane requirement; retained CC-Panes code is historical compatibility only.
 - [x] Live evidence: real Host MCP, Host/PTY conflict, and real Driver checks are recorded with versions, bounded logs, state cleanup, and no credentials; deterministic crash/restart is covered by `npm --prefix wf run test:restart`.
-- [ ] Review and repository: final independent review passes, `main == origin/main`, the worktree is clean, and the reviewed commit is the release candidate.
+- [x] Review and repository: independent review approved exact SHA `b6aa2752c76642a9eaf3235df1a3e43d1dcd1804`; `main == origin/main`, CI passed, and the closure follow-up is documentation-only.
 
 ## Build artifacts
 
@@ -103,4 +103,4 @@ To repeat these supplemental local gates on a machine with valid Codex authentic
 ./wf/scripts/verify-engine-artifacts.ps1
 ```
 
-Generated archives and checksums remain ignored by Git. Publishing packages or creating a release is a separate, explicitly authorized operation after every pending gate above is satisfied.
+Generated archives and checksums remain ignored by Git. Publishing packages or creating a release remains a separate, explicitly authorized operation outside this M4 technical closure.

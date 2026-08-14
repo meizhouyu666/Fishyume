@@ -1,6 +1,6 @@
 # Fishyume M4 分阶段实施计划
 
-> 状态：M4.0-M4.3 已实现；M4.4 的产品/迁移表面、真实 Codex Host MCP、真实 Host + rendered PTY/TUI stale-action conflict、真实 Codex 单节点与并行 Driver Workflow、MCP Host/TUI-controller 双客户端及 Provider-independent crash/restart 验收均已通过。技术门禁已完成，等待最终独立审查。
+> 状态：M4 已于 2026-08-14 技术收口。M4.0-M4.4 全部门禁通过；精确快照 `b6aa2752c76642a9eaf3235df1a3e43d1dcd1804` 独立审查 APPROVE，P0/P1/P2 为 `0/0/0`，GitHub Actions run `31783982777` 六项全绿。版本发布与 GitHub Release 不在本次收口范围。
 >
 > 对应架构：[`fishyume-m4-agent-native-control-plane.md`](./fishyume-m4-agent-native-control-plane.md)
 
@@ -133,7 +133,7 @@
 
 ## 5. M4.3：Agent-Native MCP 与 Machine API
 
-> 实施状态：M4.3.0-M4.3.3 已实现（Application Service、持久化 journal、MCP/Machine CLI、attach 与 TUI 迁移）；本地自动化门禁已通过，真实 Provider/live smoke 属于后续收口验证。
+> 实施状态：M4.3.0-M4.3.3 已实现（Application Service、持久化 journal、MCP/Machine CLI、attach 与 TUI 迁移）；自动化、真实 Host/Driver 与 PTY live smoke 已在 M4.4 收口。
 
 ### M4.3.0：Application Contract
 
@@ -213,7 +213,7 @@
 
 ## 6. M4.4：产品化、迁移与发布验证
 
-> Batch 1 状态：README、CLI help、MCP tool descriptions、示例 Workflow、迁移指南、release readiness/安全清单与公开 CI/包描述审计已完成。以下 live acceptance 不因文档完成而视为通过。
+> 实施状态：README、CLI help、MCP tool descriptions、示例 Workflow、迁移指南、release readiness/安全清单与公开 CI/包描述审计已完成；以下 live acceptance 均有独立证据并通过最终审查。
 
 ### 工作项
 

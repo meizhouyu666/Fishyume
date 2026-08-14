@@ -1,6 +1,6 @@
 # Fishyume M5: Context Engineering and Memory
 
-> Status: entry plan prepared for activation after the M4 release-candidate review.
+> Status: active at M5.0 contract/evaluation entry after M4 technical closure. No M5 production implementation has started.
 
 M5 turns the existing deterministic Context Compiler skeleton into the product layer
 that gives each Agent Attempt the smallest sufficient, auditable context. Fishyume
@@ -63,7 +63,7 @@ CI dependency.
 
 ## M5 entry gates
 
-- M4 final independent review has no P0/P1/P2 findings.
+- [x] M4 final independent review has no P0/P1/P2 findings.
 - Context Envelope v2 and memory records are approved before production code changes.
 - Golden/evaluation fixtures exist before optimization claims.
 - No model-routing or plugin-ecosystem work is mixed into M5 commits.
