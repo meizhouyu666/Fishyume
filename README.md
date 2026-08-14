@@ -2,7 +2,7 @@
 
 Fishyume 是一个面向 Codex、Claude、Kimi、OpenCode 等 Host Agent 的本地、可恢复 AI Agent 编排控制面。Host Agent 通过 MCP 或 Machine CLI 调用同一套 Application API，创建和管理由 Agent 与人工审批组成的 DAG；人类可随时用 TUI attach 到同一个持久化 Run，观察或提交审批、取消和重试。执行侧由 headless Agent Driver 负责，当前正式组合是 `codex + local`。Fishyume 的新 Run 与 CC-Panes 无关，也不在 Core 中实现聊天 Agent 或模型 Tool loop。
 
-当前 `0.2.1-alpha.1` 已完成 M4.0-M4.3：Agent Driver/Context Compiler、用户级 Local Control Plane、统一 Application Service、持久化 start/action 幂等、MCP、Machine CLI、`fishyume attach` 和 TUI 的 `run.get/run.action` 迁移。Windows 使用 Named Pipe，Linux/macOS 使用 Unix Domain Socket；直接启动 `wf-engine` 时仍保留 stdio JSON-RPC，供测试和受控嵌入使用。M4.4 已完成产品/迁移文档、确定性 MCP Host 流程、真实 Codex Driver 单节点与并行 Workflow smoke、MCP Host/TUI-controller 双客户端并发验收，以及 Provider-independent Control Plane crash/restart 验收；真实 Host 模型 + PTY、真实 Provider/live crash 记录和最终独立审查仍待完成。
+当前 `0.2.1-alpha.1` 已完成 M4.0-M4.3：Agent Driver/Context Compiler、用户级 Local Control Plane、统一 Application Service、持久化 start/action 幂等、MCP、Machine CLI、`fishyume attach` 和 TUI 的 `run.get/run.action` 迁移。Windows 使用 Named Pipe，Linux/macOS 使用 Unix Domain Socket；直接启动 `wf-engine` 时仍保留 stdio JSON-RPC，供测试和受控嵌入使用。M4.4 的产品/迁移表面、真实 Codex Driver 单节点与并行 Workflow、真实 Host MCP、Host + rendered PTY/TUI 冲突收敛，以及 Provider-independent Control Plane crash/restart 验收均已通过；M4 技术门禁已完成，等待最终独立审查冻结结论。
 
 当前版本：`0.2.1-alpha.1`
 
@@ -169,7 +169,7 @@ Console 以 `j`/`k` 或上下方向键遍历全部 Workflow 节点，`Enter` 折
 
 ## M4：Agent-Native Control Plane
 
-M4.0-M4.3 已完成合同冻结、Codex Driver、Context Compiler、CC-Panes 新 Run 退役、常驻服务/IPC 与 Agent-native Application API；M4.4 已更新产品说明、迁移路径、help/MCP 描述和发布清单，并补充 Host/TUI 并发等验收证据。完整 M4 仍需后续真实 Host/PTY、并行 Driver Workflow、crash/restart 与独立审查收口。
+M4.0-M4.3 已完成合同冻结、Codex Driver、Context Compiler、CC-Panes 新 Run 退役、常驻服务/IPC 与 Agent-native Application API；M4.4 已更新产品说明、迁移路径、help/MCP 描述和发布清单，并通过真实 Host/PTY、并行 Driver Workflow、Host/TUI stale-action conflict 与 crash/restart 验收。当前候选只剩最终独立审查；真实 Provider crash 记录是补充证据，不再与已通过的确定性恢复门禁重复阻塞 M4。
 
 - 本地常驻 Control Plane 与 Named Pipe/Unix Domain Socket；
 - Headless Agent Process Protocol v1；

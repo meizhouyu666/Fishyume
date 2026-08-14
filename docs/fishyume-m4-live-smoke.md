@@ -120,6 +120,31 @@ product's normal interactive approval policy or weaken the sandbox.
 
 ## Concurrent Host/TUI acceptance
 
+### Real Host plus rendered PTY record (2026-08-14)
+
+`codex-cli 0.147.0` started Run `run-e1c258287844aa09b22a2c54` through the real
+Fishyume MCP server and left its Approval waiting. The same Run was attached in a
+CC-Panes-backed Windows PTY at 120 columns with `fishyume attach`. The rendered Calm
+Operator Console showed the Approval and accepted `a`; the Run became `SUCCEEDED`.
+The Host then submitted its retained stale `stateVersion`, received `conflict`, and
+read the terminal result. The acceptance runner detached the terminal observer, and
+the temporary Control Plane and Codex home were removed. CC-Panes supplied only the terminal PTY; it was not a
+Fishyume backend, state owner, or product dependency.
+
+Repeat the explicit local gate from a real terminal with:
+
+```powershell
+$env:FISHYUME_LIVE_CODEX = '1'
+npm --prefix wf run smoke:codex-host-pty
+```
+
+When the Approval is rendered, press `a`; after the terminal result and host-complete
+marker appear, press `q`. The final JSON must report `ptyHandoff: true`,
+`staleActionConflict: true`, `sandbox: "read-only"`, and temporary cleanup.
+For an operator-driven PTY gate that should close itself after the Host reaches the
+terminal result, use `npm --prefix wf run smoke:codex-host-pty:auto`; approval still
+comes from the rendered terminal, while detach is deterministic.
+
 The deterministic acceptance test `wf/src/integration/mcp-tui-concurrency.test.ts`
 connects an MCP SDK Host client and the real `LiveConsoleController` through two
 independent Engine connections to one temporary Control Plane and Run. Both clients

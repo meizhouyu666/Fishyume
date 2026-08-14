@@ -1,6 +1,6 @@
 # Fishyume M4 release readiness
 
-Fishyume M4.0-M4.3 is implemented. M4.4 now includes the product/migration release surface, deterministic MCP Host, Host/TUI-controller, and Application crash/restart acceptance, plus local real-Codex single-node and parallel Driver smoke. This is not a release approval: the full real Host/PTY, real Provider/live crash record, and final independent review remain pending. No version bump, publish, or GitHub Release is part of this batch.
+Fishyume M4.0-M4.3 is implemented. M4.4 now includes the product/migration release surface, deterministic and real Codex MCP Host, rendered Host/PTY handoff, Host/TUI-controller concurrency, Application crash/restart acceptance, and local real-Codex single-node and parallel Driver smoke. All technical gates are complete; final independent review remains before closure. A real Provider crash record is optional supplemental evidence, not a duplicate release blocker. No version bump, publish, or GitHub Release is part of this batch.
 
 ## Current release surface
 
@@ -34,16 +34,16 @@ M2.1/M2.2 live records from 2026-08-05 demonstrated the former Direct and CC-Pan
 
 Historical evidence must not be presented as current M4.4 acceptance. The legacy snapshots and compatibility tests remain intentionally; release instructions must not ask users to configure `FISHYUME_CCPANES_PROFILE_ID`, a CC-Panes Profile, or a registered CC-Panes project.
 
-## Pending M4.4 live acceptance
+## M4.4 live acceptance status
 
-The following gates are explicitly unverified by batch 1:
+The live gates now have the following status:
 
-- a real Codex Host Agent calls capabilities, validates/explains, starts, observes, acts on, and reads the result of a Workflow through MCP;
-- a manual real Host Agent plus rendered human PTY session repeats the automated MCP Host/TUI-controller concurrency gate (the production adapter, controller, and action binding are already covered without Provider credentials);
-- a Provider-independent Application crash/restart acceptance now verifies live fake-Driver Attempt reconciliation, action-receipt replay, and no duplicate Start; a separate real Provider/live environment record remains optional evidence;
-- final independent review reports no blocking P0/P1/P2 findings against the M4 acceptance criteria.
+- [x] A real Codex Host Agent calls capabilities, validates/explains, starts, observes, acts on, and reads the result of a Workflow through MCP.
+- [x] A real Host Agent plus rendered human PTY session shares one Run with `fishyume attach`; the TUI action succeeds, the Host stale action receives `conflict`, both converge terminal, and detach preserves the result.
+- [x] Provider-independent Application crash/restart acceptance verifies live fake-Driver Attempt reconciliation, action-receipt replay, and no duplicate Start. A real Provider/live crash record remains optional evidence.
+- [ ] Final independent review reports no blocking P0/P1/P2 findings against the M4 acceptance criteria.
 
-Until these pass, describe the product as M4.0-M4.3 implemented with M4.4 batch-1 productization complete, not as M4 fully accepted or release-ready.
+Until the final review passes, describe this snapshot as the M4 release candidate, not as a published release.
 
 ## Closure attempt record (2026-08-14)
 
@@ -55,11 +55,15 @@ read-only sandbox. On this machine `codex-cli 0.147.0` completed the full seven-
 sequence (`system.capabilities`, `workflow.validate`, `workflow.explain`, `run.start`,
 `run.events`, `run.action`, `run.result`) without a manual MCP allow. The temporary
 Control Plane and Codex home were removed, and no credential, prompt, or full JSONL
-was persisted. The repository does not currently have a Windows PTY harness
-(`winpty`/`node-pty`), so rendered Host/TUI replay remains an explicit manual gate
-rather than a claimed pass.
+was persisted. The rendered Host/TUI gate also completed through a CC-Panes-backed
+Windows PTY at 120 columns. `codex-cli 0.147.0` started Run
+`run-e1c258287844aa09b22a2c54`, the TUI approved it, the Host's retained stale action
+received `conflict`, and both observed the terminal result.
+`smoke:codex-host-pty:auto` then detached the observer and only reported success after
+the temporary directory was removed. CC-Panes supplied the terminal only; it was not
+a Fishyume backend or state owner.
 
-To finish these gates on a machine with valid Codex authentication:
+To repeat these supplemental local gates on a machine with valid Codex authentication:
 
 1. Run `codex login status`. If invalid, authenticate with `codex login --device-auth`
    or `codex login --with-api-key` without pasting the credential into the repository
@@ -71,12 +75,10 @@ To finish these gates on a machine with valid Codex authentication:
    cleanup).
 3. Run the existing real Driver parallel gate:
    `$env:FISHYUME_LIVE_CODEX='1'; npm --prefix wf run smoke:codex-live:parallel`.
-4. In two real terminal windows, start the Host Agent MCP flow in one and attach the
-   returned Run with `fishyume attach <run-id>` in the other. Submit one Approval from
-   each client against the same observed state; exactly one must succeed, the other must
-   report `conflict`, and detaching the TUI must leave the Run active. Record terminal
-   dimensions, rendered output, Run ID, and cleanup result without recording prompts or
-   credentials.
+4. From a real PTY, run `npm --prefix wf run smoke:codex-host-pty:auto`, press `a`
+   when the Approval appears, and retain only the bounded final JSON. It must report
+   `ptyHandoff: true`, `staleActionConflict: true`, `sandbox: "read-only"`, and
+   `temporaryDirectoryRemoved: true`.
 
 ## Security and release checklist
 
@@ -88,7 +90,7 @@ To finish these gates on a machine with valid Codex authentication:
 - [ ] Artifacts and checksums: archives are built with `CGO_ENABLED=0`, `-trimpath`, stripped symbols, expected package contents, executable Linux mode, and non-empty SHA-256 checksum files.
 - [ ] Provider-independent CI: Windows and Ubuntu public gates pass without Provider login, live Codex calls, CC-Panes, Docker, or private infrastructure.
 - [ ] Release independence: published packages and current instructions contain no CC-Panes Profile/control-plane requirement; retained CC-Panes code is historical compatibility only.
-- [ ] Live evidence: remaining real Host/PTY/crash checks are recorded with versions, bounded logs, state cleanup, and no credentials; the local real Driver evidence is recorded in `docs/fishyume-m4-live-smoke.md`, and the deterministic crash/restart gate is covered by `npm --prefix wf run test:restart`.
+- [x] Live evidence: real Host MCP, Host/PTY conflict, and real Driver checks are recorded with versions, bounded logs, state cleanup, and no credentials; deterministic crash/restart is covered by `npm --prefix wf run test:restart`.
 - [ ] Review and repository: final independent review passes, `main == origin/main`, the worktree is clean, and the reviewed commit is the release candidate.
 
 ## Build artifacts
