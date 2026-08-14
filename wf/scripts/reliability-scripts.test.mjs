@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseArgs as parsePreflight, selectSteps } from './preflight.mjs';
-import { commandFor, parseArgs as parseStress, STRESS_PACKAGES } from './stress.mjs';
+import { commandFor, commandsFor, parseArgs as parseStress, STRESS_PACKAGES } from './stress.mjs';
 
 test('preflight validates and selects one named primitive', () => {
   assert.deepEqual(parsePreflight(['--step', 'go-vet', '--dry-run']), { step: 'go-vet', dryRun: true });
@@ -13,6 +13,7 @@ test('stress defaults to deterministic 20x gate and fixed high-risk packages', (
   const options = parseStress(['--dry-run']);
   assert.deepEqual(options, { count: 20, timeout: '10m', dryRun: true });
   assert.deepEqual(commandFor(options), { command: 'go', args: ['test', '-count=20', '-timeout', '10m', ...STRESS_PACKAGES] });
+  assert.deepEqual(commandsFor(options), STRESS_PACKAGES.map((packagePath) => ({ command: 'go', args: ['test', '-count=20', '-timeout', '10m', packagePath] })));
 });
 
 test('stress rejects unsafe repetition and timeout values', () => {

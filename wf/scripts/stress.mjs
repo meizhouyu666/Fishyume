@@ -34,6 +34,13 @@ export function commandFor(options) {
   return { command: 'go', args: ['test', `-count=${options.count}`, '-timeout', options.timeout, ...STRESS_PACKAGES] };
 }
 
+export function commandsFor(options) {
+  return STRESS_PACKAGES.map((packagePath) => ({
+    command: 'go',
+    args: ['test', `-count=${options.count}`, '-timeout', options.timeout, packagePath],
+  }));
+}
+
 function run(command) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(command.command, command.args, { cwd: resolve(repoRoot, 'wf-engine'), stdio: 'inherit', shell: false });
@@ -49,10 +56,12 @@ export async function main(args = process.argv.slice(2)) {
     console.log(`Packages: ${STRESS_PACKAGES.join(' ')}`);
     return;
   }
-  const command = commandFor(options);
+  const commands = commandsFor(options);
   console.log(`=== Deterministic stress gate (${options.count} repetitions) ===`);
-  console.log(`$ ${command.command} ${command.args.join(' ')}`);
-  if (!options.dryRun) await run(command);
+  for (const command of commands) {
+    console.log(`$ ${command.command} ${command.args.join(' ')}`);
+    if (!options.dryRun) await run(command);
+  }
   console.log('Stress gate passed.');
 }
 
