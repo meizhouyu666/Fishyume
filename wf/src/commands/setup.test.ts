@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
+import {realpathSync} from 'node:fs';
+import {mkdir, mkdtemp, rm, symlink, writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import test from 'node:test';
 import {checkCodexHost} from './doctor.js';
 import {codexSetupCommand, setupCodex} from './setup.js';
-import type {CodexRunner, CommandResult, McpInvocation} from './codex-cli.js';
+import {currentFishyumeMcpInvocation, type CodexRunner, type CommandResult, type McpInvocation} from './codex-cli.js';
 
 const invocation: McpInvocation = {command: 'C:\\Program Files\\nodejs\\node.exe', args: ['C:\\npm\\node_modules\\fishyume\\dist\\cli.js', 'mcp']};
 const configured = JSON.stringify({enabled: true, transport: {type: 'stdio', command: invocation.command, args: invocation.args}});
@@ -14,6 +18,19 @@ function scripted(results: CommandResult[]): {runner: CodexRunner; calls: string
   const calls: string[][] = [];
   return {calls, runner(args) {calls.push(args); const result = results.shift(); if (!result) throw new Error(`unexpected call ${args.join(' ')}`); return result}};
 }
+
+test('canonical MCP invocation resolves an npm-style entrypoint symlink', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'fishyume-entrypoint-'));
+  t.after(() => rm(root, {recursive: true, force: true}));
+  const installedPackage = join(root, 'installed', 'fishyume');
+  const installedCli = join(installedPackage, 'dist', 'cli.js');
+  const linkedPackage = join(root, 'node_modules', 'fishyume');
+  await mkdir(join(installedPackage, 'dist'), {recursive: true});
+  await mkdir(join(root, 'node_modules'), {recursive: true});
+  await writeFile(installedCli, '');
+  await symlink(installedPackage, linkedPackage, 'junction');
+  assert.deepEqual(currentFishyumeMcpInvocation(join(linkedPackage, 'dist', 'cli.js')), {command: process.execPath, args: [realpathSync(installedCli), 'mcp']});
+});
 
 test('setup codex print is mutation-free and copyable', async () => {
   let output = '';

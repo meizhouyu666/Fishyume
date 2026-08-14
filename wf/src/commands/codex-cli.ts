@@ -1,5 +1,5 @@
 import {spawnSync} from 'node:child_process';
-import {existsSync} from 'node:fs';
+import {existsSync, realpathSync} from 'node:fs';
 import {delimiter, join, resolve} from 'node:path';
 
 export interface CommandResult {
@@ -60,7 +60,7 @@ export function currentFishyumeMcpInvocation(entrypoint = process.argv[1]): McpI
 
 function resolveEntrypoint(entrypoint: string | undefined): string {
   if (!entrypoint) throw new Error('Fishyume CLI entrypoint is unavailable');
-  return resolve(entrypoint);
+  return realpathSync(resolve(entrypoint));
 }
 
 function samePath(left: string, right: string): boolean {

@@ -78,10 +78,10 @@ try {
   & npm --prefix $wfRoot run build
   Assert-NativeSuccess 'Fishyume CLI build'
 
-  $isWindows = $env:OS -eq 'Windows_NT'
-  $platformName = if ($isWindows) { 'fishyume-engine-win32-x64' } else { 'fishyume-engine-linux-x64' }
-  $goos = if ($isWindows) { 'windows' } else { 'linux' }
-  $binary = if ($isWindows) { 'fishyume-engine.exe' } else { 'fishyume-engine' }
+  $runningOnWindows = $env:OS -eq 'Windows_NT'
+  $platformName = if ($runningOnWindows) { 'fishyume-engine-win32-x64' } else { 'fishyume-engine-linux-x64' }
+  $goos = if ($runningOnWindows) { 'windows' } else { 'linux' }
+  $binary = if ($runningOnWindows) { 'fishyume-engine.exe' } else { 'fishyume-engine' }
   $platformSource = Join-Path $wfRoot "packages\$platformName"
   Copy-Item -LiteralPath $platformSource -Destination $stagedPlatform -Recurse
 
