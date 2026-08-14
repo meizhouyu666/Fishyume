@@ -37,7 +37,7 @@ async function main() {
     'If the tool is unavailable, requires interactive approval, or fails, reply with exactly INSTALLED_MCP_SMOKE failed.',
   ].join(' ');
   const invocation = codexInvocation(['exec', '--ephemeral', '--json', '--color', 'never', '--sandbox', 'read-only', '--cd', repoRoot, prompt]);
-  const child = spawn(invocation.command, invocation.args, {cwd: repoRoot, stdio: ['inherit', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32'});
+  const child = spawn(invocation.command, invocation.args, {cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32'});
   let stdout = '';
   let stderr = '';
   child.stdout.on('data', chunk => {stdout += chunk.toString('utf8')});
