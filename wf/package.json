@@ -33,6 +33,7 @@
     "test:restart": "node --test --import tsx src/integration/control-plane-restart.test.ts",
     "smoke:codex-live": "npm run build && node scripts/codex-live-smoke.mjs",
     "smoke:codex-live:parallel": "npm run build && node scripts/codex-live-smoke.mjs --parallel",
+    "smoke:codex-host-mcp": "npm run build && node scripts/codex-host-mcp-smoke.mjs",
     "verify": "npm run typecheck && npm test && npm run build && npm run pack:audit && npm run pack:audit:real",
     "gallery": "tsx scripts/render-tui-gallery.ts",
     "pack:dry-run": "npm pack --dry-run",

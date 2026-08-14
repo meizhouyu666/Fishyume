@@ -82,6 +82,35 @@ Agent. Every Node must be present in the structured result, and the final summar
 match the acceptance contract. The workflow is read-only and the cleanup path cancels
 any non-terminal Run before shutting down the temporary Control Plane.
 
+## Real Codex Host Agent through MCP
+
+The opt-in Host Agent gate launches a real `codex exec --ephemeral --json` process and
+configures exactly one MCP server: the local `wf mcp` stdio server. It uses
+`--ignore-user-config`, a temporary Control Plane state directory, and the read-only
+Codex sandbox, so local MCP servers and interactive approval prompts cannot enter the
+test. The Host Agent must call this sequence in order:
+
+```text
+system.capabilities -> workflow.validate -> workflow.explain -> run.start
+-> run.events -> run.action -> run.result
+```
+
+The workflow contains only an Approval node, so the nested Fishyume Run does not make
+an additional Provider call. The script records only the Codex version, Run ID, tool
+sequence, sandbox mode, and cleanup status; prompts, credentials, and full JSONL are
+never written to the repository.
+
+Run it only after authenticating the local Codex CLI:
+
+```powershell
+$env:FISHYUME_LIVE_CODEX = '1'
+npm --prefix wf run smoke:codex-host-mcp
+```
+
+This gate is intentionally excluded from public CI. If Codex authentication or the
+network is unavailable, the command reports a redacted failure and the deterministic
+MCP Host Agent test remains the required CI gate.
+
 ## Concurrent Host/TUI acceptance
 
 The deterministic acceptance test `wf/src/integration/mcp-tui-concurrency.test.ts`
