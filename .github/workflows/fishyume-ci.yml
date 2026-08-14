@@ -135,7 +135,7 @@ jobs:
           "$install_root/node_modules/.bin/fishyume" --help | grep -q 'dashboard'
           "$install_root/node_modules/.bin/fishyume" dashboard --help | grep -q 'Operator Dashboard'
           setup_output="$("$install_root/node_modules/.bin/fishyume" setup codex --print)"
-          [[ "$setup_output" == 'codex mcp add fishyume -- fishyume mcp' ]]
+          grep -q '^codex mcp add fishyume -- ".*node" ".*/fishyume/dist/cli.js" "mcp"$' <<<"$setup_output"
           dashboard_output="$("$install_root/node_modules/.bin/fishyume")"
           grep -q 'No durable Runs yet.' <<<"$dashboard_output"
           grep -q 'Check readiness: fishyume doctor' <<<"$dashboard_output"
@@ -153,27 +153,11 @@ jobs:
           node-version: '24.x'
           cache: npm
           cache-dependency-path: wf/package-lock.json
-      - name: Build and pack Windows packages
-        shell: pwsh
-        run: |
-          npm --prefix wf ci --ignore-scripts
-          npm --prefix wf run build
-          ./wf/scripts/build-engine-artifacts.ps1 -Target windows-amd64
-          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP/fishyume-packs" | Out-Null
-          Push-Location wf
-          npm pack --pack-destination "$env:RUNNER_TEMP/fishyume-packs"
-          Pop-Location
-          Push-Location wf/packages/fishyume-engine-win32-x64
-          npm pack --pack-destination "$env:RUNNER_TEMP/fishyume-packs"
-          Pop-Location
-      - name: Install and verify Windows packages
+      - name: Install and verify Windows Developer Preview
         shell: pwsh
         run: |
           $installRoot = "$env:RUNNER_TEMP/fishyume-install"
-          npm install --prefix $installRoot `
-            "$env:RUNNER_TEMP/fishyume-packs/fishyume-0.2.1-alpha.1.tgz" `
-            "$env:RUNNER_TEMP/fishyume-packs/fishyume-engine-win32-x64-0.2.1-alpha.1.tgz" `
-            --ignore-scripts
+          ./install-fishyume.ps1 -Prefix $installRoot
           $engine = Join-Path $installRoot 'node_modules/fishyume-engine-win32-x64/bin/fishyume-engine.exe'
           if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) { throw "missing Windows Engine: $engine" }
           $doctorOutput = & (Join-Path $installRoot 'node_modules/.bin/fishyume.cmd') doctor 2>&1 | Out-String
@@ -187,7 +171,7 @@ jobs:
           $dashboardHelp = & $fishyume dashboard --help | Out-String
           if ($dashboardHelp -notmatch 'Operator Dashboard') { throw 'installed Dashboard help is incomplete' }
           $setupOutput = (& $fishyume setup codex --print | Out-String).Trim()
-          if ($setupOutput -ne 'codex mcp add fishyume -- fishyume mcp') { throw 'installed Codex setup command is not copyable' }
+          if ($setupOutput -notmatch '^codex mcp add fishyume -- ".+node(?:\.exe)?" ".+[\\/]fishyume[\\/]dist[\\/]cli\.js" "mcp"$') { throw 'installed Codex setup command is not canonical and copyable' }
           $dashboardOutput = & $fishyume | Out-String
           if ($dashboardOutput -notmatch 'No durable Runs yet\.' -or $dashboardOutput -notmatch 'Check readiness: fishyume doctor') { throw 'installed zero-argument Dashboard empty state is incomplete' }
 

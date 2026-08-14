@@ -14,7 +14,7 @@ fishyume doctor --project "E:\project"
 fishyume
 ```
 
-`setup codex` idempotently registers `fishyume mcp` through the official Codex CLI; `--print` only emits the copyable command and `--force` is required to replace a conflicting entry. Doctor checks Engine/protocol/Driver/project plus Codex CLI, login, and MCP readiness with an executable recovery command for every failure. After a Host Agent starts work, zero-argument `fishyume` opens the Run Dashboard; select with arrows or `j`/`k` and press `Enter` to attach. The normal path does not require a handwritten Workflow or copied Run ID.
+`setup codex` idempotently registers the canonical absolute Node/installed-CLI transport through the official Codex CLI, then treats that explicit setup action as authorization for the nine Fishyume Application tools in Fishyume's own Codex config section. `--print` only emits the low-level transport command, and `--force` is required to replace a conflicting entry. Doctor checks Engine/protocol/Driver/project plus Codex CLI, login, canonical MCP transport, and approval policy with an executable recovery command for every failure. After a Host Agent starts work, zero-argument `fishyume` opens the Run Dashboard; select with arrows or `j`/`k` and press `Enter` to attach. The normal path does not require a handwritten Workflow or copied Run ID.
 
 ## Start and observe a Run
 
@@ -59,4 +59,4 @@ Deprecated CLI `--backend/--tool/--runtime`, Workflow `defaults.backend/tool/run
 
 Use `--driver/--target` and `defaults.agent.driver/target` for all new automation. See [`../docs/fishyume-m4-migration-guide.md`](../docs/fishyume-m4-migration-guide.md) for exact mappings and conflict behavior.
 
-M4 is technically closed: the product/migration release surface, deterministic and real Codex MCP Host flows, local real-Codex single-node and parallel Driver smokes, rendered Host/PTY stale-action conflict, two-client MCP Host/TUI-controller acceptance, Provider-independent Application crash/restart, independent review, and all public CI jobs passed. M4.5 now gates the zero-argument Dashboard, one-command Codex setup, product Doctor, and installed-package golden path. No package publication or GitHub Release was performed, and public CI never requires Provider credentials. M5 production work waits for M4.5 acceptance.
+M4 is technically closed: the product/migration release surface, deterministic and real Codex MCP Host flows, local real-Codex single-node and parallel Driver smokes, rendered Host/PTY stale-action conflict, two-client MCP Host/TUI-controller acceptance, Provider-independent Application crash/restart, independent review, and all public CI jobs passed. M4.5 has accepted the zero-argument Dashboard, one-command Codex setup, product Doctor, and installed-package golden path. No package publication or GitHub Release was performed, and public CI never requires Provider credentials. M5 production work is now unblocked.

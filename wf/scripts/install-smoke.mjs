@@ -85,7 +85,7 @@ try {
   if (!/Fishyume/.test(help) || !/dashboard/.test(help)) throw new Error('installed top-level help is incomplete');
   if (!/Operator Dashboard/.test(invoke(cli, ['dashboard', '--help']))) throw new Error('installed Dashboard help is incomplete');
   const setup = invoke(cli, ['setup', 'codex', '--print']);
-  if (setup.trim() !== 'codex mcp add fishyume -- fishyume mcp') throw new Error('installed Codex setup command is not copyable');
+  if (!setup.includes('codex mcp add fishyume --') || !setup.includes(process.execPath) || !setup.includes(cli) || !setup.trim().endsWith('"mcp"')) throw new Error('installed Codex setup command is not canonical and copyable');
   const dashboard = invoke(cli, []);
   if (!/No durable Runs yet\./.test(dashboard) || !/Check readiness: fishyume doctor/.test(dashboard)) throw new Error(`installed zero-argument Dashboard empty state is incomplete: ${dashboard}`);
   const doctor = invoke(cli, ['doctor'], [0, 1]);

@@ -1,6 +1,7 @@
 import {Command, Option} from 'clipanion';
 import {EngineBridge, type EngineClient} from '../bridge/engine.js';
-import {commandDiagnostic, isFishyumeMcpConfiguration, isMissingMcpServer, runCodex, type CodexRunner} from './codex-cli.js';
+import {commandDiagnostic, currentFishyumeMcpInvocation, isFishyumeMcpConfiguration, isMissingMcpServer, runCodex, type CodexRunner, type McpInvocation} from './codex-cli.js';
+import {hasFishyumeApprovalPolicy} from './codex-config.js';
 
 interface Writer { write(text: string): unknown }
 
@@ -22,7 +23,7 @@ export async function runDoctor(client: EngineClient, project: string | undefine
   }
 }
 
-export function checkCodexHost(output: Writer, runner: CodexRunner = runCodex): number {
+export function checkCodexHost(output: Writer, runner: CodexRunner = runCodex, invocation: McpInvocation = currentFishyumeMcpInvocation(), approvalReady = hasFishyumeApprovalPolicy()): number {
   const version = runner(['--version']);
   if (version.status !== 0) {
     output.write(`fail codex CLI unavailable: ${commandDiagnostic(version)}\nRun: npm install -g @openai/codex\n`);
@@ -40,11 +41,12 @@ export function checkCodexHost(output: Writer, runner: CodexRunner = runCodex): 
   }
 
   const mcp = runner(['mcp', 'get', 'fishyume', '--json']);
-  if (mcp.status === 0 && isFishyumeMcpConfiguration(mcp.stdout)) output.write('ok codex-mcp Fishyume stdio server configured\n');
+  const transportReady = mcp.status === 0 && isFishyumeMcpConfiguration(mcp.stdout, invocation);
+  if (transportReady && approvalReady) output.write('ok codex-mcp Fishyume stdio server configured and approved\n');
   else {
     failed = true;
-    const reason = isMissingMcpServer(mcp) ? 'Fishyume is not configured' : mcp.status === 0 ? 'fishyume points to a different command' : `configuration check failed: ${commandDiagnostic(mcp)}`;
-    output.write(`fail codex-mcp ${reason}\nRun: fishyume setup codex${mcp.status === 0 ? ' --force' : ''}\n`);
+    const reason = isMissingMcpServer(mcp) ? 'Fishyume is not configured' : transportReady ? 'Fishyume tool approval policy is incomplete' : mcp.status === 0 ? 'fishyume points to a different command' : `configuration check failed: ${commandDiagnostic(mcp)}`;
+    output.write(`fail codex-mcp ${reason}\nRun: fishyume setup codex${mcp.status === 0 && !transportReady ? ' --force' : ''}\n`);
   }
   return failed ? 1 : 0;
 }

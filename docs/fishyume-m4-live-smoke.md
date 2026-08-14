@@ -120,6 +120,20 @@ product's normal interactive approval policy or weaken the sandbox.
 
 ## Concurrent Host/TUI acceptance
 
+### Installed setup plus zero-argument Dashboard record (2026-08-14)
+
+The M4.5 product gate installed Fishyume globally from the repository-root Preview installer, registered the canonical absolute Node/installed-CLI MCP transport, and explicitly approved the nine Fishyume tools as part of the user-invoked setup action. A real `codex-cli 0.147.0` process using that installed user configuration called only `system.capabilities` and completed without an interactive MCP allow.
+
+A separate isolated Host run then created `run-6a8bf4c7ca480b68e0f7f47f`. Instead of receiving a copied Run ID, the human PTY launched zero-argument Fishyume, saw the single waiting Run in the Dashboard, pressed `Enter` to attach, and pressed `a` to approve. The TUI reached `SUCCEEDED`; the Host received exact stale-action `conflict` from retained `stateVersion: 3` to current `stateVersion: 5`, then read terminal success. Final evidence included `dashboardHandoff: true`, `interactiveApproval: false`, and temporary cleanup. CC-Panes supplied only the Windows PTY.
+
+Repeat the installed-MCP and Dashboard gates explicitly:
+
+```powershell
+$env:FISHYUME_LIVE_CODEX = '1'
+npm --prefix wf run smoke:codex-installed-mcp
+npm --prefix wf run smoke:codex-host-dashboard
+```
+
 ### Real Host plus rendered PTY record (2026-08-14)
 
 `codex-cli 0.147.0` started Run `run-b45156ced1fce99208dd2228` through the real

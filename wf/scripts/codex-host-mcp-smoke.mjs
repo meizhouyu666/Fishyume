@@ -9,7 +9,9 @@ import {fileURLToPath} from 'node:url';
 const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const wfRoot = join(repoRoot, 'wf');
 const ptyHandoff = process.argv.includes('--pty-handoff');
+const dashboardHandoff = process.argv.includes('--dashboard-handoff');
 const autoDetach = process.argv.includes('--auto-detach');
+if (dashboardHandoff && !ptyHandoff) throw new Error('--dashboard-handoff requires --pty-handoff');
 const standardPrompt = [
   'You are a deterministic Fishyume MCP acceptance harness.',
   'Use ONLY the fishyume MCP server tools. Do not use shell, filesystem, browser, or any other tools.',
@@ -363,8 +365,8 @@ async function main() {
       if (!ptyHandoff || attachChild) return;
       const runId = stdout.match(/run-[a-z0-9]+/gi)?.at(-1);
       if (!runId) return;
-      console.log(`HOST_MCP_PTY attaching run=${runId}`);
-      attachChild = spawn(process.execPath, [join(wfRoot, 'dist', 'cli.js'), 'attach', runId], {
+      console.log(`HOST_MCP_PTY ${dashboardHandoff ? 'opening dashboard' : 'attaching'} run=${runId}`);
+      attachChild = spawn(process.execPath, [join(wfRoot, 'dist', 'cli.js'), ...(dashboardHandoff ? [] : ['attach', runId])], {
         cwd: repoRoot, env: environment, stdio: 'inherit', windowsHide: true, detached: process.platform !== 'win32',
       });
     });
@@ -393,7 +395,7 @@ async function main() {
         if (attachExit.code !== 0) throw new Error(`real Host MCP PTY attach failed (${attachExit.signal ?? attachExit.code ?? 'unknown'})`);
       }
     }
-    successSummary = {ok: true, codexVersion, runId: evidence.runId, tools: observed.tools, sandbox: 'read-only', resultConclusion: evidence.resultConclusion, ...(ptyHandoff ? {ptyHandoff: true, staleActionConflict: true, conflictCode: evidence.conflictCode, retainedStateVersion: evidence.retainedStateVersion, currentStateVersion: evidence.currentStateVersion} : {})};
+    successSummary = {ok: true, codexVersion, runId: evidence.runId, tools: observed.tools, sandbox: 'read-only', resultConclusion: evidence.resultConclusion, ...(ptyHandoff ? {ptyHandoff: true, dashboardHandoff, staleActionConflict: true, conflictCode: evidence.conflictCode, retainedStateVersion: evidence.retainedStateVersion, currentStateVersion: evidence.currentStateVersion} : {})};
   } catch (error) {
     primaryError = error;
   } finally {

@@ -1,6 +1,6 @@
 import {spawnSync} from 'node:child_process';
 import {existsSync} from 'node:fs';
-import {delimiter, join} from 'node:path';
+import {delimiter, join, resolve} from 'node:path';
 
 export interface CommandResult {
   status: number | null;
@@ -10,6 +10,7 @@ export interface CommandResult {
 }
 
 export type CodexRunner = (args: string[]) => CommandResult;
+export interface McpInvocation {command: string; args: string[]}
 
 interface CodexInvocation {command: string; prefix: string[]}
 
@@ -53,14 +54,29 @@ export function isMissingMcpServer(result: CommandResult): boolean {
   return result.status !== 0 && /no mcp server named|not found/i.test(`${result.stderr}\n${result.stdout}`);
 }
 
-export function isFishyumeMcpConfiguration(text: string): boolean {
+export function currentFishyumeMcpInvocation(entrypoint = process.argv[1]): McpInvocation {
+  return {command: process.execPath, args: [resolveEntrypoint(entrypoint), 'mcp']};
+}
+
+function resolveEntrypoint(entrypoint: string | undefined): string {
+  if (!entrypoint) throw new Error('Fishyume CLI entrypoint is unavailable');
+  return resolve(entrypoint);
+}
+
+function samePath(left: string, right: string): boolean {
+  const normalizedLeft = left.replaceAll('\\', '/');
+  const normalizedRight = right.replaceAll('\\', '/');
+  return process.platform === 'win32' ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase() : normalizedLeft === normalizedRight;
+}
+
+export function isFishyumeMcpConfiguration(text: string, expected: McpInvocation = currentFishyumeMcpInvocation()): boolean {
   try {
     const value = JSON.parse(text) as Record<string, unknown>;
     const transport = value.transport && typeof value.transport === 'object' ? value.transport as Record<string, unknown> : value;
     const command = typeof transport.command === 'string' ? transport.command : undefined;
     const args = Array.isArray(transport.args) ? transport.args : [];
     const enabled = value.enabled;
-    return enabled !== false && Boolean(command && /(?:^|[\\/])fishyume(?:\.cmd|\.exe)?$/i.test(command)) && args.length === 1 && args[0] === 'mcp';
+    return enabled !== false && Boolean(command && samePath(command, expected.command)) && args.length === expected.args.length && args.every((value, index) => typeof value === 'string' && (index === 0 ? samePath(value, expected.args[index]) : value === expected.args[index]));
   } catch {
     return false;
   }

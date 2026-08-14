@@ -2,7 +2,9 @@
 
 Fishyume M4 is technically closed. M4.4 includes the product/migration release surface, deterministic and real Codex MCP Host, rendered Host/PTY handoff, Host/TUI-controller concurrency, Application crash/restart acceptance, and local real-Codex single-node and parallel Driver smoke. Independent review of `b6aa2752c76642a9eaf3235df1a3e43d1dcd1804` returned APPROVE with P0/P1/P2 `0/0/0`, and GitHub Actions run [`31783982777`](https://github.com/meizhouyu666/Fishyume/actions/runs/31783982777) passed all six jobs. A real Provider crash record remains optional supplemental evidence. No version bump, publish, or GitHub Release is part of this closure.
 
-M4.5 is a separate Developer Preview product gate layered on this frozen technical baseline. It adds the zero-argument Dashboard, idempotent Codex setup, full product Doctor, and real packed-install golden path without changing M4 execution contracts. M5 production work remains paused until the M4.5 gate in [`fishyume-m4.5-developer-preview.md`](./fishyume-m4.5-developer-preview.md) is accepted.
+M4.5 is an accepted Developer Preview product gate layered on this frozen technical baseline. It adds the zero-argument Dashboard, idempotent Codex setup, full product Doctor, and real packed-install golden path without changing M4 execution contracts. M5 production work may proceed from the accepted gate in [`fishyume-m4.5-developer-preview.md`](./fishyume-m4.5-developer-preview.md).
+
+The 2026-08-14 M4.5 live record now covers global Windows Preview installation and safe idle-service upgrade, canonical Codex MCP transport plus explicit Fishyume tool authorization, a real installed-configuration `system.capabilities` call without interactive approval, and a real Host-created Run selected through the zero-argument Dashboard before PTY approval. The isolated Host/TUI evidence converged terminal with exact stale-action conflict and full temporary cleanup.
 
 ## Current release surface
 

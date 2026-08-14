@@ -1,6 +1,6 @@
 # Fishyume M5: Context Engineering and Memory
 
-> Status: planned. M5 production implementation waits for the M4.5 Developer Preview product-experience gate; no M5 production implementation has started.
+> Status: planned and unblocked by the accepted M4.5 Developer Preview gate; no M5 production implementation has started.
 
 M5 turns the existing deterministic Context Compiler skeleton into the product layer
 that gives each Agent Attempt the smallest sufficient, auditable context. Fishyume
