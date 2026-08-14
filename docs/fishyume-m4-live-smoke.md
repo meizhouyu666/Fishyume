@@ -85,10 +85,11 @@ any non-terminal Run before shutting down the temporary Control Plane.
 ## Real Codex Host Agent through MCP
 
 The opt-in Host Agent gate launches a real `codex exec --ephemeral --json` process and
-configures exactly one MCP server: the local `wf mcp` stdio server. It uses
-`--ignore-user-config`, a temporary Control Plane state directory, and the read-only
-Codex sandbox, so local MCP servers and interactive approval prompts cannot enter the
-test. The Host Agent must call this sequence in order:
+configures exactly one MCP server: the local `wf mcp` stdio server. It creates a
+temporary `CODEX_HOME`, copies only the locally authenticated `auth.json`, and writes
+only the selected model provider plus Fishyume MCP settings. The read-only Codex
+sandbox remains enforced; no user MCP servers or interactive approval prompts enter
+the test. The Host Agent must call this sequence in order:
 
 ```text
 system.capabilities -> workflow.validate -> workflow.explain -> run.start
@@ -112,7 +113,10 @@ npm --prefix (Join-Path $repo 'wf') run smoke:codex-host-mcp
 
 This gate is intentionally excluded from public CI. If Codex authentication or the
 network is unavailable, the command reports a redacted failure and the deterministic
-MCP Host Agent test remains the required CI gate.
+MCP Host Agent test remains the required CI gate. The smoke config sets Fishyume MCP
+tool approval to `approve` inside the temporary home, which is the non-interactive
+equivalent of explicitly allowing this selected local server; it does not change the
+product's normal interactive approval policy or weaken the sandbox.
 
 ## Concurrent Host/TUI acceptance
 

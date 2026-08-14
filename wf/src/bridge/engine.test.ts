@@ -85,7 +85,7 @@ test('Fishyume engine path takes precedence over the legacy WF alias', () => {
 });
 
 test('missing Engine diagnostics are actionable', async () => {
-  const bridge = new EngineBridge(join(tmpdir(), 'missing-fishyume-engine'));
+  const bridge = new EngineBridge(join(tmpdir(), 'missing-fishyume-engine'), []);
   try {
     await assert.rejects(bridge.hello(), /set FISHYUME_ENGINE_PATH/);
   } finally {

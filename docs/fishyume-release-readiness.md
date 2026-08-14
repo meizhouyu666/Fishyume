@@ -49,12 +49,15 @@ Until these pass, describe the product as M4.0-M4.3 implemented with M4.4 batch-
 
 The repeatable real Host Agent gate is now available as
 `npm --prefix wf run smoke:codex-host-mcp`. It launches `codex exec --ephemeral --json`
-with only the local `fishyume mcp` stdio server, a temporary state directory, and the
-read-only sandbox. The first local run reached the Codex process but stopped before any
-MCP call because the locally stored Codex credential returned `401 invalid_api_key`.
-No credential, prompt, or full JSONL was persisted. The repository does not currently
-have a Windows PTY harness (`winpty`/`node-pty`), so the rendered Host/TUI replay also
-remains an explicit manual gate rather than a claimed pass.
+with only the local `fishyume mcp` stdio server, a temporary `CODEX_HOME` containing
+only the locally authenticated `auth.json`, the configured relay provider, and the
+read-only sandbox. On this machine `codex-cli 0.147.0` completed the full seven-tool
+sequence (`system.capabilities`, `workflow.validate`, `workflow.explain`, `run.start`,
+`run.events`, `run.action`, `run.result`) without a manual MCP allow. The temporary
+Control Plane and Codex home were removed, and no credential, prompt, or full JSONL
+was persisted. The repository does not currently have a Windows PTY harness
+(`winpty`/`node-pty`), so rendered Host/TUI replay remains an explicit manual gate
+rather than a claimed pass.
 
 To finish these gates on a machine with valid Codex authentication:
 

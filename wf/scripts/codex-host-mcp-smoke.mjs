@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import {spawn, spawnSync} from 'node:child_process';
-import {mkdtemp, readFile, rm, stat} from 'node:fs/promises';
+import {copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
-import {tmpdir} from 'node:os';
+import {homedir, tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -16,8 +16,8 @@ const prompt = [
   '(2) workflow.validate for a workflow named real-host-approval with one approval node named approve and prompt "Approve host smoke?";',
   '(3) workflow.explain for the same workflow;',
   '(4) run.start for the same workflow, project current repository path, clientRequestId "real-host-mcp-smoke-1";',
-  '(5) run.events for the returned runId until the approve node is waiting;',
-  '(6) run.action approve with actionId "real-host-mcp-approve-1", the observed stateVersion, runId, and nodeId approve;',
+  '(5) run.events for the returned runId until the approve node is waiting; use the stateVersion from the latest response, not an earlier response;',
+  '(6) run.action approve with actionId "real-host-mcp-approve-1", the latest observed stateVersion, runId, and nodeId approve; if it returns conflict, call run.events once more and retry with that response stateVersion;',
   '(7) run.result until terminal.',
   'Do not invent tool results.',
   'At the end respond with exactly one line: HOST_MCP_SMOKE succeeded run=<runId> tools=system.capabilities,workflow.validate,workflow.explain,run.start,run.events,run.action,run.result.',
@@ -40,26 +40,94 @@ function runVersion() {
 }
 
 function tomlLiteral(value) {
-  return `'${value.replaceAll("'", "''")}'`;
+  return JSON.stringify(value);
+}
+
+async function readProviderOverrides() {
+  const codexHome = process.env.CODEX_HOME || join(homedir(), '.codex');
+  let config;
+  try {config = await readFile(join(codexHome, 'config.toml'), 'utf8')} catch {return {codexHome}}
+  const provider = process.env.FISHYUME_CODEX_MODEL_PROVIDER || config.match(/^model_provider\s*=\s*["']([^"']+)["']/m)?.[1];
+  if (!provider) return {codexHome};
+  const escaped = provider.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const section = config.match(new RegExp(`\\[model_providers\\.${escaped}\\]([\\s\\S]*?)(?=\\n\\[[^\\n]+\\]|$)`))?.[1] || '';
+  const baseUrl = process.env.FISHYUME_CODEX_BASE_URL || section.match(/^base_url\s*=\s*["']([^"']+)["']/m)?.[1];
+  const wireApi = process.env.FISHYUME_CODEX_WIRE_API || section.match(/^wire_api\s*=\s*["']([^"']+)["']/m)?.[1];
+  return {codexHome, provider, baseUrl, wireApi};
+}
+
+async function createTemporaryCodexHome(temporary, providerConfig, enginePath, stateDir) {
+  const codexHome = join(temporary, 'codex-home');
+  await mkdir(codexHome, {recursive: true});
+  const authPath = join(providerConfig.codexHome, 'auth.json');
+  await copyFile(authPath, join(codexHome, 'auth.json'));
+  if (!providerConfig.provider || !providerConfig.baseUrl) {
+    throw new Error('local Codex config must define model_provider and its base_url');
+  }
+  const mcpCommand = process.execPath;
+  const mcpCli = join(wfRoot, 'dist', 'cli.js');
+  const config = [
+    `model_provider = ${tomlLiteral(providerConfig.provider)}`,
+    '',
+    `[model_providers.${providerConfig.provider}]`,
+    `name = ${tomlLiteral(providerConfig.provider)}`,
+    providerConfig.wireApi ? `wire_api = ${tomlLiteral(providerConfig.wireApi)}` : undefined,
+    `base_url = ${tomlLiteral(providerConfig.baseUrl)}`,
+    '',
+    '[mcp_servers.fishyume]',
+    'type = "stdio"',
+    'required = true',
+    'default_tools_approval_mode = "approve"',
+    `command = ${tomlLiteral(mcpCommand)}`,
+    `args = [${tomlLiteral(mcpCli)}, "mcp"]`,
+    'startup_timeout_sec = 120',
+    '',
+    '[mcp_servers.fishyume.env]',
+    `FISHYUME_ENGINE_PATH = ${tomlLiteral(enginePath)}`,
+    `FISHYUME_STATE_DIR = ${tomlLiteral(stateDir)}`,
+    `WF_STATE_DIR = ${tomlLiteral(stateDir)}`,
+    '',
+    '[mcp_servers.fishyume.tools."system.capabilities"]',
+    'approval_mode = "approve"',
+    '[mcp_servers.fishyume.tools."workflow.validate"]',
+    'approval_mode = "approve"',
+    '[mcp_servers.fishyume.tools."workflow.explain"]',
+    'approval_mode = "approve"',
+    '[mcp_servers.fishyume.tools."run.start"]',
+    'approval_mode = "approve"',
+    '[mcp_servers.fishyume.tools."run.events"]',
+    'approval_mode = "approve"',
+    '[mcp_servers.fishyume.tools."run.action"]',
+    'approval_mode = "approve"',
+    '[mcp_servers.fishyume.tools."run.result"]',
+    'approval_mode = "approve"',
+  ].filter(line => line !== undefined).join('\n') + '\n';
+  await writeFile(join(codexHome, 'config.toml'), config, 'utf8');
+  return codexHome;
 }
 
 function collectHostEvents(stdout) {
   const tools = [];
   const errors = [];
+  const messages = [];
+  const eventKinds = [];
   let conclusion;
   let runId;
   for (const line of stdout.split(/\r?\n/)) {
     if (!line.trim()) continue;
     let event;
     try {event = JSON.parse(line)} catch {continue}
+    const kind = `${event.type || 'unknown'}${event.item?.type ? `/${event.item.type}` : ''}`;
+    if (!eventKinds.includes(kind)) eventKinds.push(kind);
     if (event.type === 'error' && typeof event.message === 'string') errors.push(event.message);
     if (event.type === 'item.completed' && event.item?.type === 'error' && typeof event.item.message === 'string') errors.push(event.item.message);
     const item = event.item;
-    if (item?.type === 'mcp_tool_call') {
-      const name = item.name || item.tool_name || item.tool;
+    if (item?.type === 'agent_message' && typeof item.text === 'string') messages.push(item.text);
+    if (item?.type === 'mcp_tool_call' || item?.type === 'function_call' || item?.type === 'custom_tool_call') {
+      const name = item.name || item.tool_name || item.tool?.name || item.tool;
       if (typeof name === 'string' && !tools.includes(name)) tools.push(name);
     }
-    const text = item?.type === 'message' && Array.isArray(item.content)
+    const text = (item?.type === 'message' || item?.type === 'agent_message') && Array.isArray(item.content)
       ? item.content.filter(part => part?.type === 'output_text').map(part => part.text || '').join(' ')
       : '';
     const combined = `${text} ${item?.text || ''}`;
@@ -67,7 +135,7 @@ function collectHostEvents(stdout) {
     if (success) {conclusion = 'succeeded'; runId = success[1]}
     if (combined.includes('HOST_MCP_SMOKE failed')) conclusion = 'failed';
   }
-  return {tools, conclusion, runId, errors};
+  return {tools, conclusion, runId, errors, messages, eventKinds};
 }
 
 function redact(text) {
@@ -120,14 +188,11 @@ async function main() {
   try {
     const build = spawnSync('go', ['build', '-o', enginePath, './cmd/wf-engine'], {cwd: join(repoRoot, 'wf-engine'), encoding: 'utf8', windowsHide: true});
     if (build.status !== 0) throw new Error(`engine build failed: ${redact(build.stderr || '')}`.trim());
-    const mcpCommand = `mcp_servers.fishyume.command=${tomlLiteral(process.platform === 'win32' ? 'node.exe' : 'node')}`;
-    const mcpArgs = `mcp_servers.fishyume.args=[${tomlLiteral(join(wfRoot, 'dist', 'cli.js'))},${tomlLiteral('mcp')}]`;
-    const mcpEngine = `mcp_servers.fishyume.env.FISHYUME_ENGINE_PATH=${tomlLiteral(enginePath)}`;
-    const mcpState = `mcp_servers.fishyume.env.FISHYUME_STATE_DIR=${tomlLiteral(stateDir)}`;
-    const mcpWorkflowState = `mcp_servers.fishyume.env.WF_STATE_DIR=${tomlLiteral(stateDir)}`;
+    const providerConfig = await readProviderOverrides();
+    const temporaryCodexHome = await createTemporaryCodexHome(temporary, providerConfig, enginePath, stateDir);
+    environment.CODEX_HOME = temporaryCodexHome;
     const invocation = codexInvocation([
-      'exec', '--ephemeral', '--ignore-user-config', '--json', '--color', 'never', '--sandbox', 'read-only', '--cd', repoRoot,
-      '-c', mcpCommand, '-c', mcpArgs, '-c', mcpEngine, '-c', mcpState, '-c', mcpWorkflowState, prompt,
+      'exec', '--ephemeral', '--json', '--color', 'never', '--sandbox', 'read-only', '--cd', repoRoot, prompt,
     ]);
     child = spawn(invocation.command, invocation.args, {cwd: repoRoot, env: environment, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true});
     child.stdout.on('data', chunk => {stdout += chunk.toString('utf8')});
@@ -143,7 +208,8 @@ async function main() {
     if (exit.code !== 0 || observed.conclusion !== 'succeeded' || !sequenceOk) {
       const reason = exit.signal === 'timeout' ? 'timeout' : observed.conclusion === 'failed' ? 'host-agent-reported-failure' : `exit-${exit.code ?? exit.signal ?? 'unknown'}`;
       const hostError = observed.errors.at(-1) ? `; host=${redact(observed.errors.at(-1))}` : '';
-      throw new Error(`real Host MCP smoke ${reason}; tools=${observed.tools.join(',') || 'none'}${hostError}; stderr=${redact(stderr).slice(-500)}`);
+      const agentMessage = observed.messages.at(-1) ? `; agent=${redact(observed.messages.at(-1)).slice(-500)}` : '';
+      throw new Error(`real Host MCP smoke ${reason}; tools=${observed.tools.join(',') || 'none'}${hostError}${agentMessage}; events=${observed.eventKinds.join(',')}; stderr=${redact(stderr).slice(-500)}`);
     }
     console.log(JSON.stringify({ok: true, codexVersion, runId: observed.runId, tools: observed.tools, sandbox: 'read-only', temporaryDirectoryRemoved: true}));
   } catch (error) {
