@@ -62,9 +62,10 @@ To finish these gates on a machine with valid Codex authentication:
    or `codex login --with-api-key` without pasting the credential into the repository
    or chat. If the endpoint is unreachable, set `HTTP_PROXY`, `HTTPS_PROXY`, and
    `ALL_PROXY` to `http://127.0.0.1:7897` for the login command only.
-2. From the repository root, run
-   `$env:FISHYUME_LIVE_CODEX='1'; npm --prefix wf run smoke:codex-host-mcp` and retain
-   only its final JSON summary (Codex version, Run ID, tool sequence, sandbox, cleanup).
+2. From any PowerShell directory, set the checkout explicitly and run
+   `$repo='E:\meizhouyu\agentstudy\my-agent'; $env:FISHYUME_LIVE_CODEX='1'; npm --prefix (Join-Path $repo 'wf') run smoke:codex-host-mcp`.
+   Retain only its final JSON summary (Codex version, Run ID, tool sequence, sandbox,
+   cleanup).
 3. Run the existing real Driver parallel gate:
    `$env:FISHYUME_LIVE_CODEX='1'; npm --prefix wf run smoke:codex-live:parallel`.
 4. In two real terminal windows, start the Host Agent MCP flow in one and attach the

@@ -100,11 +100,14 @@ an additional Provider call. The script records only the Codex version, Run ID, 
 sequence, sandbox mode, and cleanup status; prompts, credentials, and full JSONL are
 never written to the repository.
 
-Run it only after authenticating the local Codex CLI:
+Run it only after authenticating the local Codex CLI. The `--prefix` path is relative
+to the current PowerShell directory, so use an explicit repository path when running
+from outside the checkout:
 
 ```powershell
+$repo = 'E:\meizhouyu\agentstudy\my-agent'
 $env:FISHYUME_LIVE_CODEX = '1'
-npm --prefix wf run smoke:codex-host-mcp
+npm --prefix (Join-Path $repo 'wf') run smoke:codex-host-mcp
 ```
 
 This gate is intentionally excluded from public CI. If Codex authentication or the
