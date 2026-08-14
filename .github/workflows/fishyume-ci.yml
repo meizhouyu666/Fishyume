@@ -132,8 +132,10 @@ jobs:
           echo "$doctor_output"
           grep -q 'ok engine 0.2.1-alpha.1 started' <<<"$doctor_output"
           grep -q 'ok protocol 2 compatible' <<<"$doctor_output"
-          "$install_root/node_modules/.bin/fishyume" --help | grep -q 'dashboard'
-          "$install_root/node_modules/.bin/fishyume" dashboard --help | grep -q 'Operator Dashboard'
+          help_output="$("$install_root/node_modules/.bin/fishyume" --help)"
+          grep -q 'dashboard' <<<"$help_output"
+          dashboard_help="$("$install_root/node_modules/.bin/fishyume" dashboard --help)"
+          grep -q 'Operator Dashboard' <<<"$dashboard_help"
           setup_output="$("$install_root/node_modules/.bin/fishyume" setup codex --print)"
           grep -q '^codex mcp add fishyume -- ".*node" ".*/fishyume/dist/cli.js" "mcp"$' <<<"$setup_output"
           dashboard_output="$("$install_root/node_modules/.bin/fishyume")"
