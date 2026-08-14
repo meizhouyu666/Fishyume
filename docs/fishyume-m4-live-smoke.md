@@ -122,12 +122,14 @@ product's normal interactive approval policy or weaken the sandbox.
 
 ### Real Host plus rendered PTY record (2026-08-14)
 
-`codex-cli 0.147.0` started Run `run-e1c258287844aa09b22a2c54` through the real
+`codex-cli 0.147.0` started Run `run-b45156ced1fce99208dd2228` through the real
 Fishyume MCP server and left its Approval waiting. The same Run was attached in a
 CC-Panes-backed Windows PTY at 120 columns with `fishyume attach`. The rendered Calm
 Operator Console showed the Approval and accepted `a`; the Run became `SUCCEEDED`.
-The Host then submitted its retained stale `stateVersion`, received `conflict`, and
-read the terminal result. The acceptance runner detached the terminal observer, and
+The Host retained waiting `stateVersion: 3` from `run.get`, then submitted it after
+the TUI action. The completed MCP payload reported exact `error.code: "conflict"`
+with `currentStateVersion: 5`; `run.result` returned the same Run with terminal
+`conclusion: "succeeded"`. The acceptance runner detached the terminal observer, and
 the temporary Control Plane and Codex home were removed. CC-Panes supplied only the terminal PTY; it was not a
 Fishyume backend, state owner, or product dependency.
 
@@ -140,7 +142,8 @@ npm --prefix wf run smoke:codex-host-pty
 
 When the Approval is rendered, press `a`; after the terminal result and host-complete
 marker appear, press `q`. The final JSON must report `ptyHandoff: true`,
-`staleActionConflict: true`, `sandbox: "read-only"`, and temporary cleanup.
+`conflictCode: "conflict"`, matching retained/current versions,
+`resultConclusion: "succeeded"`, `sandbox: "read-only"`, and temporary cleanup.
 For an operator-driven PTY gate that should close itself after the Host reaches the
 terminal result, use `npm --prefix wf run smoke:codex-host-pty:auto`; approval still
 comes from the rendered terminal, while detach is deterministic.

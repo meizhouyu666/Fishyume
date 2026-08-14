@@ -57,8 +57,9 @@ sequence (`system.capabilities`, `workflow.validate`, `workflow.explain`, `run.s
 Control Plane and Codex home were removed, and no credential, prompt, or full JSONL
 was persisted. The rendered Host/TUI gate also completed through a CC-Panes-backed
 Windows PTY at 120 columns. `codex-cli 0.147.0` started Run
-`run-e1c258287844aa09b22a2c54`, the TUI approved it, the Host's retained stale action
-received `conflict`, and both observed the terminal result.
+`run-b45156ced1fce99208dd2228`, the TUI approved it, and the Host's completed MCP
+payload proved retained waiting version `3`, exact `error.code: "conflict"`, current
+version `5`, and a matching terminal `run.result` with conclusion `succeeded`.
 `smoke:codex-host-pty:auto` then detached the observer and only reported success after
 the temporary directory was removed. CC-Panes supplied the terminal only; it was not
 a Fishyume backend or state owner.
@@ -77,7 +78,8 @@ To repeat these supplemental local gates on a machine with valid Codex authentic
    `$env:FISHYUME_LIVE_CODEX='1'; npm --prefix wf run smoke:codex-live:parallel`.
 4. From a real PTY, run `npm --prefix wf run smoke:codex-host-pty:auto`, press `a`
    when the Approval appears, and retain only the bounded final JSON. It must report
-   `ptyHandoff: true`, `staleActionConflict: true`, `sandbox: "read-only"`, and
+   `ptyHandoff: true`, `conflictCode: "conflict"`, matching retained/current versions,
+   `resultConclusion: "succeeded"`, `sandbox: "read-only"`, and
    `temporaryDirectoryRemoved: true`.
 
 ## Security and release checklist

@@ -33,9 +33,9 @@ const ptyPrompt = [
   '(2) workflow.validate for a workflow named real-host-pty with one approval node named approve and prompt "Approve PTY handoff?";',
   '(3) workflow.explain for the same workflow;',
   '(4) run.start for the same workflow, project current repository path, clientRequestId "real-host-mcp-pty-1";',
-  '(5) run.events for the returned runId until the approve node is waiting; retain this waiting response stateVersion and latest sequence;',
+  '(5) run.events for the returned runId until the approve node is waiting, then call run.get and retain its waiting stateVersion and latest event sequence;',
   '(6) call run.events again after that latest sequence with waitMs 30000 so the attached human TUI can approve;',
-  '(7) after the event wait returns, call run.action approve using actionId "real-host-mcp-pty-stale-1" and the RETAINED waiting stateVersion, not a newer stateVersion;',
+  '(7) after the event wait returns, call run.action approve using actionId "real-host-mcp-pty-stale-1" and the RETAINED run.get waiting stateVersion, not a newer stateVersion;',
   '(8) the run.action MUST fail with conflict because the TUI already acted;',
   '(9) after the conflict, call run.events from the newest observed sequence with waitMs 30000 until a terminal run event is observed, then call run.result;',
   '(10) if run.result still returns not_ready, call run.events again with the newest sequence and waitMs 30000, then retry run.result, for at most five result attempts.',
@@ -118,6 +118,8 @@ async function createTemporaryCodexHome(temporary, providerConfig, enginePath, s
     'approval_mode = "approve"',
     '[mcp_servers.fishyume.tools."run.events"]',
     'approval_mode = "approve"',
+    '[mcp_servers.fishyume.tools."run.get"]',
+    'approval_mode = "approve"',
     '[mcp_servers.fishyume.tools."run.action"]',
     'approval_mode = "approve"',
     '[mcp_servers.fishyume.tools."run.result"]',
@@ -127,12 +129,37 @@ async function createTemporaryCodexHome(temporary, providerConfig, enginePath, s
   return codexHome;
 }
 
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function toolName(item) {
+  const name = item?.name || item?.tool_name || item?.tool?.name || item?.tool;
+  return typeof name === 'string' ? name : undefined;
+}
+
+function toolPayload(item) {
+  const result = item?.result;
+  if (!isRecord(result)) return undefined;
+  const structured = result.structured_content ?? result.structuredContent;
+  if (isRecord(structured)) return structured;
+  if (!Array.isArray(result.content)) return undefined;
+  for (const part of result.content) {
+    if (!isRecord(part) || typeof part.text !== 'string') continue;
+    try {
+      const parsed = JSON.parse(part.text);
+      if (isRecord(parsed)) return parsed;
+    } catch {}
+  }
+  return undefined;
+}
+
 function collectHostEvents(stdout) {
   const tools = [];
+  const calls = [];
   const errors = [];
   const messages = [];
   const eventKinds = [];
-  let staleActionConflict = false;
   let conclusion;
   let runId;
   for (const line of stdout.split(/\r?\n/)) {
@@ -146,9 +173,11 @@ function collectHostEvents(stdout) {
     const item = event.item;
     if (item?.type === 'agent_message' && typeof item.text === 'string') messages.push(item.text);
     if (item?.type === 'mcp_tool_call' || item?.type === 'function_call' || item?.type === 'custom_tool_call') {
-      const name = item.name || item.tool_name || item.tool?.name || item.tool;
-      if (typeof name === 'string' && !tools.includes(name)) tools.push(name);
-      if (name === 'run.action' && /conflict/i.test(JSON.stringify(item))) staleActionConflict = true;
+      const name = toolName(item);
+      if (name && !tools.includes(name)) tools.push(name);
+      if (name && event.type === 'item.completed') {
+        calls.push({name, arguments: isRecord(item.arguments) ? item.arguments : {}, payload: toolPayload(item), status: item.status, error: item.error});
+      }
     }
     const text = (item?.type === 'message' || item?.type === 'agent_message') && Array.isArray(item.content)
       ? item.content.filter(part => part?.type === 'output_text').map(part => part.text || '').join(' ')
@@ -158,13 +187,122 @@ function collectHostEvents(stdout) {
     if (success) {conclusion = 'succeeded'; runId = success[1]}
     if (combined.includes('HOST_MCP_SMOKE failed') || combined.includes('HOST_MCP_PTY failed')) conclusion = 'failed';
   }
-  return {tools, conclusion, runId, errors, messages, eventKinds, staleActionConflict};
+  return {tools, calls, conclusion, runId, errors, messages, eventKinds};
+}
+
+function requireEvidence(condition, message) {
+  if (!condition) throw new Error(`Host MCP evidence invalid: ${message}`);
+}
+
+function validateToolOrder(calls, requiredNames) {
+  let previous = -1;
+  for (const name of requiredNames) {
+    const next = calls.findIndex((call, index) => index > previous && call.name === name);
+    requireEvidence(next >= 0, `missing ordered completed tool ${name}`);
+    previous = next;
+  }
+}
+
+function validateHostEvidence(observed, requirePty) {
+  const calls = observed.calls;
+  validateToolOrder(calls, ['system.capabilities', 'workflow.validate', 'workflow.explain', 'run.start', 'run.events', 'run.action', 'run.result']);
+  const startIndex = calls.findIndex(call => call.name === 'run.start' && typeof call.payload?.runId === 'string' && Number.isInteger(call.payload?.stateVersion));
+  requireEvidence(startIndex >= 0, 'run.start completed payload is missing runId/stateVersion');
+  const start = calls[startIndex];
+  const runId = start.payload.runId;
+  requireEvidence(observed.runId === runId, 'Host final runId does not match run.start');
+
+  const resultIndex = calls.findIndex((call, index) => index > startIndex && call.name === 'run.result' && call.arguments.runId === runId && call.payload?.runId === runId);
+  requireEvidence(resultIndex >= 0, 'run.result completed payload does not match run.start');
+  const result = calls[resultIndex];
+  const terminalConclusions = new Set(['succeeded', 'failed', 'rejected', 'cancelled', 'indeterminate']);
+  requireEvidence(result.status === 'completed' && terminalConclusions.has(result.payload?.conclusion) && typeof result.payload?.completedAt === 'string', 'run.result is not a terminal completed result');
+
+  if (!requirePty) {
+    const appliedAction = calls.find((call, index) => index > startIndex && index < resultIndex && call.name === 'run.action' && call.arguments.runId === runId && call.payload?.runId === runId && call.status === 'completed');
+    requireEvidence(Boolean(appliedAction), 'standard run.action did not complete for the started Run');
+    return {runId, resultConclusion: result.payload.conclusion};
+  }
+
+  const actionIndex = calls.findIndex((call, index) => index > startIndex && index < resultIndex && call.name === 'run.action' && call.arguments.actionId === 'real-host-mcp-pty-stale-1');
+  requireEvidence(actionIndex >= 0, 'stale run.action call is missing');
+  const action = calls[actionIndex];
+  const waitingGetIndex = calls.findIndex((call, index) => index > startIndex && index < actionIndex && call.name === 'run.get' && call.arguments.runId === runId && call.payload?.run?.runId === runId && call.payload?.run?.phase === 'waiting');
+  requireEvidence(waitingGetIndex >= 0, 'waiting run.get evidence is missing');
+  const waitingGet = calls[waitingGetIndex];
+  const retainedStateVersion = waitingGet.payload.run.stateVersion;
+  requireEvidence(Number.isInteger(retainedStateVersion) && action.arguments.expectedStateVersion === retainedStateVersion, 'run.action did not retain the waiting stateVersion');
+  requireEvidence(action.arguments.runId === runId && action.arguments.nodeId === 'approve' && action.arguments.type === 'approve', 'run.action target does not match the attached Approval');
+  requireEvidence(action.status === 'failed' && action.payload?.error?.code === 'conflict', 'run.action completed payload is not exact conflict');
+  requireEvidence(action.payload.error.data?.expectedStateVersion === retainedStateVersion, 'conflict payload expectedStateVersion does not match the retained value');
+  requireEvidence(Number.isInteger(action.payload.error.data?.currentStateVersion) && action.payload.error.data.currentStateVersion > retainedStateVersion, 'conflict payload does not prove a newer state');
+  const waitingEvent = calls.slice(startIndex + 1, waitingGetIndex + 1).some(call => call.name === 'run.events' && call.arguments.runId === runId && call.payload?.runId === runId && Array.isArray(call.payload?.events) && call.payload.events.some(event => event?.runId === runId && event?.nodeId === 'approve' && event?.nodePhase === 'waiting'));
+  requireEvidence(waitingEvent, 'run.events did not observe the Approval waiting');
+  const handoffWait = calls.slice(waitingGetIndex + 1, actionIndex).some(call => call.name === 'run.events' && call.arguments.runId === runId && call.arguments.waitMs === 30000 && call.payload?.runId === runId && Array.isArray(call.payload?.events));
+  requireEvidence(handoffWait, 'the bounded post-handoff run.events call is missing');
+  return {runId, retainedStateVersion, currentStateVersion: action.payload.error.data.currentStateVersion, conflictCode: 'conflict', resultConclusion: result.payload.conclusion};
 }
 
 function redact(text) {
   return text
     .replace(/sk-[A-Za-z0-9_-]+/g, '[redacted-key]')
     .replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]');
+}
+
+function childExit(child) {
+  if (!child || (child.exitCode === null && child.signalCode === null)) return undefined;
+  return {code: child.exitCode, signal: child.signalCode};
+}
+
+function waitForChildExit(child, timeoutMs) {
+  const exited = childExit(child);
+  if (exited) return Promise.resolve(exited);
+  return new Promise(resolveExit => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.off('exit', onExit);
+      child.off('error', onError);
+    };
+    const onExit = (code, signal) => {cleanup(); resolveExit({code, signal})};
+    const onError = error => {cleanup(); resolveExit({code: null, signal: error.message})};
+    const timer = setTimeout(() => {cleanup(); resolveExit(undefined)}, timeoutMs);
+    child.once('exit', onExit);
+    child.once('error', onError);
+  });
+}
+
+async function terminateAndWait(child, label) {
+  const exited = childExit(child);
+  if (exited) return exited;
+  if (!child?.pid) throw new Error(`${label} has no process id`);
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/PID', String(child.pid), '/T'], {stdio: 'ignore', windowsHide: true});
+  } else {
+    try {process.kill(-child.pid, 'SIGTERM')} catch (error) {
+      if (error?.code !== 'ESRCH') throw error;
+      try {child.kill('SIGTERM')} catch (fallbackError) {if (fallbackError?.code !== 'ESRCH') throw fallbackError}
+    }
+  }
+  const graceful = await waitForChildExit(child, 2000);
+  if (graceful) return graceful;
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {stdio: 'ignore', windowsHide: true});
+  } else {
+    try {process.kill(-child.pid, 'SIGKILL')} catch (error) {
+      if (error?.code !== 'ESRCH') throw error;
+      try {child.kill('SIGKILL')} catch (fallbackError) {if (fallbackError?.code !== 'ESRCH') throw fallbackError}
+    }
+  }
+  const forced = await waitForChildExit(child, 3000);
+  if (!forced) throw new Error(`${label} process tree did not exit`);
+  return forced;
+}
+
+async function waitOrTerminate(child, timeoutMs, label) {
+  const exit = await waitForChildExit(child, timeoutMs);
+  if (exit) return exit;
+  await terminateAndWait(child, label);
+  return {code: null, signal: 'timeout'};
 }
 
 async function stopControlPlane(stateDir) {
@@ -219,7 +357,7 @@ async function main() {
     const invocation = codexInvocation([
       'exec', '--ephemeral', '--json', '--color', 'never', '--sandbox', 'read-only', '--cd', repoRoot, prompt,
     ]);
-    child = spawn(invocation.command, invocation.args, {cwd: repoRoot, env: environment, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true});
+    child = spawn(invocation.command, invocation.args, {cwd: repoRoot, env: environment, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32'});
     child.stdout.on('data', chunk => {
       stdout += chunk.toString('utf8');
       if (!ptyHandoff || attachChild) return;
@@ -227,53 +365,41 @@ async function main() {
       if (!runId) return;
       console.log(`HOST_MCP_PTY attaching run=${runId}`);
       attachChild = spawn(process.execPath, [join(wfRoot, 'dist', 'cli.js'), 'attach', runId], {
-        cwd: repoRoot, env: environment, stdio: 'inherit', windowsHide: true,
+        cwd: repoRoot, env: environment, stdio: 'inherit', windowsHide: true, detached: process.platform !== 'win32',
       });
     });
     child.stderr.on('data', chunk => {stderr += chunk.toString('utf8')});
-    const exit = await new Promise(resolveExit => {
-      const timer = setTimeout(() => {child.kill(); resolveExit({code: null, signal: 'timeout'})}, 180000);
-      child.once('exit', (code, signal) => {clearTimeout(timer); resolveExit({code, signal})});
-      child.once('error', error => {clearTimeout(timer); resolveExit({code: null, signal: error.message})});
-    });
+    const exit = await waitOrTerminate(child, 180000, 'Codex Host');
     const observed = collectHostEvents(stdout);
-    const expectedTools = ['system.capabilities', 'workflow.validate', 'workflow.explain', 'run.start', 'run.events', 'run.action', 'run.result'];
-    let previousToolIndex = -1;
-    const sequenceOk = expectedTools.every(name => {
-      const toolIndex = observed.tools.indexOf(name, previousToolIndex + 1);
-      if (toolIndex < 0) return false;
-      previousToolIndex = toolIndex;
-      return true;
-    });
-    if (exit.code !== 0 || observed.conclusion !== 'succeeded' || !sequenceOk || (ptyHandoff && !observed.staleActionConflict)) {
+    let evidence;
+    let evidenceError;
+    try {evidence = validateHostEvidence(observed, ptyHandoff)} catch (error) {evidenceError = error}
+    if (exit.code !== 0 || observed.conclusion !== 'succeeded' || evidenceError) {
       const reason = exit.signal === 'timeout' ? 'timeout' : observed.conclusion === 'failed' ? 'host-agent-reported-failure' : `exit-${exit.code ?? exit.signal ?? 'unknown'}`;
       const hostError = observed.errors.at(-1) ? `; host=${redact(observed.errors.at(-1))}` : '';
       const agentMessage = observed.messages.at(-1) ? `; agent=${redact(observed.messages.at(-1)).slice(-500)}` : '';
-      const conflict = ptyHandoff ? `; staleActionConflict=${observed.staleActionConflict}` : '';
-      throw new Error(`real Host MCP smoke ${reason}; tools=${observed.tools.join(',') || 'none'}${hostError}${agentMessage}${conflict}; events=${observed.eventKinds.join(',')}; stderr=${redact(stderr).slice(-500)}`);
+      const contract = evidenceError ? `; contract=${redact(evidenceError.message)}` : '';
+      throw new Error(`real Host MCP smoke ${reason}; tools=${observed.tools.join(',') || 'none'}${hostError}${agentMessage}${contract}; events=${observed.eventKinds.join(',')}; stderr=${redact(stderr).slice(-500)}`);
     }
     if (ptyHandoff) {
       if (!attachChild) throw new Error('real Host MCP PTY smoke did not discover a Run to attach');
-      console.log(`HOST_MCP_PTY host complete run=${observed.runId}; ${autoDetach ? 'detaching' : 'press q to detach'}`);
-      if (autoDetach && attachChild.exitCode === null) {
+      console.log(`HOST_MCP_PTY host complete run=${evidence.runId}; ${autoDetach ? 'detaching' : 'press q to detach'}`);
+      let attachExit;
+      if (autoDetach) {
         await new Promise(resolveDetach => setTimeout(resolveDetach, 250));
-        attachChild.kill();
+        attachExit = await terminateAndWait(attachChild, 'Fishyume attach');
+      } else {
+        attachExit = await waitOrTerminate(attachChild, 60000, 'Fishyume attach');
+        if (attachExit.code !== 0) throw new Error(`real Host MCP PTY attach failed (${attachExit.signal ?? attachExit.code ?? 'unknown'})`);
       }
-      const attachExit = await new Promise(resolveExit => {
-        if (attachChild.exitCode !== null) return resolveExit({code: attachChild.exitCode, signal: null});
-        const timer = setTimeout(() => {attachChild.kill(); resolveExit({code: null, signal: 'timeout'})}, 60000);
-        attachChild.once('exit', (code, signal) => {clearTimeout(timer); resolveExit({code, signal})});
-        attachChild.once('error', error => {clearTimeout(timer); resolveExit({code: null, signal: error.message})});
-      });
-      if (attachExit.code !== 0 && !(autoDetach && attachExit.signal === 'SIGTERM')) throw new Error(`real Host MCP PTY attach failed (${attachExit.signal ?? attachExit.code ?? 'unknown'})`);
     }
-    successSummary = {ok: true, codexVersion, runId: observed.runId, tools: observed.tools, sandbox: 'read-only', ...(ptyHandoff ? {ptyHandoff: true, staleActionConflict: true} : {})};
+    successSummary = {ok: true, codexVersion, runId: evidence.runId, tools: observed.tools, sandbox: 'read-only', resultConclusion: evidence.resultConclusion, ...(ptyHandoff ? {ptyHandoff: true, staleActionConflict: true, conflictCode: evidence.conflictCode, retainedStateVersion: evidence.retainedStateVersion, currentStateVersion: evidence.currentStateVersion} : {})};
   } catch (error) {
     primaryError = error;
   } finally {
-    if (child && child.exitCode === null) child.kill();
-    if (attachChild && attachChild.exitCode === null) attachChild.kill();
     const cleanupErrors = [];
+    try {if (attachChild) await terminateAndWait(attachChild, 'Fishyume attach')} catch (error) {cleanupErrors.push(error)}
+    try {if (child) await terminateAndWait(child, 'Codex Host')} catch (error) {cleanupErrors.push(error)}
     try {await stopControlPlane(stateDir)} catch (error) {cleanupErrors.push(error)}
     try {await rm(temporary, {recursive: true, force: true, maxRetries: 5, retryDelay: 100}); await assertRemoved(temporary)} catch (error) {cleanupErrors.push(error)}
     if (primaryError && cleanupErrors.length) throw new AggregateError([primaryError, ...cleanupErrors], 'Host MCP smoke and cleanup failed');
@@ -283,7 +409,11 @@ async function main() {
   console.log(JSON.stringify({...successSummary, temporaryDirectoryRemoved: true}));
 }
 
-main().catch(error => {
-  console.error(`Codex Host MCP smoke failed: ${redact(error.message)}`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch(error => {
+    console.error(`Codex Host MCP smoke failed: ${redact(error.message)}`);
+    process.exitCode = 1;
+  });
+}
+
+export {collectHostEvents, terminateAndWait, validateHostEvidence};
