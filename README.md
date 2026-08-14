@@ -2,9 +2,26 @@
 
 Fishyume 是一个面向 Codex、Claude、Kimi、OpenCode 等 Host Agent 的本地、可恢复 AI Agent 编排控制面。Host Agent 通过 MCP 或 Machine CLI 调用同一套 Application API，创建和管理由 Agent 与人工审批组成的 DAG；人类可随时用 TUI attach 到同一个持久化 Run，观察或提交审批、取消和重试。执行侧由 headless Agent Driver 负责，当前正式组合是 `codex + local`。Fishyume 的新 Run 与 CC-Panes 无关，也不在 Core 中实现聊天 Agent 或模型 Tool loop。
 
-当前 `0.2.1-alpha.1` 已完成 M4 Agent-Native Control Plane：Agent Driver/Context Compiler、用户级 Local Control Plane、统一 Application Service、持久化 start/action 幂等、MCP、Machine CLI、`fishyume attach` 和 TUI 的 `run.get/run.action` 迁移。Windows 使用 Named Pipe，Linux/macOS 使用 Unix Domain Socket；直接启动 `wf-engine` 时仍保留 stdio JSON-RPC，供测试和受控嵌入使用。M4.4 的产品/迁移表面、真实 Codex Driver 单节点与并行 Workflow、真实 Host MCP、Host + rendered PTY/TUI 冲突收敛，以及 Provider-independent Control Plane crash/restart 验收均已通过；独立审查 P0/P1/P2 为 `0/0/0`，公开 CI 六项全绿。M4 已技术收口，但尚未执行版本发布或 GitHub Release。
+当前 `0.2.1-alpha.1` 已完成 M4 Agent-Native Control Plane：Agent Driver/Context Compiler、用户级 Local Control Plane、统一 Application Service、持久化 start/action 幂等、MCP、Machine CLI、`fishyume attach` 和 TUI 的 `run.get/run.action` 迁移。Windows 使用 Named Pipe，Linux/macOS 使用 Unix Domain Socket；直接启动 `wf-engine` 时仍保留 stdio JSON-RPC，供测试和受控嵌入使用。M4.4 的产品/迁移表面、真实 Codex Driver 单节点与并行 Workflow、真实 Host MCP、Host + rendered PTY/TUI 冲突收敛，以及 Provider-independent Control Plane crash/restart 验收均已通过；独立审查 P0/P1/P2 为 `0/0/0`，公开 CI 六项全绿。M4 已技术收口；当前进入 M4.5 Developer Preview 产品体验门禁，尚未执行版本发布或 GitHub Release。
 
 当前版本：`0.2.1-alpha.1`
+
+## 首次使用黄金链路
+
+安装 Fishyume CLI 与匹配的平台 Engine 后，只需完成一次 Codex 接入：
+
+```powershell
+fishyume setup codex
+fishyume doctor --project "E:\project"
+```
+
+重启 Codex 后，用户与 Codex 讨论目标并声明使用 Fishyume；Codex 通过 MCP 获取 capabilities、编排并启动 Workflow。用户在另一个终端直接运行：
+
+```powershell
+fishyume
+```
+
+零参数命令打开 Run Dashboard：方向键或 `j`/`k` 选择 Run，`Enter` attach，随后可观察并行节点、审批、回答 `needs_input`、重试、取消或安全 detach。正常链路不要求用户手写 Workflow、复制 Run ID、提供 profile ID 或处理逐次 MCP allow。完整范围与验收见 [`docs/fishyume-m4.5-developer-preview.md`](./docs/fishyume-m4.5-developer-preview.md)。
 
 ## 核心能力
 
@@ -180,6 +197,6 @@ M4.0-M4.4 已完成合同冻结、Codex Driver、Context Compiler、CC-Panes 新
 - MCP、Machine CLI、`fishyume attach` 与 TUI 共享同一 Application Service。
 
 正式架构见 [`docs/fishyume-m4-agent-native-control-plane.md`](./docs/fishyume-m4-agent-native-control-plane.md)，分批实施与门禁见 [`docs/fishyume-m4-implementation-plan.md`](./docs/fishyume-m4-implementation-plan.md)。
-最终自动化、live、审查与 CI 证据见 [`docs/fishyume-release-readiness.md`](./docs/fishyume-release-readiness.md)。M5 已激活为 Context Engineering & Memory 的设计入口，当前只进入合同与 eval fixture 阶段，见 [`docs/fishyume-m5-context-engineering-plan.md`](./docs/fishyume-m5-context-engineering-plan.md)。
+最终自动化、live、审查与 CI 证据见 [`docs/fishyume-release-readiness.md`](./docs/fishyume-release-readiness.md)。M5 已完成 Context Engineering & Memory 的规划，但生产实现等待 M4.5 产品体验门禁完成后再开启，见 [`docs/fishyume-m5-context-engineering-plan.md`](./docs/fishyume-m5-context-engineering-plan.md)。
 
 更完整的需求、架构和里程碑说明见 [`docs/`](./docs/)。

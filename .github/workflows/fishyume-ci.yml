@@ -132,6 +132,13 @@ jobs:
           echo "$doctor_output"
           grep -q 'ok engine 0.2.1-alpha.1 started' <<<"$doctor_output"
           grep -q 'ok protocol 2 compatible' <<<"$doctor_output"
+          "$install_root/node_modules/.bin/fishyume" --help | grep -q 'dashboard'
+          "$install_root/node_modules/.bin/fishyume" dashboard --help | grep -q 'Operator Dashboard'
+          setup_output="$("$install_root/node_modules/.bin/fishyume" setup codex --print)"
+          [[ "$setup_output" == 'codex mcp add fishyume -- fishyume mcp' ]]
+          dashboard_output="$("$install_root/node_modules/.bin/fishyume")"
+          grep -q 'No durable Runs yet.' <<<"$dashboard_output"
+          grep -q 'Check readiness: fishyume doctor' <<<"$dashboard_output"
 
   windows-platform-install:
     runs-on: windows-latest
@@ -174,6 +181,15 @@ jobs:
           Write-Output $doctorOutput
           if ($doctorOutput -notmatch 'ok engine 0.2.1-alpha.1 started') { throw 'installed Windows Engine did not start' }
           if ($doctorOutput -notmatch 'ok protocol 2 compatible') { throw 'installed Windows Engine protocol check failed' }
+          $fishyume = Join-Path $installRoot 'node_modules/.bin/fishyume.cmd'
+          $helpOutput = & $fishyume --help | Out-String
+          if ($helpOutput -notmatch 'dashboard') { throw 'installed CLI does not expose Dashboard' }
+          $dashboardHelp = & $fishyume dashboard --help | Out-String
+          if ($dashboardHelp -notmatch 'Operator Dashboard') { throw 'installed Dashboard help is incomplete' }
+          $setupOutput = (& $fishyume setup codex --print | Out-String).Trim()
+          if ($setupOutput -ne 'codex mcp add fishyume -- fishyume mcp') { throw 'installed Codex setup command is not copyable' }
+          $dashboardOutput = & $fishyume | Out-String
+          if ($dashboardOutput -notmatch 'No durable Runs yet\.' -or $dashboardOutput -notmatch 'Check readiness: fishyume doctor') { throw 'installed zero-argument Dashboard empty state is incomplete' }
 
 # Public CI uses fake Driver/compatibility fixtures and never requires Provider login.
 # M4.4 live Host/Driver/TUI/crash acceptance remains a separate manual gate.

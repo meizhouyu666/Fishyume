@@ -1,10 +1,20 @@
 # Fishyume CLI
 
-Install `fishyume` to get the primary `fishyume` command and compatible `wf` alias. Installation does not download executable code; matching platform Engine packages are optional exact-version dependencies.
+Install `fishyume` to get the primary `fishyume` command and compatible `wf` alias. Installation does not download executable code; matching platform Engine packages are optional exact-version dependencies. Windows + Codex is the first fully productized Developer Preview combination; Ubuntu remains an install and CI target.
 
 Fishyume `0.2.1-alpha.1` implements the M4.0-M4.3 Agent-native Control Plane. A Host Agent calls the same Application API through MCP (`fishyume mcp`) or the one-response Machine CLI (`fishyume machine`). Humans attach the Calm Operator TUI to the same durable Run with `fishyume attach <run-id>` or `fishyume status <run-id> --watch`. The headless `codex` Driver executes Agent Attempts on the `local` target. New Runs do not require or use CC-Panes.
 
 CLI/TUI clients discover or detached-start the user-level service, then connect over a Windows Named Pipe or Linux/macOS Unix Domain Socket. Closing a client does not stop a Run. The Control Plane owns durable state, serializes mutations, and reconciles persisted Attempts before scheduling after restart. Direct `wf-engine` invocation retains stdio JSON-RPC for tests and controlled embedding.
+
+## First use
+
+```powershell
+fishyume setup codex
+fishyume doctor --project "E:\project"
+fishyume
+```
+
+`setup codex` idempotently registers `fishyume mcp` through the official Codex CLI; `--print` only emits the copyable command and `--force` is required to replace a conflicting entry. Doctor checks Engine/protocol/Driver/project plus Codex CLI, login, and MCP readiness with an executable recovery command for every failure. After a Host Agent starts work, zero-argument `fishyume` opens the Run Dashboard; select with arrows or `j`/`k` and press `Enter` to attach. The normal path does not require a handwritten Workflow or copied Run ID.
 
 ## Start and observe a Run
 
@@ -49,4 +59,4 @@ Deprecated CLI `--backend/--tool/--runtime`, Workflow `defaults.backend/tool/run
 
 Use `--driver/--target` and `defaults.agent.driver/target` for all new automation. See [`../docs/fishyume-m4-migration-guide.md`](../docs/fishyume-m4-migration-guide.md) for exact mappings and conflict behavior.
 
-M4 is technically closed: the product/migration release surface, deterministic and real Codex MCP Host flows, local real-Codex single-node and parallel Driver smokes, rendered Host/PTY stale-action conflict, two-client MCP Host/TUI-controller acceptance, Provider-independent Application crash/restart, independent review, and all public CI jobs passed. A real Provider crash record remains optional supplemental evidence. No package publication or GitHub Release was performed, and public CI never requires Provider credentials. M5 is active only at the Context Engineering & Memory contract/evaluation entry point.
+M4 is technically closed: the product/migration release surface, deterministic and real Codex MCP Host flows, local real-Codex single-node and parallel Driver smokes, rendered Host/PTY stale-action conflict, two-client MCP Host/TUI-controller acceptance, Provider-independent Application crash/restart, independent review, and all public CI jobs passed. M4.5 now gates the zero-argument Dashboard, one-command Codex setup, product Doctor, and installed-package golden path. No package publication or GitHub Release was performed, and public CI never requires Provider credentials. M5 production work waits for M4.5 acceptance.

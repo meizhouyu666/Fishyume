@@ -18,24 +18,31 @@ test('Fishyume exposes help and version', () => {
 });
 
 test('command help remains available', () => {
-  for (const command of ['run', 'status', 'resume', 'cancel', 'doctor', 'attach', 'machine', 'mcp']) {
+  for (const command of ['dashboard', 'run', 'status', 'resume', 'cancel', 'doctor', 'attach', 'machine', 'mcp']) {
     const result = invoke(command, '--help');
     assert.equal(result.status, 0, `${command}: ${result.stderr}`);
     assert.match(result.stdout, new RegExp(`fishyume ${command}`));
   }
+  const setup = invoke('setup', 'codex', '--help');
+  assert.equal(setup.status, 0, setup.stderr);
+  assert.match(setup.stdout, /fishyume setup codex/);
+  assert.match(setup.stdout, /--print/);
+  assert.match(setup.stdout, /--force/);
 });
 
 test('command help describes the Agent-facing control-plane surface', () => {
   const expected = new Map([
     ['run', /Start an ad-hoc task or Workflow Run through the local Control Plane/],
+    ['dashboard', /Open the Fishyume Operator Dashboard/],
     ['doctor', /Check the Engine, Application protocol, Driver/],
     ['status', /Read a durable Run snapshot or watch it in the human TUI/],
     ['attach', /Attach the human TUI to an existing durable Run/],
     ['machine', /Call one Agent-facing Application API method/],
     ['mcp', /Serve the Agent-facing Application API as MCP tools over stdio/],
+    ['setup codex', /Connect Fishyume to Codex as a local stdio MCP server/],
   ]);
   for (const [command, description] of expected) {
-    const result = invoke(command, '--help');
+    const result = invoke(...command.split(' '), '--help');
     assert.equal(result.status, 0, `${command}: ${result.stderr}`);
     assert.match(result.stdout, description);
   }
