@@ -49,4 +49,4 @@ Deprecated CLI `--backend/--tool/--runtime`, Workflow `defaults.backend/tool/run
 
 Use `--driver/--target` and `defaults.agent.driver/target` for all new automation. See [`../docs/fishyume-m4-migration-guide.md`](../docs/fishyume-m4-migration-guide.md) for exact mappings and conflict behavior.
 
-M4.4 batch 1 covers product, migration, help, example, and release-surface documentation. Real Provider acceptance is still pending: no live Host Agent MCP flow, live Codex Driver workflow, concurrent Host/TUI action flow, or Control Plane crash/restart smoke is claimed by this batch.
+M4.4 now includes the product/migration release surface, a deterministic MCP Host flow, a local real-Codex single-node smoke, and a two-client MCP Host/TUI-controller concurrency acceptance test. A real Host model plus rendered PTY session, a parallel real-Driver Workflow, Control Plane crash/restart smoke, and final independent review remain pending; public CI never requires Provider credentials.

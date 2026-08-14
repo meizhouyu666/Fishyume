@@ -2,7 +2,7 @@
 
 Fishyume 是一个面向 Codex、Claude、Kimi、OpenCode 等 Host Agent 的本地、可恢复 AI Agent 编排控制面。Host Agent 通过 MCP 或 Machine CLI 调用同一套 Application API，创建和管理由 Agent 与人工审批组成的 DAG；人类可随时用 TUI attach 到同一个持久化 Run，观察或提交审批、取消和重试。执行侧由 headless Agent Driver 负责，当前正式组合是 `codex + local`。Fishyume 的新 Run 与 CC-Panes 无关，也不在 Core 中实现聊天 Agent 或模型 Tool loop。
 
-当前 `0.2.1-alpha.1` 已完成 M4.0-M4.3：Agent Driver/Context Compiler、用户级 Local Control Plane、统一 Application Service、持久化 start/action 幂等、MCP、Machine CLI、`fishyume attach` 和 TUI 的 `run.get/run.action` 迁移。Windows 使用 Named Pipe，Linux/macOS 使用 Unix Domain Socket；直接启动 `wf-engine` 时仍保留 stdio JSON-RPC，供测试和受控嵌入使用。本批完成 M4.4 的产品、迁移和发布文档，但 M4.4 的真实 Host/Driver/TUI/crash live acceptance 仍待执行。
+当前 `0.2.1-alpha.1` 已完成 M4.0-M4.3：Agent Driver/Context Compiler、用户级 Local Control Plane、统一 Application Service、持久化 start/action 幂等、MCP、Machine CLI、`fishyume attach` 和 TUI 的 `run.get/run.action` 迁移。Windows 使用 Named Pipe，Linux/macOS 使用 Unix Domain Socket；直接启动 `wf-engine` 时仍保留 stdio JSON-RPC，供测试和受控嵌入使用。M4.4 已完成产品/迁移文档、确定性 MCP Host 流程、真实 Codex Driver 单节点 smoke，以及 MCP Host/TUI-controller 双客户端并发验收；真实 Host 模型 + PTY、并行真实 Driver Workflow、crash/restart 和最终独立审查仍待完成。
 
 当前版本：`0.2.1-alpha.1`
 
@@ -141,7 +141,13 @@ npm --prefix wf run test:mcp-host
 
 该测试使用仓库内 deterministic fake Agent；真实 Codex Provider smoke 仍是独立手动验收，不会退化为 TUI 或人工 MCP allow。流程说明见 [`docs/fishyume-m4-live-smoke.md`](./docs/fishyume-m4-live-smoke.md)。
 
-真实 Codex Driver 的本地验收要求已安装并认证 `codex-cli`，并强制使用 headless `--ephemeral --json` 与显式 sandbox；它不属于公共 CI。
+MCP Host 与 TUI controller 的双客户端验收可重复验证共享状态、陈旧版本动作冲突、detach/close 不取消 Run，以及 Attempt 不重复：
+
+```powershell
+npm --prefix wf run test:mcp-tui
+```
+
+真实 Codex Driver 的本地单节点验收已使用 `codex-cli 0.147.0` 通过；重复执行要求本机已安装并认证 Codex CLI，并强制使用 headless `--ephemeral --json` 与显式 read-only sandbox。它不属于公共 CI。
 
 ## 终端体验
 
@@ -159,11 +165,11 @@ Console 以 `j`/`k` 或上下方向键遍历全部 Workflow 节点，`Enter` 折
 
 ## 当前边界
 
-当前仍不支持通用 Shell/HTTP/容器节点、模型回退或动态节点。M4.4 batch 1 不包含 Web/Desktop、Memory、模型路由、Prompt Library、Native Harness、Claude Driver 或第三方 Driver SDK；真实 Provider 调用、live Codex smoke、动态发现和运行时热加载均不在本批范围。
+当前仍不支持通用 Shell/HTTP/容器节点、模型回退或动态节点。M4.4 不包含 Web/Desktop、Memory、模型路由、Prompt Library、Native Harness、Claude Driver 或第三方 Driver SDK；动态发现和运行时热加载也不在本阶段范围。真实 Provider 调用只作为显式本地 gate，不进入公共 CI。
 
 ## M4：Agent-Native Control Plane
 
-M4.0-M4.3 已完成合同冻结、Codex Driver、Context Compiler、CC-Panes 新 Run 退役、常驻服务/IPC 与 Agent-native Application API；M4.4 batch 1 已更新产品说明、迁移路径、help/MCP 描述和发布清单。完整 M4 仍需后续真实 Provider/live smoke 收口验证，包括：
+M4.0-M4.3 已完成合同冻结、Codex Driver、Context Compiler、CC-Panes 新 Run 退役、常驻服务/IPC 与 Agent-native Application API；M4.4 已更新产品说明、迁移路径、help/MCP 描述和发布清单，并补充 Host/TUI 并发等验收证据。完整 M4 仍需后续真实 Host/PTY、并行 Driver Workflow、crash/restart 与独立审查收口。
 
 - 本地常驻 Control Plane 与 Named Pipe/Unix Domain Socket；
 - Headless Agent Process Protocol v1；

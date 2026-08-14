@@ -1,6 +1,6 @@
 # Fishyume M4 分阶段实施计划
 
-> 状态：M4.0-M4.3 已实现；M4.4 batch 1 产品、迁移与发布文档已完成。真实 Host/Driver/TUI/crash live smoke 与最终独立审查仍待完成。
+> 状态：M4.0-M4.3 已实现；M4.4 已完成产品/迁移文档、确定性 MCP Host 流程、真实 Codex Driver 单节点 smoke 与 MCP Host/TUI-controller 双客户端验收。真实 Host + PTY、并行真实 Driver Workflow、crash/restart 与最终独立审查仍待完成。
 >
 > 对应架构：[`fishyume-m4-agent-native-control-plane.md`](./fishyume-m4-agent-native-control-plane.md)
 
@@ -217,10 +217,10 @@
 
 ### 工作项
 
-- 用真实 Codex Host Agent 通过 MCP 创建和运行 Workflow。
-- 用真实 Codex Driver 执行并行 Agent → Approval → Agent Workflow。
-- Host Agent 与 TUI 同时连接并分别提交动作。
-- 执行 Control Plane crash/restart live smoke。
+- [ ] 用真实 Codex Host Agent 通过 MCP 创建和运行 Workflow（确定性 MCP SDK Host E2E 已通过）。
+- [ ] 用真实 Codex Driver 执行并行 Agent → Approval → Agent Workflow（真实 Driver 单节点 read-only smoke 已通过）。
+- [ ] 用真实 Host Agent 与 rendered PTY TUI 重复并发操作（双 Engine 连接的 MCP Host/TUI controller 自动化验收已通过）。
+- [ ] 执行 Control Plane crash/restart live smoke。
 - [x] 更新 README、CLI help、MCP tool descriptions 和示例 Workflow。
 - [x] 提供 `backend/tool/runtime` 到 `agent.driver/target` 的迁移说明。
 - [x] 从当前发布表面移除 CC-Panes Profile 和控制面要求，同时保留历史兼容代码/测试。

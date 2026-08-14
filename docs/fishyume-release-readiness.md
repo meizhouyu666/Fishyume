@@ -1,6 +1,6 @@
 # Fishyume M4 release readiness
 
-Fishyume M4.0-M4.3 is implemented, and M4.4 batch 1 updates the product, migration, help, example, CI wording, and release checklist. This is not a release approval: M4.4 live Provider acceptance and final independent review remain pending. No version bump, publish, or GitHub Release is part of this batch.
+Fishyume M4.0-M4.3 is implemented. M4.4 now includes the product/migration release surface, deterministic MCP Host and Host/TUI-controller acceptance, and a local real-Codex single-node smoke. This is not a release approval: the full real Host/PTY and parallel Driver Workflow, crash/restart gate, and final independent review remain pending. No version bump, publish, or GitHub Release is part of this batch.
 
 ## Current release surface
 
@@ -19,6 +19,7 @@ Provider-independent public CI runs on both Windows and Ubuntu:
 - `go test ./...`, `go vet ./...`, and `go build ./cmd/wf-engine` on both platforms;
 - `go test -race ./...` on Ubuntu without weakening the Windows test/build gates;
 - Driver contracts, fake Codex execution, process identity, recovery, cancellation, bounded logs, structured Result, concurrency, journal, Application, IPC, MCP/Machine parity, and historical compatibility fixtures;
+- a two-client MCP Host/TUI-controller acceptance gate covering shared state, stale-version action conflict, detach/close semantics, monotonic events, and non-duplicated Attempts;
 - TypeScript typecheck, tests, build, dry-run/real package audits;
 - Windows and Linux package installation checks;
 - cross-compiled archives and SHA-256 checksum verification.
@@ -39,7 +40,7 @@ The following gates are explicitly unverified by batch 1:
 
 - a real Codex Host Agent calls capabilities, validates/explains, starts, observes, acts on, and reads the result of a Workflow through MCP;
 - the real headless Codex Driver completes a parallel Agent -> Approval -> Agent Workflow on `local`;
-- a Host Agent and human TUI attach concurrently and submit separately authorized actions against observed state versions;
+- a manual real Host Agent plus rendered human PTY session repeats the automated MCP Host/TUI-controller concurrency gate (the production adapter, controller, and action binding are already covered without Provider credentials);
 - Control Plane crash/restart reconciles live Driver Attempts without duplicate Start or lost action receipts;
 - final independent review reports no blocking P0/P1/P2 findings against the M4 acceptance criteria.
 
