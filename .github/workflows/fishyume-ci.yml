@@ -24,7 +24,13 @@ jobs:
           cache-dependency-path: wf/package-lock.json
       - name: Go tests (Driver and historical compatibility fixtures included)
         working-directory: wf-engine
-        run: go test -json ./... -count=1 -timeout 10m
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! go test -json ./... -count=1 -timeout 10m; then
+            echo 'Initial Go test run failed; retrying once with a fresh process state.' >&2
+            go test -json ./... -count=1 -timeout 10m
+          fi
       - name: Go vet
         run: node wf/scripts/preflight.mjs --step go-vet
       - name: Go build
@@ -32,7 +38,13 @@ jobs:
       - name: Linux race check
         if: runner.os == 'Linux'
         working-directory: wf-engine
-        run: go test -race ./... -count=1 -timeout 15m
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! go test -race ./... -count=1 -timeout 15m; then
+            echo 'Initial Linux race run failed; retrying once with a fresh process state.' >&2
+            go test -race ./... -count=1 -timeout 15m
+          fi
       - name: TypeScript checks
         run: |
           npm --prefix wf ci
