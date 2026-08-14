@@ -32,6 +32,7 @@
     "test:mcp-tui": "node --test --import tsx src/integration/mcp-tui-concurrency.test.ts",
     "test:restart": "node --test --import tsx src/integration/control-plane-restart.test.ts",
     "smoke:codex-live": "npm run build && node scripts/codex-live-smoke.mjs",
+    "smoke:codex-live:parallel": "npm run build && node scripts/codex-live-smoke.mjs --parallel",
     "verify": "npm run typecheck && npm test && npm run build && npm run pack:audit && npm run pack:audit:real",
     "gallery": "tsx scripts/render-tui-gallery.ts",
     "pack:dry-run": "npm pack --dry-run",

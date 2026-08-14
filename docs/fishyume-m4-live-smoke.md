@@ -39,6 +39,24 @@ This is an opt-in local acceptance result, not a public CI guarantee: it depends
 locally installed and authenticated Codex CLI. The deterministic fake-Agent MCP smoke
 remains the reproducible CI-safe gate.
 
+## Real parallel Driver Smoke (2026-08-14)
+
+The same local native `codex-cli 0.147.0` passed the parallel Driver gate with
+`FISHYUME_LIVE_CODEX=1` and the Fishyume sandbox forced to `read-only`. Run
+`run-56bf2b78e36770c0eced51c1` completed two independent Agent Nodes in parallel,
+waited for an Approval, submitted the Approval through the Application API, and
+completed the dependent final Agent. The structured result contained `planA`, `planB`,
+`approve`, and `finalize`, with final summary `codex-live-parallel-final`. The run used
+a temporary state directory and was cleaned up; no Provider credential, prompt, or
+local path was recorded here.
+
+Repeat the gate with:
+
+```powershell
+$env:FISHYUME_LIVE_CODEX = '1'
+npm --prefix wf run smoke:codex-live:parallel
+```
+
 Run the repeatable real Driver gate explicitly:
 
 ```powershell
@@ -50,6 +68,19 @@ npm --prefix wf run smoke:codex-live
 the Fishyume Driver sandbox to `read-only`, uses a temporary state directory, and shuts
 down its temporary Control Plane. Without `FISHYUME_LIVE_CODEX=1` it fails before any
 Provider call.
+
+For the real parallel Driver gate, use the same opt-in after authenticating `codex-cli`:
+
+```powershell
+$env:FISHYUME_LIVE_CODEX = '1'
+npm --prefix wf run smoke:codex-live:parallel
+```
+
+This runs two independent real Codex Agent Nodes at `maxConcurrency: 2`, waits for a
+durable Approval, approves it through the Application API, then runs a dependent final
+Agent. Every Node must be present in the structured result, and the final summary must
+match the acceptance contract. The workflow is read-only and the cleanup path cancels
+any non-terminal Run before shutting down the temporary Control Plane.
 
 ## Concurrent Host/TUI acceptance
 
