@@ -1,6 +1,6 @@
 # Fishyume M4 release readiness
 
-Fishyume M4.0-M4.3 is implemented. M4.4 now includes the product/migration release surface, deterministic MCP Host and Host/TUI-controller acceptance, and a local real-Codex single-node smoke. This is not a release approval: the full real Host/PTY and parallel Driver Workflow, crash/restart gate, and final independent review remain pending. No version bump, publish, or GitHub Release is part of this batch.
+Fishyume M4.0-M4.3 is implemented. M4.4 now includes the product/migration release surface, deterministic MCP Host, Host/TUI-controller, and Application crash/restart acceptance, plus a local real-Codex single-node smoke. This is not a release approval: the full real Host/PTY and parallel Driver Workflow, real Provider/live crash record, and final independent review remain pending. No version bump, publish, or GitHub Release is part of this batch.
 
 ## Current release surface
 
@@ -41,7 +41,7 @@ The following gates are explicitly unverified by batch 1:
 - a real Codex Host Agent calls capabilities, validates/explains, starts, observes, acts on, and reads the result of a Workflow through MCP;
 - the real headless Codex Driver completes a parallel Agent -> Approval -> Agent Workflow on `local`;
 - a manual real Host Agent plus rendered human PTY session repeats the automated MCP Host/TUI-controller concurrency gate (the production adapter, controller, and action binding are already covered without Provider credentials);
-- Control Plane crash/restart reconciles live Driver Attempts without duplicate Start or lost action receipts;
+- a Provider-independent Application crash/restart acceptance now verifies live fake-Driver Attempt reconciliation, action-receipt replay, and no duplicate Start; a separate real Provider/live environment record remains optional evidence;
 - final independent review reports no blocking P0/P1/P2 findings against the M4 acceptance criteria.
 
 Until these pass, describe the product as M4.0-M4.3 implemented with M4.4 batch-1 productization complete, not as M4 fully accepted or release-ready.
@@ -56,7 +56,7 @@ Until these pass, describe the product as M4.0-M4.3 implemented with M4.4 batch-
 - [ ] Artifacts and checksums: archives are built with `CGO_ENABLED=0`, `-trimpath`, stripped symbols, expected package contents, executable Linux mode, and non-empty SHA-256 checksum files.
 - [ ] Provider-independent CI: Windows and Ubuntu public gates pass without Provider login, live Codex calls, CC-Panes, Docker, or private infrastructure.
 - [ ] Release independence: published packages and current instructions contain no CC-Panes Profile/control-plane requirement; retained CC-Panes code is historical compatibility only.
-- [ ] Live evidence: all pending M4.4 Host/Driver/TUI/crash checks are recorded with versions, bounded logs, state cleanup, and no credentials.
+- [ ] Live evidence: remaining real Host/Driver/PTY/crash checks are recorded with versions, bounded logs, state cleanup, and no credentials; the deterministic crash/restart gate is covered by `npm --prefix wf run test:restart`.
 - [ ] Review and repository: final independent review passes, `main == origin/main`, the worktree is clean, and the reviewed commit is the release candidate.
 
 ## Build artifacts

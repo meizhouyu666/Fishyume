@@ -220,7 +220,7 @@
 - [ ] 用真实 Codex Host Agent 通过 MCP 创建和运行 Workflow（确定性 MCP SDK Host E2E 已通过）。
 - [ ] 用真实 Codex Driver 执行并行 Agent → Approval → Agent Workflow（真实 Driver 单节点 read-only smoke 已通过）。
 - [ ] 用真实 Host Agent 与 rendered PTY TUI 重复并发操作（双 Engine 连接的 MCP Host/TUI controller 自动化验收已通过）。
-- [ ] 执行 Control Plane crash/restart live smoke。
+- [x] Provider-independent Control Plane crash/restart acceptance（正式 Application API、action receipt replay、active Attempt 不重复）；真实 Provider/live 环境仍需单独记录。
 - [x] 更新 README、CLI help、MCP tool descriptions 和示例 Workflow。
 - [x] 提供 `backend/tool/runtime` 到 `agent.driver/target` 的迁移说明。
 - [x] 从当前发布表面移除 CC-Panes Profile 和控制面要求，同时保留历史兼容代码/测试。

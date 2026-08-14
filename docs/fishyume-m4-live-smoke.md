@@ -72,3 +72,19 @@ This exercises the production MCP adapter, Application API, Local Control Plane,
 EngineBridge, and TUI controller/action binding. It does not render a terminal or make
 a Provider call, so PTY appearance and real Host-model tool selection remain separate
 manual concerns.
+
+## Control Plane crash/restart acceptance
+
+The deterministic acceptance test `wf/src/integration/control-plane-restart.test.ts`
+starts an Application Run with a durable Approval action and an active fake Codex
+Attempt, force-terminates the temporary Control Plane, reconnects through a fresh
+EngineBridge, and verifies that the action receipt replays, the active Attempt remains
+Attempt 1, and cancellation through the replacement service reaches a terminal Run.
+
+Run it from the repository root:
+
+```powershell
+npm --prefix wf run test:restart
+```
+
+The test uses a temporary state directory and fake Agent, never a Provider or Docker.

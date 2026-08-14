@@ -2,7 +2,7 @@
 
 Fishyume 是一个面向 Codex、Claude、Kimi、OpenCode 等 Host Agent 的本地、可恢复 AI Agent 编排控制面。Host Agent 通过 MCP 或 Machine CLI 调用同一套 Application API，创建和管理由 Agent 与人工审批组成的 DAG；人类可随时用 TUI attach 到同一个持久化 Run，观察或提交审批、取消和重试。执行侧由 headless Agent Driver 负责，当前正式组合是 `codex + local`。Fishyume 的新 Run 与 CC-Panes 无关，也不在 Core 中实现聊天 Agent 或模型 Tool loop。
 
-当前 `0.2.1-alpha.1` 已完成 M4.0-M4.3：Agent Driver/Context Compiler、用户级 Local Control Plane、统一 Application Service、持久化 start/action 幂等、MCP、Machine CLI、`fishyume attach` 和 TUI 的 `run.get/run.action` 迁移。Windows 使用 Named Pipe，Linux/macOS 使用 Unix Domain Socket；直接启动 `wf-engine` 时仍保留 stdio JSON-RPC，供测试和受控嵌入使用。M4.4 已完成产品/迁移文档、确定性 MCP Host 流程、真实 Codex Driver 单节点 smoke，以及 MCP Host/TUI-controller 双客户端并发验收；真实 Host 模型 + PTY、并行真实 Driver Workflow、crash/restart 和最终独立审查仍待完成。
+当前 `0.2.1-alpha.1` 已完成 M4.0-M4.3：Agent Driver/Context Compiler、用户级 Local Control Plane、统一 Application Service、持久化 start/action 幂等、MCP、Machine CLI、`fishyume attach` 和 TUI 的 `run.get/run.action` 迁移。Windows 使用 Named Pipe，Linux/macOS 使用 Unix Domain Socket；直接启动 `wf-engine` 时仍保留 stdio JSON-RPC，供测试和受控嵌入使用。M4.4 已完成产品/迁移文档、确定性 MCP Host 流程、真实 Codex Driver 单节点 smoke、MCP Host/TUI-controller 双客户端并发验收，以及 Provider-independent Control Plane crash/restart 验收；真实 Host 模型 + PTY、并行真实 Driver Workflow、真实 Provider/live crash 记录和最终独立审查仍待完成。
 
 当前版本：`0.2.1-alpha.1`
 

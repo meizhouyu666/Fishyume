@@ -30,6 +30,7 @@
     "test": "node --test --import tsx src/**/*.test.ts src/**/*.test.tsx",
     "test:mcp-host": "node --test --import tsx src/integration/mcp-host-agent.test.ts",
     "test:mcp-tui": "node --test --import tsx src/integration/mcp-tui-concurrency.test.ts",
+    "test:restart": "node --test --import tsx src/integration/control-plane-restart.test.ts",
     "smoke:codex-live": "npm run build && node scripts/codex-live-smoke.mjs",
     "verify": "npm run typecheck && npm test && npm run build && npm run pack:audit && npm run pack:audit:real",
     "gallery": "tsx scripts/render-tui-gallery.ts",
