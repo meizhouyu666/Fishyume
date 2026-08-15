@@ -139,8 +139,8 @@ jobs:
           setup_output="$("$install_root/node_modules/.bin/fishyume" setup codex --print)"
           grep -q '^codex mcp add fishyume -- ".*node" ".*/fishyume/dist/cli.js" "mcp"$' <<<"$setup_output"
           dashboard_output="$("$install_root/node_modules/.bin/fishyume")"
-          grep -q 'No durable Runs yet.' <<<"$dashboard_output"
-          grep -q 'Check readiness: fishyume doctor' <<<"$dashboard_output"
+          grep -q '目前没有可显示的任务。' <<<"$dashboard_output"
+          grep -q '检查运行环境：fishyume doctor' <<<"$dashboard_output"
 
   windows-platform-install:
     runs-on: windows-latest
@@ -175,7 +175,7 @@ jobs:
           $setupOutput = (& $fishyume setup codex --print | Out-String).Trim()
           if ($setupOutput -notmatch '^codex mcp add fishyume -- ".+node(?:\.exe)?" ".+[\\/]fishyume[\\/]dist[\\/]cli\.js" "mcp"$') { throw 'installed Codex setup command is not canonical and copyable' }
           $dashboardOutput = & $fishyume | Out-String
-          if ($dashboardOutput -notmatch 'No durable Runs yet\.' -or $dashboardOutput -notmatch 'Check readiness: fishyume doctor') { throw 'installed zero-argument Dashboard empty state is incomplete' }
+          if ($dashboardOutput -notmatch '目前没有可显示的任务。' -or $dashboardOutput -notmatch '检查运行环境：fishyume doctor') { throw 'installed zero-argument Dashboard empty state is incomplete' }
 
 # Public CI uses fake Driver/compatibility fixtures and never requires Provider login.
 # M4.4 live Host/Driver/TUI/crash acceptance remains a separate manual gate.
