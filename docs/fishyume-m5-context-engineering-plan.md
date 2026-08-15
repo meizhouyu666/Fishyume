@@ -1,6 +1,6 @@
 # Fishyume M5: Context Engineering and Memory
 
-> Status: planned and unblocked by the accepted M4.5 Developer Preview gate; no M5 production implementation has started.
+> Status: M5.0 contract/evaluation baseline completed on 2026-08-15; M5.1 production source-registry work is next. The accepted M4.5 Developer Preview remains the product baseline.
 
 M5 turns the existing deterministic Context Compiler skeleton into the product layer
 that gives each Agent Attempt the smallest sufficient, auditable context. Fishyume
@@ -36,6 +36,8 @@ types, limits, stable errors, canonical hashing, and golden fixtures. Define eva
 tasks that detect missing instructions, stale memory, irrelevant context, leakage, and
 nondeterminism before changing production compilation.
 
+Completed in [`fishyume-m5.0-context-contracts.md`](./fishyume-m5.0-context-contracts.md): the v2/v1 contracts, metadata-only manifest, hard limits, trusted Memory writers, golden hash/records, six-class evaluation suite, and mutation tests are frozen side-by-side with the unchanged production v1 compiler.
+
 ### M5.1: Context source registry
 
 Implement typed sources for project instructions, Workflow policy, Node task,
@@ -64,7 +66,7 @@ CI dependency.
 ## M5 entry gates
 
 - [x] M4 final independent review has no P0/P1/P2 findings.
-- Context Envelope v2 and memory records are approved before production code changes.
-- Golden/evaluation fixtures exist before optimization claims.
+- [x] Context Envelope v2 and Memory records are approved before production code changes.
+- [x] Golden/evaluation fixtures exist before optimization claims.
 - No model-routing or plugin-ecosystem work is mixed into M5 commits.
 - Public CI remains Provider-independent on Windows and Ubuntu.

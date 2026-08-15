@@ -1,0 +1,71 @@
+{
+  "schemaVersion": "fishyume.context-evaluation/v1",
+  "fixtures": [
+    {
+      "id": "missing-required-instruction",
+      "detects": "missing_required_instruction",
+      "description": "Execution, project, current task, and output instructions must survive every budget decision.",
+      "expectedComponentOrder": ["execution-contract", "project-instructions", "node-task", "output-contract"],
+      "requiredComponentIds": ["execution-contract", "project-instructions", "node-task", "output-contract"],
+      "forbiddenComponentIds": [],
+      "expectedOmissions": [],
+      "forbiddenPersistedText": [],
+      "requireDeterministicHash": false
+    },
+    {
+      "id": "stale-memory",
+      "detects": "stale_memory",
+      "description": "A superseded Memory record must be omitted in favor of the active replacement.",
+      "expectedComponentOrder": ["node-task", "memory-new", "output-contract"],
+      "requiredComponentIds": ["memory-new"],
+      "forbiddenComponentIds": ["memory-old"],
+      "expectedOmissions": [{"componentId": "memory-old", "reason": "superseded"}],
+      "forbiddenPersistedText": [],
+      "requireDeterministicHash": false
+    },
+    {
+      "id": "irrelevant-memory",
+      "detects": "irrelevant_context",
+      "description": "Available but irrelevant Memory must consume no attention budget.",
+      "expectedComponentOrder": ["node-task", "output-contract"],
+      "requiredComponentIds": ["node-task", "output-contract"],
+      "forbiddenComponentIds": ["memory-unrelated"],
+      "expectedOmissions": [{"componentId": "memory-unrelated", "reason": "irrelevant"}],
+      "forbiddenPersistedText": [],
+      "requireDeterministicHash": false
+    },
+    {
+      "id": "sensitive-manifest-leakage",
+      "detects": "sensitive_leakage",
+      "description": "Sensitive component content may reach the ephemeral envelope but never the durable manifest.",
+      "expectedComponentOrder": ["node-task", "user-answer", "output-contract"],
+      "requiredComponentIds": ["user-answer"],
+      "forbiddenComponentIds": [],
+      "expectedOmissions": [],
+      "forbiddenPersistedText": ["relay-token-secret-marker"],
+      "requireDeterministicHash": false
+    },
+    {
+      "id": "deterministic-envelope",
+      "detects": "nondeterminism",
+      "description": "The same approved sources and limits must produce the same canonical component order and envelope hash.",
+      "expectedComponentOrder": ["execution-contract", "node-task", "output-contract"],
+      "requiredComponentIds": ["execution-contract", "node-task", "output-contract"],
+      "forbiddenComponentIds": [],
+      "expectedOmissions": [],
+      "forbiddenPersistedText": [],
+      "requireDeterministicHash": true
+    },
+    {
+      "id": "parallel-dependency-isolation",
+      "detects": "dependency_isolation",
+      "description": "A node receives declared dependency results and not unrelated sibling output.",
+      "expectedComponentOrder": ["node-task", "dependency-plan", "output-contract"],
+      "requiredComponentIds": ["dependency-plan"],
+      "forbiddenComponentIds": ["dependency-sibling"],
+      "expectedOmissions": [{"componentId": "dependency-sibling", "reason": "irrelevant"}],
+      "forbiddenPersistedText": [],
+      "requireDeterministicHash": false
+    }
+  ]
+}

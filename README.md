@@ -205,6 +205,6 @@ M4.0-M4.4 已完成合同冻结、Codex Driver、Context Compiler、CC-Panes 新
 - MCP、Machine CLI、`fishyume attach` 与 TUI 共享同一 Application Service。
 
 正式架构见 [`docs/fishyume-m4-agent-native-control-plane.md`](./docs/fishyume-m4-agent-native-control-plane.md)，分批实施与门禁见 [`docs/fishyume-m4-implementation-plan.md`](./docs/fishyume-m4-implementation-plan.md)。
-最终自动化、live、审查与 CI 证据见 [`docs/fishyume-release-readiness.md`](./docs/fishyume-release-readiness.md)。M5 已完成 Context Engineering & Memory 的规划，并已由通过验收的 M4.5 产品体验门禁解除阻塞，见 [`docs/fishyume-m5-context-engineering-plan.md`](./docs/fishyume-m5-context-engineering-plan.md)。
+最终自动化、live、审查与 CI 证据见 [`docs/fishyume-release-readiness.md`](./docs/fishyume-release-readiness.md)。M5.0 已冻结 Context Envelope v2、Memory Record v1、稳定限制/错误、golden fixtures 与六类评测基线，且保持生产 `context-compiler/v1` 不变；下一步是 M5.1 Context Source Registry。总体计划见 [`docs/fishyume-m5-context-engineering-plan.md`](./docs/fishyume-m5-context-engineering-plan.md)，合同细节见 [`docs/fishyume-m5.0-context-contracts.md`](./docs/fishyume-m5.0-context-contracts.md)。
 
 更完整的需求、架构和里程碑说明见 [`docs/`](./docs/)。

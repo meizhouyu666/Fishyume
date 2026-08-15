@@ -1,0 +1,173 @@
+{
+  "schemaVersion": "fishyume.context-contract-fixture/v1",
+  "limits": {
+    "maxContextPayloadBytes": 131072,
+    "maxContextComponents": 128,
+    "maxContextOmissions": 256,
+    "maxComponentContentBytes": 65536,
+    "maxMemoryContentBytes": 16384,
+    "maxSelectedMemoryRecords": 32,
+    "maxProjectMemoryRecords": 2048,
+    "maxProvenanceRefBytes": 1024,
+    "maxMemorySupersedes": 16
+  },
+  "errorCodes": [
+    "context_invalid_component",
+    "context_required_missing",
+    "context_budget_unsatisfiable",
+    "context_source_unavailable",
+    "context_hash_mismatch",
+    "context_version_unsupported",
+    "memory_invalid_record",
+    "memory_conflict",
+    "memory_not_found"
+  ],
+  "componentOrder": [
+    "execution_contract",
+    "project_instructions",
+    "workflow_policy",
+    "node_task",
+    "user_answer",
+    "dependency_result",
+    "skill_instructions",
+    "memory",
+    "output_contract"
+  ],
+  "attentionTiers": ["required", "important", "optional"],
+  "sensitivities": ["public", "project", "sensitive"],
+  "truncationModes": ["none", "tail"],
+  "omissionReasons": ["budget_exhausted", "superseded", "expired", "irrelevant", "unavailable", "sensitivity_policy", "duplicate"],
+  "memoryTypes": ["decision", "constraint", "fact", "procedure", "preference"],
+  "memoryStates": ["active", "superseded", "deleted"],
+  "memoryWriters": ["user", "host_agent", "migration"],
+  "envelope": {
+    "schemaVersion": "fishyume.context/v2",
+    "compilerVersion": "context-compiler/v2",
+    "identity": {"runId": "run-golden", "nodeId": "implement", "attempt": 1},
+    "budget": {"totalBytes": 1024, "requiredBytes": 512, "importantBytes": 256, "optionalBytes": 256},
+    "components": [
+      {
+        "id": "execution-contract",
+        "kind": "execution_contract",
+        "tier": "required",
+        "sensitivity": "public",
+        "provenance": {"source": "fishyume:execution-contract", "sourceVersion": "v2", "sourceHash": "276523319cd73c4a9c500868cd1b8015f3841a34fb84d5360e4a271f89690a09", "reason": "Required execution protocol for every Attempt."},
+        "content": "Follow the execution protocol.",
+        "contentHash": "276523319cd73c4a9c500868cd1b8015f3841a34fb84d5360e4a271f89690a09",
+        "originalBytes": 30,
+        "includedBytes": 30,
+        "truncation": "none"
+      },
+      {
+        "id": "project-instructions",
+        "kind": "project_instructions",
+        "tier": "required",
+        "sensitivity": "project",
+        "provenance": {"source": "project:instructions", "sourceVersion": "1", "sourceHash": "a958615c2dfef989c784f6a70abd6da7a818731aa20940bb229707a39af8b9ac", "reason": "Configured mandatory project instructions."},
+        "content": "Project decisions are authoritative.",
+        "contentHash": "a958615c2dfef989c784f6a70abd6da7a818731aa20940bb229707a39af8b9ac",
+        "originalBytes": 36,
+        "includedBytes": 36,
+        "truncation": "none"
+      },
+      {
+        "id": "workflow-policy",
+        "kind": "workflow_policy",
+        "tier": "important",
+        "sensitivity": "project",
+        "provenance": {"source": "workflow:policy", "sourceVersion": "1", "sourceHash": "eee06d29b8388670cc577125a0b288922be46648823f7e038c0a3a92b8981dbe", "reason": "Workflow policy applies to the current Node."},
+        "content": "Use the approved local-only policy.",
+        "contentHash": "eee06d29b8388670cc577125a0b288922be46648823f7e038c0a3a92b8981dbe",
+        "originalBytes": 35,
+        "includedBytes": 35,
+        "truncation": "none"
+      },
+      {
+        "id": "node-task",
+        "kind": "node_task",
+        "tier": "required",
+        "sensitivity": "project",
+        "provenance": {"source": "workflow:node/implement", "sourceVersion": "1", "sourceHash": "80a1f990ab82216636e1cc9306f5e41225c97fb5e9941883602c7a833a16d91e", "reason": "Current Node task is always required."},
+        "content": "Implement the approved M5.0 contract.",
+        "contentHash": "80a1f990ab82216636e1cc9306f5e41225c97fb5e9941883602c7a833a16d91e",
+        "originalBytes": 37,
+        "includedBytes": 37,
+        "truncation": "none"
+      },
+      {
+        "id": "dependency-plan",
+        "kind": "dependency_result",
+        "tier": "important",
+        "sensitivity": "project",
+        "provenance": {"source": "run:node/plan/result", "sourceVersion": "1", "sourceHash": "11d9cbd17d809f0cdb65949560c281add947b1b42de5312e4555627b78ece668", "reason": "Declared dependency result is relevant to implementation."},
+        "content": "Dependency plan completed.",
+        "contentHash": "11d9cbd17d809f0cdb65949560c281add947b1b42de5312e4555627b78ece668",
+        "originalBytes": 26,
+        "includedBytes": 26,
+        "truncation": "none"
+      },
+      {
+        "id": "memory-determinism",
+        "kind": "memory",
+        "tier": "optional",
+        "sensitivity": "project",
+        "provenance": {"source": "memory:memory-determinism", "sourceVersion": "1", "sourceHash": "cb94deb7e3f348bde8b0b35751cabd594ea3484399a77ac68de3218bc42e7b71", "reason": "Selected project decision directly matches the task."},
+        "content": "Prefer deterministic context.",
+        "contentHash": "cb94deb7e3f348bde8b0b35751cabd594ea3484399a77ac68de3218bc42e7b71",
+        "originalBytes": 29,
+        "includedBytes": 29,
+        "truncation": "none"
+      },
+      {
+        "id": "output-contract",
+        "kind": "output_contract",
+        "tier": "required",
+        "sensitivity": "public",
+        "provenance": {"source": "fishyume:agent-result", "sourceVersion": "v1", "sourceHash": "e6980416804bf49187b06d40c15d7725a1258ee5ff236c7dc85c4e7fd9705a71", "reason": "Every Attempt must return a structured result."},
+        "content": "Return one structured Agent Result.",
+        "contentHash": "e6980416804bf49187b06d40c15d7725a1258ee5ff236c7dc85c4e7fd9705a71",
+        "originalBytes": 35,
+        "includedBytes": 35,
+        "truncation": "none"
+      }
+    ],
+    "omissions": []
+  },
+  "envelopeHash": "9fb7973a31642513bf729aa9a0efa13c25a3b1e217cf6eaf4650bf3a6827311f",
+  "memoryRecords": [
+    {
+      "schemaVersion": "fishyume.memory/v1",
+      "id": "memory-go-contracts",
+      "project": "E:\\project",
+      "type": "decision",
+      "scope": "project",
+      "content": "Use Go contracts for M5.0.",
+      "contentHash": "95e868aee395a9384eceaab3ed21f66348f35e1918c5671bb98915a54291934a",
+      "sensitivity": "project",
+      "provenance": {"writer": "host_agent", "source": "run:run-golden/node:plan", "sourceVersion": "1", "sourceHash": "95e868aee395a9384eceaab3ed21f66348f35e1918c5671bb98915a54291934a", "reason": "User approved the M5.0 contract direction."},
+      "createdAt": "2026-08-15T00:00:00Z",
+      "updatedAt": "2026-08-15T00:00:00Z",
+      "supersedes": [],
+      "state": "active",
+      "useCount": 0,
+      "retention": {"expiresAt": "2027-08-15T00:00:00Z", "maxUses": 100}
+    },
+    {
+      "schemaVersion": "fishyume.memory/v1",
+      "id": "memory-deleted",
+      "project": "E:\\project",
+      "type": "fact",
+      "scope": "project",
+      "contentHash": "95e868aee395a9384eceaab3ed21f66348f35e1918c5671bb98915a54291934a",
+      "sensitivity": "project",
+      "provenance": {"writer": "user", "source": "memory:delete", "sourceVersion": "1", "sourceHash": "95e868aee395a9384eceaab3ed21f66348f35e1918c5671bb98915a54291934a", "reason": "User originally recorded the project fact."},
+      "createdAt": "2026-08-15T00:00:00Z",
+      "updatedAt": "2026-08-15T01:00:00Z",
+      "supersedes": [],
+      "state": "deleted",
+      "stateReason": "User explicitly deleted the obsolete fact.",
+      "useCount": 0,
+      "retention": {}
+    }
+  ]
+}
