@@ -29,9 +29,26 @@ export interface RunAppProps {
   onExit?: () => void;
 }
 
+export type OperatorCommand = 'approve' | 'reject' | 'retry' | 'cancel' | 'detach';
+export function operatorCommand(input: string): OperatorCommand | undefined {
+  const normalized = input.toLowerCase();
+  if (normalized === 'a' || normalized === 'y') return 'approve';
+  if (input === 'r' || normalized === 'x' || normalized === 'n') return 'reject';
+  if (input === 'R' || normalized === 't') return 'retry';
+  if (normalized === 'c') return 'cancel';
+  if (normalized === 'd' || normalized === 'q') return 'detach';
+  return undefined;
+}
+
 export function RunApp({view, startedAt, width: fixedWidth, now: fixedNow, colorMode: fixedColorMode, symbolMode: fixedSymbolMode, onResume, onCancel, onExit}: RunAppProps) {
   const {stdout} = useStdout(); const [clock, setClock] = useState(fixedNow ?? Date.now());
-  const [interaction, dispatch] = useReducer(transitionConsoleState, initialConsoleInteractionState);
+  const initialNodeIds = view.run?.topologicalOrder.filter(id => Boolean(view.run?.nodes[id])) ?? [];
+  const initialTarget = actionableNodes(view)[0]; const initialSelectedNodeId = initialTarget?.nodeId ?? initialNodeIds[0];
+  const [interaction, dispatch] = useReducer(transitionConsoleState, {
+    ...initialConsoleInteractionState,
+    selectedIndex: Math.max(0, initialSelectedNodeId ? initialNodeIds.indexOf(initialSelectedNodeId) : 0),
+    selectedNodeId: initialSelectedNodeId,
+  });
   const [pending, setPending] = useState(false); const [message, setMessage] = useState<string>();
   const [pendingTarget, setPendingTarget] = useState<ActionableNode>();
   useEffect(() => {
@@ -64,7 +81,7 @@ export function RunApp({view, startedAt, width: fixedWidth, now: fixedNow, color
   };
   const currentAction = (): {action: ResumeAction; target: ActionableNode} | undefined => {
     const action = resumeActionForMode(interaction, targets); const actionTarget = boundActionableNode(interaction, targets);
-    if (!action || !actionTarget) {setMessage('target is no longer actionable'); dispatch({type: 'reconcile', nodeIds, actionTargets: targets}); return undefined}
+    if (!action || !actionTarget) {setMessage('目标状态已经变化，操作已安全取消'); dispatch({type: 'reconcile', nodeIds, actionTargets: targets}); return undefined}
     return {action, target: actionTarget};
   };
 
@@ -91,17 +108,18 @@ export function RunApp({view, startedAt, width: fixedWidth, now: fixedNow, color
     if (key.ctrl && input.toLowerCase() === 'c') {onExit?.(); return}
     const basicEvent = basicConsoleKeyEvent(input, key, nodeIds);
     if (basicEvent) {setMessage(undefined); setPendingTarget(undefined); dispatch(basicEvent); return}
-    if (input === 'a') {
+    const command = operatorCommand(input);
+    if (command === 'approve') {
       if (target?.kind === 'answer') {dispatch({type: 'begin-answer', target}); return}
       const action = approveAction(target); if (action && target) void submitResume(action, target); return
     }
-    if (input === 'r' && target?.kind === 'approval') {dispatch({type: 'begin-reject', target}); return}
-    if (input === 'R' && target?.kind === 'retry') {dispatch({type: 'begin-retry', target}); return}
-    if (input === 'c' && run.phase !== 'completed' && run.phase !== 'cancelling') {dispatch({type: 'begin-cancel'}); return}
-    if (input === 'd' || input === 'q') onExit?.();
+    if (command === 'reject' && target?.kind === 'approval') {dispatch({type: 'begin-reject', target}); return}
+    if (command === 'retry' && target?.kind === 'retry') {dispatch({type: 'begin-retry', target}); return}
+    if (command === 'cancel' && run.phase !== 'completed' && run.phase !== 'cancelling') {dispatch({type: 'begin-cancel'}); return}
+    if (command === 'detach') onExit?.();
   });
 
-  if (!run) return <Text color="red">Fishyume TUI cannot render a missing run.</Text>;
+  if (!run) return <Text color="red">Fishyume 无法显示这个任务：缺少 Run 数据。</Text>;
   const terminalUpdatedAt = Date.parse(run.updatedAt); const elapsedNow = run.phase === 'completed' && Number.isFinite(terminalUpdatedAt) ? terminalUpdatedAt : (fixedNow ?? clock);
   const presentation = buildRunTextPresentation(view, width, Math.max(0, elapsedNow - startedAt), {
     selectedNodeId: visualNodeId,

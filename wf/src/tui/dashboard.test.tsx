@@ -3,7 +3,7 @@ import test from 'node:test';
 import type {EngineClient} from '../bridge/engine.js';
 import type {RunSummary} from '../bridge/application.js';
 import {showDashboard} from '../commands/dashboard.js';
-import {assertWidth} from './layout.js';
+import {assertWidth, displayWidth} from './layout.js';
 import {dashboardLines, dashboardText, orderDashboardRuns} from './dashboard.js';
 
 const now = Date.parse('2026-08-15T00:00:00Z');
@@ -21,13 +21,20 @@ test('Dashboard prioritizes active work and keeps 80/120/160 column output bound
   for (const width of [80, 120, 160]) {
     const lines = dashboardLines({runs, selectedRunId: 'run-running'}, width, now);
     assert.equal(assertWidth(lines, width), true, `${width} columns`);
-    assert.match(lines.join('\n'), /2 active · 3 total/);
-    assert.match(lines.join('\n'), /Enter attach/);
+    assert.match(lines.join('\n'), /2 个进行中 · 共 3 个/);
+    assert.match(lines.join('\n'), /Enter 打开/);
   }
+  assert.match(dashboardLines({runs, selectedRunId: 'run-waiting'}, 80, now).join('\n'), /等待你的处理.*Enter 打开/);
+  const workflowNames = ['implementation', 'approval', 'old result'];
+  const statusColumns = dashboardLines({runs, selectedRunId: 'run-running'}, 120, now)
+    .map(line => ({line, workflowName: workflowNames.find(name => line.includes(name))}))
+    .filter((item): item is {line: string; workflowName: string} => Boolean(item.workflowName))
+    .map(({line, workflowName}) => displayWidth(line.slice(0, line.indexOf(workflowName))));
+  assert.deepEqual(statusColumns, [15, 15, 15]);
 });
 
 test('Dashboard empty and non-interactive surfaces give executable next steps', () => {
-  assert.match(dashboardLines({runs: []}, 80, now).join('\n'), /No durable Runs yet/);
+  assert.match(dashboardLines({runs: []}, 80, now).join('\n'), /目前没有可显示的任务/);
   assert.match(dashboardText([], 80, now), /fishyume doctor/);
   assert.match(dashboardText([run({})], 80, now), /fishyume attach run-1/);
 });

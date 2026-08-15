@@ -30,6 +30,10 @@ export function CalmConsole({presentation, width, colorMode, symbolMode}: ThemeP
   return <Box flexDirection="column" width={width}>
     {presentation.header.map((line, index) => <HeaderLine key={`header:${index}`} line={line} colorMode={colorMode}/>)}
     <ThemedText role="muted" colorMode={colorMode}>{presentation.divider}</ThemedText>
+    {presentation.attention ? <>
+      {presentation.attention.lines.map((line, index) => <ThemedText key={`attention:${index}`} role={presentation.attention!.role} colorMode={colorMode} bold>{line}</ThemedText>)}
+      <ThemedText role="muted" colorMode={colorMode}>{presentation.divider}</ThemedText>
+    </> : null}
     {presentation.workflow.map(row => <WorkflowRow key={row.nodeId} row={row} colorMode={colorMode}/>)}
     {presentation.detail ? <>
       <ThemedText role={presentation.detail.role} colorMode={colorMode} bold>{dividerLine(width, symbolMode, presentation.detail.title)}</ThemedText>

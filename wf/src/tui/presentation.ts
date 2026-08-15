@@ -30,10 +30,12 @@ export interface WorkflowRowPresentation {
 export interface StyledTextSegment {text: string; role?: ColorRole; bold?: boolean}
 export interface HeaderLinePresentation {text: string; segments: StyledTextSegment[]}
 export interface DetailPresentation {title: string; role: ColorRole; lines: string[]}
+export interface AttentionPresentation {role: ColorRole; lines: string[]}
 export interface RunTextPresentation {
   size: TerminalSize;
   header: HeaderLinePresentation[];
   divider: string;
+  attention?: AttentionPresentation;
   workflow: WorkflowRowPresentation[];
   detail?: DetailPresentation;
   statusStrip: string;
@@ -71,6 +73,15 @@ function diagnosticsFor(view: RunStatusView, node: NodeSummary): NodeDiagnostic[
   return node.diagnostic ? [{nodeId: node.id, reason: node.reason, message: node.diagnostic}] : [];
 }
 
+const humanLabels: Record<string, string> = {
+  agent: '智能体', approval: '人工审批', pending: '未开始', ready: '准备就绪', running: '运行中', waiting: '等待处理', paused: '已暂停', cancelling: '正在取消', completed: '已结束', skipped: '已跳过',
+  succeeded: '成功', failed: '失败', rejected: '已拒绝', cancelled: '已取消', indeterminate: '结果待确认',
+  approval_required: '需要人工审批', agent_waiting_input: '需要你的回答', invalid_result: '结果格式无效', completion_missing: '未确认执行完成', user_requested: '用户操作', cancel_failed: '取消尚未确认',
+  handle_persisted: '执行句柄已保存', session_persisted: '会话已保存', result_consumed: '结果已接收',
+};
+
+function human(value: string | undefined): string | undefined {return value ? humanLabels[value] ?? value.replaceAll('_', ' ') : undefined}
+
 export function dividerLine(width: number, symbolMode: SymbolMode, title?: string): string {
   const character = dividerCharacter(symbolMode);
   if (!title) return character.repeat(Math.max(0, width));
@@ -97,8 +108,8 @@ export function headerLines(run: WorkflowSnapshot, width: number, elapsedMs: num
   const size = terminalSize(width); const separator = separatorText(symbolMode);
   const runStatus = statusForRun(run); const status = headerStatusText(runStatus); const semanticRole = designTokens.status[runStatus].role;
   const statusRole = semanticRole === 'danger' || semanticRole === 'approval' ? semanticRole : undefined; const settled = settledText(run);
-  const capacity = run.effectiveConcurrency ? `capacity ${run.effectiveConcurrency}` : undefined;
-  const identity = [`run ${run.id}`, run.resolvedDriver ?? run.backend, ...(size === 'narrow' ? [] : [capacity])].filter((value): value is string => Boolean(value)).join(separator);
+  const capacity = run.effectiveConcurrency ? `并发上限 ${run.effectiveConcurrency}` : undefined;
+  const identity = [`任务 ${run.id}`, run.resolvedDriver ?? run.backend, ...(size === 'narrow' ? [] : [capacity])].filter((value): value is string => Boolean(value)).join(separator);
   if (size === 'narrow') {
     const brandLine = fitText(`${designTokens.emphasis.brand} / ${run.workflowName}`, width);
     const statusLine = fitText([status, formatElapsed(elapsedMs), settled, capacity].filter((value): value is string => Boolean(value)).join(separator), width);
@@ -117,22 +128,22 @@ export function headerLines(run: WorkflowSnapshot, width: number, elapsedMs: num
     ]),
     styledLine(joinColumns(identity, settled, width)),
   ];
-  if (size === 'wide') result.push(styledLine(fitText(`state ${run.stateDir}`, width), [{start: 0, length: Math.min(width, `state ${run.stateDir}`.length), role: 'muted'}]));
+  if (size === 'wide') result.push(styledLine(fitText(`状态目录 ${run.stateDir}`, width), [{start: 0, length: Math.min(width, `状态目录 ${run.stateDir}`.length), role: 'muted'}]));
   return result;
 }
 
 function settledText(run: WorkflowSnapshot): string {
   const nodes = Object.values(run.nodes); const settled = nodes.filter(node => node.phase === 'completed' || node.phase === 'skipped').length;
-  return `${settled}/${nodes.length} settled`;
+  return `已结束 ${settled}/${nodes.length}`;
 }
 
 function nodeTail(node: NodeSummary, attempt: AttemptSnapshot | undefined, size: TerminalSize, separator: string): string[] {
-  const attemptText = attempt ? `a${attempt.number}` : node.currentAttempt ? `a${node.currentAttempt}` : undefined;
+  const attemptText = attempt ? `第${attempt.number}次` : node.currentAttempt ? `第${node.currentAttempt}次` : undefined;
   const backend = attempt?.resolvedDriver ?? attempt?.backend;
-  const execution = attempt?.execution?.id ? `exec ${attempt.execution.id}` : undefined;
-  const launch = attempt?.launchState?.replaceAll('_', ' ');
-  const primary = size === 'narrow' ? [attemptText, backend] : [node.type, attemptText, backend, launch, execution];
-  return [...primary, node.reason, node.diagnostic].filter((value): value is string => Boolean(value)).map(value => value.replaceAll(' · ', separator));
+  const execution = attempt?.execution?.id ? `执行 ${attempt.execution.id}` : undefined;
+  const launch = human(attempt?.launchState);
+  const primary = size === 'narrow' ? [attemptText, backend] : [human(node.type), attemptText, backend, launch, execution];
+  return [...primary, human(node.reason), node.diagnostic].filter((value): value is string => Boolean(value)).map(value => value.replaceAll(' · ', separator));
 }
 
 export function formatWorkflowRow(
@@ -157,14 +168,14 @@ export function formatWorkflowRow(
 function appendResult(lines: string[], snapshot: NodeSnapshot | undefined, separator: string): void {
   const result = snapshot?.result;
   if (!result) return;
-  if (result.summary) lines.push(`result${separator}${result.summary}`);
-  if (result.decision) lines.push(`decision${separator}${result.decision}${result.reason ? `${separator}${result.reason}` : ''}`);
-  if (result.warnings?.length) lines.push(`warnings${separator}${result.warnings.join(separator)}`);
-  if (result.checks?.length) lines.push(`checks${separator}${result.checks.join(separator)}`);
-  if (result.artifacts?.length) lines.push(`artifacts${separator}${result.artifacts.join(separator)}`);
+  if (result.summary) lines.push(`结果摘要${separator}${result.summary}`);
+  if (result.decision) lines.push(`决策${separator}${result.decision}${result.reason ? `${separator}${result.reason}` : ''}`);
+  if (result.warnings?.length) lines.push(`警告${separator}${result.warnings.join(separator)}`);
+  if (result.checks?.length) lines.push(`检查项${separator}${result.checks.join(separator)}`);
+  if (result.artifacts?.length) lines.push(`产物${separator}${result.artifacts.join(separator)}`);
   for (const question of result.questions ?? []) {
-    lines.push(`question ${question.id}${separator}${question.required ? 'required' : 'optional'}${separator}${question.prompt}`);
-    if (question.choices?.length) lines.push(`choices${separator}${question.choices.join(separator)}`);
+    lines.push(`问题 ${question.id}${separator}${question.required ? '必填' : '可选'}${separator}${question.prompt}`);
+    if (question.choices?.length) lines.push(`可选答案${separator}${question.choices.join(separator)}`);
   }
 }
 
@@ -177,50 +188,74 @@ function nodeDetail(
   const separator = separatorText(symbolMode); const attempts = attemptMap(view); const snapshots = nodeSnapshotMap(view);
   const attempt = attempts.get(node.id); const snapshot = snapshots.get(node.id); const status = statusForNode(node);
   const lines: string[] = [];
-  lines.push([node.type, node.phase, node.conclusion, node.reason].filter(Boolean).join(separator));
+  lines.push([human(node.type), human(node.phase), human(node.conclusion), human(node.reason)].filter(Boolean).join(separator));
   if (attempt) {
     lines.push([
-      `attempt ${attempt.number}`, attempt.resolvedDriver ?? attempt.backend, attempt.launchState?.replaceAll('_', ' '), attempt.execution ? `execution ${attempt.execution.id}` : undefined,
+      `第 ${attempt.number} 次尝试`, attempt.resolvedDriver ?? attempt.backend, human(attempt.launchState), attempt.execution ? `执行标识 ${attempt.execution.id}` : undefined,
     ].filter((value): value is string => Boolean(value)).join(separator));
   }
   for (const diagnostic of diagnosticsFor(view, node)) {
-    const text = [diagnostic.reason, diagnostic.message].filter((value): value is string => Boolean(value)).join(separator);
-    if (text) lines.push(`diagnostic${separator}${text}`);
+    const text = [human(diagnostic.reason), diagnostic.message].filter((value): value is string => Boolean(value)).join(separator);
+    if (text) lines.push(`提示${separator}${text}`);
   }
   appendResult(lines, snapshot, separator);
   const run = view.run;
   if (run?.phase === 'completed') {
-    if (run.summary) lines.push(`summary${separator}${run.summary}`);
-    lines.push(`next${separator}fishyume status ${run.id}`);
-    lines.push(`state${separator}${run.stateDir}`);
+    if (run.summary) lines.push(`任务总结${separator}${run.summary}`);
+    lines.push(`再次查看${separator}fishyume status ${run.id}`);
+    lines.push(`状态目录${separator}${run.stateDir}`);
   }
-  const attemptTitle = attempt ? ` / attempt ${attempt.number}` : '';
-  return {title: `${node.id}${attemptTitle}`, role: designTokens.status[status].role, lines: lines.filter(Boolean).map(line => fitText(line, width))};
+  const attemptTitle = attempt ? ` / 第 ${attempt.number} 次` : '';
+  return {title: `节点：${node.id}${attemptTitle}`, role: designTokens.status[status].role, lines: lines.filter(Boolean).map(line => fitText(line, width))};
 }
 
 function actionDetail(view: RunStatusView, context: PresentationActionContext, width: number, symbolMode: SymbolMode): DetailPresentation {
   const separator = separatorText(symbolMode); const state = context.interaction;
   const target = context.pendingTarget ?? state.actionTarget;
-  const label = target ? `${target.nodeId}${separator}${target.kind}${target.duplicateRisk ? `${separator}duplicate-risk` : ''}` : 'run cancellation';
+  const actionKind = target?.kind === 'approval' ? '人工审批' : target?.kind === 'answer' ? '回答问题' : target?.kind === 'retry' ? '重试节点' : undefined;
+  const label = target ? `${target.nodeId}${separator}${actionKind}${target.duplicateRisk ? `${separator}存在重复副作用风险` : ''}` : '取消整个任务';
   const lines: string[] = [];
-  if (context.pending) lines.push(`working${separator}target fixed${target ? `${separator}${target.nodeId}` : ''}`);
-  else if (state.mode === 'reject') lines.push(`reason${separator}${state.rejectReason || '(empty; rejection will still be submitted)'}`);
-  else if (state.mode === 'answer') lines.push(`${target?.questionIds?.length === 1 ? 'answer' : 'answers'}${separator}${state.answerText || '(empty)'}`);
-  else if (state.mode === 'retry-risk-confirm') lines.push('Retry may repeat external effects. Explicit duplicate-risk acknowledgement is required.');
-  else if (state.mode === 'retry-confirm') lines.push('Retry this node using the Engine current actionable identity?');
-  else if (state.mode === 'cancel-confirm') lines.push('Cancel this run? Active executions may be stopped; cancellation is not complete until confirmed by the Engine.');
-  if (context.message) lines.push(`action${separator}${context.message}`);
-  if (view.run?.phase === 'cancelling') lines.push('Engine is still confirming active executions; status remains CANCELLING.');
-  return {title: `ACTION / ${label}`, role: target?.duplicateRisk || state.mode === 'cancel-confirm' ? 'danger' : 'approval', lines: lines.map(line => fitText(line, width))};
+  if (context.pending) lines.push(`正在提交${separator}操作目标已固定${target ? `${separator}${target.nodeId}` : ''}`);
+  else if (state.mode === 'reject') lines.push(`拒绝原因${separator}${state.rejectReason || '尚未填写（可直接提交）'}`);
+  else if (state.mode === 'answer') lines.push(`${target?.questionIds?.length === 1 ? '回答' : '批量回答'}${separator}${state.answerText || '请输入内容'}`);
+  else if (state.mode === 'retry-risk-confirm') lines.push('重试可能再次产生外部副作用。确认你已了解重复执行风险后再继续。');
+  else if (state.mode === 'retry-confirm') lines.push('确认重新执行这个节点吗？Fishyume 会锁定当前可操作的节点身份。');
+  else if (state.mode === 'cancel-confirm') lines.push('确认取消整个任务吗？活动中的执行会收到停止请求，Engine 确认后才算取消完成。');
+  if (context.message) lines.push(`操作结果${separator}${context.message}`);
+  if (view.run?.phase === 'cancelling') lines.push('Engine 正在确认活动执行已经停止，请稍候。');
+  return {title: `操作确认 / ${label}`, role: target?.duplicateRisk || state.mode === 'cancel-confirm' ? 'danger' : 'approval', lines: lines.map(line => fitText(line, width))};
 }
 
 function helpDetail(width: number): DetailPresentation {
-  return {title: 'HELP', role: 'brand', lines: [
-    'Select any Workflow node with ↑/↓ or j/k; action keys only apply to the selected Engine-actionable node.',
-    'Enter folds or expands Focus Detail. a approves or answers input; r rejects with a reason; R retries after confirmation.',
-    'd/q/Ctrl+C detach or stop observing. They never cancel; c is the explicit run cancellation action.',
-    'Action input and confirmation stay bound to nodeId, kind, and duplicate-risk identity.',
+  return {title: '操作帮助', role: 'brand', lines: [
+    '↑/↓ 或 J/K：选择节点。操作只会作用于当前选中且可操作的节点。',
+    'Enter：展开或收起详情。A/Y：批准或回答。X/N：拒绝并填写原因。T：确认后重试。',
+    'Q、D 或 Ctrl+C：退出观察，不会取消任务。C：明确取消整个任务。',
+    '输入和确认始终绑定到节点身份；状态变化时不会误操作到其他节点。',
   ].map(line => fitText(line, width))};
+}
+
+function attentionFor(view: RunStatusView, actionable: readonly ActionableNode[], width: number, selectedNodeId: string | undefined): AttentionPresentation | undefined {
+  const approvals = actionable.filter(item => item.kind === 'approval');
+  if (approvals.length) {
+    const selected = approvals.some(item => item.nodeId === selectedNodeId);
+    const ids = approvals.map(item => item.nodeId).join('、');
+    return {role: 'approval', lines: [
+      fitText(`⚠ 需要人工审批：${ids}`, width),
+      fitText(selected ? '请先阅读下方审批说明，然后按 A/Y 批准，或按 X/N 拒绝。' : '请用 ↑/↓ 选择审批节点，然后按 A/Y 批准，或按 X/N 拒绝。', width),
+    ]};
+  }
+  const answers = actionable.filter(item => item.kind === 'answer');
+  if (answers.length) return {role: 'waiting', lines: [
+    fitText(`⚠ 智能体需要你的回答：${answers.map(item => item.nodeId).join('、')}`, width),
+    fitText('选择对应节点后按 A/Y，输入答案并按 Enter 提交。', width),
+  ]};
+  const retries = actionable.filter(item => item.kind === 'retry');
+  if (retries.length) return {role: retries.some(item => item.duplicateRisk) ? 'danger' : 'waiting', lines: [
+    fitText(`⚠ 有节点需要决定是否重试：${retries.map(item => item.nodeId).join('、')}`, width),
+    fitText('选择节点后按 T；存在外部副作用风险时会再次确认。', width),
+  ]};
+  return undefined;
 }
 
 export function statusStripText(run: WorkflowSnapshot, symbolMode: SymbolMode): string {
@@ -229,7 +264,7 @@ export function statusStripText(run: WorkflowSnapshot, symbolMode: SymbolMode): 
   const waiting = nodes.filter(node => node.phase === 'waiting').length;
   const failed = nodes.filter(node => node.conclusion === 'failed' || node.conclusion === 'indeterminate').length;
   const skipped = nodes.filter(node => node.phase === 'skipped').length;
-  return [active ? `${active} active` : undefined, waiting ? `${waiting} waiting` : undefined, failed ? `${failed} failed` : undefined, skipped ? `${skipped} skipped` : undefined, run.effectiveConcurrency ? `capacity ${run.effectiveConcurrency}` : undefined]
+  return [active ? `${active} 个运行中` : undefined, waiting ? `${waiting} 个等待处理` : undefined, failed ? `${failed} 个失败` : undefined, skipped ? `${skipped} 个已跳过` : undefined, run.effectiveConcurrency ? `并发上限 ${run.effectiveConcurrency}` : undefined]
     .filter((value): value is string => Boolean(value)).join(separator);
 }
 
@@ -237,19 +272,19 @@ function footerItems(view: RunStatusView, options: RunPresentationOptions, selec
   const run = view.run; if (!run) return [];
   const action = options.action; const state = action?.interaction;
   if (action?.pending) return [];
-  if (state && state.mode !== 'idle') return ['Enter confirm', 'Esc discard'];
-  if (run.phase === 'completed') return [`status fishyume status ${run.id}`, `state ${run.stateDir}`, 'q exit'];
-  if (!options.interactive) return [`status fishyume status ${run.id}`];
+  if (state && state.mode !== 'idle') return ['Enter 确认', 'Esc 放弃'];
+  if (run.phase === 'completed') return [`再次查看 fishyume status ${run.id}`, `状态目录 ${run.stateDir}`, 'Q 退出'];
+  if (!options.interactive) return [`再次查看 fishyume status ${run.id}`];
   const visibleNodeCount = run.topologicalOrder.filter(nodeId => Boolean(run.nodes[nodeId])).length; const items: string[] = [];
-  if (visibleNodeCount > 1) items.push('↑↓/j/k select');
-  if (selectedNode) items.push(`Enter ${state?.detailExpanded === false ? 'details' : 'fold'}`);
+  if (visibleNodeCount > 1) items.push('↑↓/J/K 选择节点');
+  if (selectedNode) items.push(`Enter ${state?.detailExpanded === false ? '查看详情' : '收起详情'}`);
   if (selectedNode && action) {
     const target = action.actionable.find(item => item.nodeId === selectedNode.id);
-    if (target?.kind === 'approval') items.push('a approve', 'r reject');
-    if (target?.kind === 'answer') items.push('a answer');
-    if (target?.kind === 'retry') items.push('R retry');
-    if (run.phase !== 'cancelling') items.push('c cancel');
-    items.push(state?.helpVisible ? '? close' : '? help', 'q detach');
+    if (target?.kind === 'approval') items.push('A/Y 批准', 'X/N 拒绝');
+    if (target?.kind === 'answer') items.push('A/Y 回答');
+    if (target?.kind === 'retry') items.push('T 重试');
+    if (run.phase !== 'cancelling') items.push('C 取消任务');
+    items.push(state?.helpVisible ? '? 关闭帮助' : '? 操作帮助', 'Q 退出观察');
   }
   return items;
 }
@@ -274,6 +309,7 @@ export function buildRunTextPresentation(view: RunStatusView, width: number, ela
     size: terminalSize(width),
     header: headerLines(run, width, elapsedMs, symbolMode),
     divider: dividerLine(width, symbolMode),
+    attention: attentionFor(view, options.action?.actionable ?? [], width, selectedNodeId),
     workflow,
     detail,
     statusStrip: fitText(statusStripText(run, symbolMode), width),
@@ -283,6 +319,7 @@ export function buildRunTextPresentation(view: RunStatusView, width: number, ela
 
 export function renderRunText(view: RunStatusView, width: number, elapsedMs: number, options: RunPresentationOptions = {}): string {
   const presentation = buildRunTextPresentation(view, width, elapsedMs, options); const lines = [...presentation.header.map(line => line.text), presentation.divider];
+  if (presentation.attention) lines.push(...presentation.attention.lines, presentation.divider);
   lines.push(...presentation.workflow.map(row => row.text));
   if (presentation.detail) lines.push(dividerLine(width, options.symbolMode ?? 'unicode', presentation.detail.title), ...presentation.detail.lines, presentation.divider);
   if (presentation.statusStrip) lines.push(presentation.statusStrip);

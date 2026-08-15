@@ -47,9 +47,10 @@ export function basicConsoleKeyEvent(
   key: {upArrow: boolean; downArrow: boolean; escape: boolean; return?: boolean},
   nodeIds: readonly string[],
 ): ConsoleInteractionEvent | undefined {
+  const normalized = input.toLowerCase();
   if (key.escape) return {type: 'escape'};
-  if (key.downArrow || input === 'j') return {type: 'move', delta: 1, nodeIds};
-  if (key.upArrow || input === 'k') return {type: 'move', delta: -1, nodeIds};
+  if (key.downArrow || normalized === 'j') return {type: 'move', delta: 1, nodeIds};
+  if (key.upArrow || normalized === 'k') return {type: 'move', delta: -1, nodeIds};
   if (key.return) return {type: 'toggle-detail'};
   if (input === '?') return {type: 'toggle-help'};
   return undefined;

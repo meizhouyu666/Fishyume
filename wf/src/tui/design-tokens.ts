@@ -1,4 +1,5 @@
 import type {Conclusion, NodeSummary, RunPhase, WorkflowSnapshot} from '../bridge/types.js';
+import {padDisplay} from './layout.js';
 
 export type SemanticStatus = 'running' | 'waiting' | 'approval' | 'failed' | 'indeterminate' | 'cancelled' | 'succeeded' | 'skipped' | 'rejected' | 'cancelling' | 'paused' | 'ready' | 'pending';
 export type SymbolMode = 'unicode' | 'ascii';
@@ -20,19 +21,19 @@ export const designTokens = {
   selection: {unicode: '›', ascii: '>'},
   emphasis: {brand: 'FISHYUME'},
   status: {
-    running: {unicode: '●', ascii: '>', rowLabel: 'run', headerLabel: 'RUNNING', role: 'running'},
-    waiting: {unicode: '◌', ascii: '.', rowLabel: 'wait', headerLabel: 'WAITING', role: 'waiting'},
-    approval: {unicode: '◆', ascii: '?', rowLabel: 'approve', headerLabel: 'APPROVAL', role: 'approval'},
-    succeeded: {unicode: '✓', ascii: '+', rowLabel: 'done', headerLabel: 'SUCCEEDED', role: 'success'},
-    failed: {unicode: '!', ascii: '!', rowLabel: 'fail', headerLabel: 'FAILED', role: 'danger'},
-    indeterminate: {unicode: '?', ascii: '?', rowLabel: 'unknown', headerLabel: 'INDETERMINATE', role: 'danger'},
-    cancelled: {unicode: '×', ascii: 'x', rowLabel: 'cancel', headerLabel: 'CANCELLED', role: 'neutral'},
-    rejected: {unicode: '×', ascii: 'x', rowLabel: 'reject', headerLabel: 'REJECTED', role: 'danger'},
-    cancelling: {unicode: '◍', ascii: '~', rowLabel: 'stop', headerLabel: 'CANCELLING', role: 'waiting'},
-    paused: {unicode: 'Ⅱ', ascii: '|', rowLabel: 'pause', headerLabel: 'PAUSED', role: 'waiting'},
-    ready: {unicode: '◇', ascii: '>', rowLabel: 'ready', headerLabel: 'READY', role: 'strong'},
-    pending: {unicode: '○', ascii: 'o', rowLabel: 'pending', headerLabel: 'PENDING', role: 'muted'},
-    skipped: {unicode: '·', ascii: '-', rowLabel: 'skip', headerLabel: 'SKIPPED', role: 'muted'},
+    running: {unicode: '●', ascii: '>', rowLabel: '运行中', headerLabel: '运行中', role: 'running'},
+    waiting: {unicode: '◌', ascii: '.', rowLabel: '等待中', headerLabel: '等待处理', role: 'waiting'},
+    approval: {unicode: '◆', ascii: '?', rowLabel: '待审批', headerLabel: '需要审批', role: 'approval'},
+    succeeded: {unicode: '✓', ascii: '+', rowLabel: '已完成', headerLabel: '已完成', role: 'success'},
+    failed: {unicode: '!', ascii: '!', rowLabel: '已失败', headerLabel: '已失败', role: 'danger'},
+    indeterminate: {unicode: '?', ascii: '?', rowLabel: '待确认', headerLabel: '结果待确认', role: 'danger'},
+    cancelled: {unicode: '×', ascii: 'x', rowLabel: '已取消', headerLabel: '已取消', role: 'neutral'},
+    rejected: {unicode: '×', ascii: 'x', rowLabel: '已拒绝', headerLabel: '已拒绝', role: 'danger'},
+    cancelling: {unicode: '◍', ascii: '~', rowLabel: '取消中', headerLabel: '正在取消', role: 'waiting'},
+    paused: {unicode: 'Ⅱ', ascii: '|', rowLabel: '已暂停', headerLabel: '已暂停', role: 'waiting'},
+    ready: {unicode: '◇', ascii: '>', rowLabel: '可运行', headerLabel: '准备就绪', role: 'strong'},
+    pending: {unicode: '○', ascii: 'o', rowLabel: '未开始', headerLabel: '未开始', role: 'muted'},
+    skipped: {unicode: '·', ascii: '-', rowLabel: '已跳过', headerLabel: '已跳过', role: 'muted'},
   } satisfies Record<SemanticStatus, StatusToken>,
 } as const;
 
@@ -67,7 +68,7 @@ export function symbolForStatus(status: SemanticStatus, mode: SymbolMode): strin
 
 export function rowStatusText(status: SemanticStatus, mode: SymbolMode): string {
   const token = designTokens.status[status];
-  return `${symbolForStatus(status, mode)} ${token.rowLabel.padEnd(7)}`;
+  return padDisplay(`${symbolForStatus(status, mode)} ${token.rowLabel}`, 10);
 }
 
 export function headerStatusText(status: SemanticStatus): string {

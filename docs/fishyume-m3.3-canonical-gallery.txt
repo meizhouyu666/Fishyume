@@ -1,315 +1,361 @@
-Fishyume M3.3 Calm Operator Console — canonical text gallery
-Generated from pure RunStatusView fixtures; elapsed time is fixed at 02:18.
-Color capability is verified separately by tests; this file intentionally contains no ANSI escapes.
+Fishyume 中文 Operator Console — canonical text gallery
+由纯 RunStatusView fixtures 生成；elapsed time 固定为 02:18。
+颜色能力由独立测试覆盖；本文件不包含 ANSI 转义。
 
 ======================== concurrent / 80 columns ========================
 FISHYUME / release-workflow / 并行验证
-RUNNING · 2m18s · 1/5 settled · capacity 3
-run run-concurrent-a91f · direct
+运行中 · 2m18s · 已结束 1/5 · 并发上限 3
+任务 run-concurrent-a91f · direct
 ────────────────────────────────────────────────────────────────────────────────
-  ✓ done    plan · a1
-› ● run     实现-operator-console · a2 · direct
-  ● run     windows-pty-check · a1 · ccpanes
-  ◆ approve review · approval_required · Approve the re…
-  ○ pending publish
-── 实现-operator-console / attempt 2 ───────────────────────────────────────────
-agent · running
-attempt 2 · direct · handle persisted · execution pid:4821
+⚠ 需要人工审批：review
+请用 ↑/↓ 选择审批节点，然后按 A/Y 批准，或按 X/N 拒绝。
 ────────────────────────────────────────────────────────────────────────────────
-2 active · 1 waiting · capacity 3
-↑↓/j/k select  Enter fold  c cancel  ? help  q detach
+  ✓ 已完成   plan · 第1次
+› ● 运行中   实现-operator-console · 第2次 · direct
+  ● 运行中   windows-pty-check · 第1次 · ccpanes
+  ◆ 待审批   review · 需要人工审批 · Approve the releas…
+  ○ 未开始   publish
+── 节点：实现-operator-console / 第 2 次 ───────────────────────────────────────
+智能体 · 运行中
+第 2 次尝试 · direct · 执行句柄已保存 · 执行标识 pid:4821
+────────────────────────────────────────────────────────────────────────────────
+2 个运行中 · 1 个等待处理 · 并发上限 3
+↑↓/J/K 选择节点  Enter 收起详情  C 取消任务  ? 操作帮助  Q 退出观察
 
 ======================== concurrent / 120 columns ========================
-FISHYUME / release-workflow / 并行验证                                                                     RUNNING 2m18s
-run run-concurrent-a91f · direct · capacity 3                                                                1/5 settled
+FISHYUME / release-workflow / 并行验证                                                                      运行中 2m18s
+任务 run-concurrent-a91f · direct · 并发上限 3                                                                已结束 1/5
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ done    plan · agent · a1
-› ● run     实现-operator-console · agent · a2 · direct · handle persisted · exec pid:4821
-  ● run     windows-pty-check · agent · a1 · ccpanes · handle persisted · exec session:pty-77
-  ◆ approve review · approval · approval_required · Approve the release evidence.
-  ○ pending publish · agent
-── 实现-operator-console / attempt 2 ───────────────────────────────────────────────────────────────────────────────────
-agent · running
-attempt 2 · direct · handle persisted · execution pid:4821
+⚠ 需要人工审批：review
+请用 ↑/↓ 选择审批节点，然后按 A/Y 批准，或按 X/N 拒绝。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-2 active · 1 waiting · capacity 3
-↑↓/j/k select  Enter fold  c cancel  ? help  q detach
+  ✓ 已完成   plan · 智能体 · 第1次
+› ● 运行中   实现-operator-console · 智能体 · 第2次 · direct · 执行句柄已保存 · 执行 pid:4821
+  ● 运行中   windows-pty-check · 智能体 · 第1次 · ccpanes · 执行句柄已保存 · 执行 session:pty-77
+  ◆ 待审批   review · 人工审批 · 需要人工审批 · Approve the release evidence.
+  ○ 未开始   publish · 智能体
+── 节点：实现-operator-console / 第 2 次 ───────────────────────────────────────────────────────────────────────────────
+智能体 · 运行中
+第 2 次尝试 · direct · 执行句柄已保存 · 执行标识 pid:4821
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+2 个运行中 · 1 个等待处理 · 并发上限 3
+↑↓/J/K 选择节点  Enter 收起详情  C 取消任务  ? 操作帮助  Q 退出观察
 
 ======================== concurrent / 160 columns ========================
-FISHYUME / release-workflow / 并行验证                                                                                                             RUNNING 2m18s
-run run-concurrent-a91f · direct · capacity 3                                                                                                        1/5 settled
-state E:/团队/.fishyume/runs/run-concurrent-a91f/state-with-a-long-reviewable-path
+FISHYUME / release-workflow / 并行验证                                                                                                              运行中 2m18s
+任务 run-concurrent-a91f · direct · 并发上限 3                                                                                                        已结束 1/5
+状态目录 E:/团队/.fishyume/runs/run-concurrent-a91f/state-with-a-long-reviewable-path
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ done    plan · agent · a1
-› ● run     实现-operator-console · agent · a2 · direct · handle persisted · exec pid:4821
-  ● run     windows-pty-check · agent · a1 · ccpanes · handle persisted · exec session:pty-77
-  ◆ approve review · approval · approval_required · Approve the release evidence.
-  ○ pending publish · agent
-── 实现-operator-console / attempt 2 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-agent · running
-attempt 2 · direct · handle persisted · execution pid:4821
+⚠ 需要人工审批：review
+请用 ↑/↓ 选择审批节点，然后按 A/Y 批准，或按 X/N 拒绝。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-2 active · 1 waiting · capacity 3
-↑↓/j/k select  Enter fold  c cancel  ? help  q detach
+  ✓ 已完成   plan · 智能体 · 第1次
+› ● 运行中   实现-operator-console · 智能体 · 第2次 · direct · 执行句柄已保存 · 执行 pid:4821
+  ● 运行中   windows-pty-check · 智能体 · 第1次 · ccpanes · 执行句柄已保存 · 执行 session:pty-77
+  ◆ 待审批   review · 人工审批 · 需要人工审批 · Approve the release evidence.
+  ○ 未开始   publish · 智能体
+── 节点：实现-operator-console / 第 2 次 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+智能体 · 运行中
+第 2 次尝试 · direct · 执行句柄已保存 · 执行标识 pid:4821
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+2 个运行中 · 1 个等待处理 · 并发上限 3
+↑↓/J/K 选择节点  Enter 收起详情  C 取消任务  ? 操作帮助  Q 退出观察
 
 ======================== approval / 80 columns ========================
 FISHYUME / production-release
-APPROVAL · 2m18s · 1/3 settled · capacity 3
-run run-approval-b72c · direct
+需要审批 · 2m18s · 已结束 1/3 · 并发上限 3
+任务 run-approval-b72c · direct
 ────────────────────────────────────────────────────────────────────────────────
-  ✓ done    plan · a1
-› ◆ approve security-review · approval_required · Approve produc…
-  ○ pending deploy
-── security-review ─────────────────────────────────────────────────────────────
-approval · waiting · approval_required
-diagnostic · approval_required · Approve production deployment after reviewing …
-result · Deployment awaits a human decision.
+⚠ 需要人工审批：security-review
+请先阅读下方审批说明，然后按 A/Y 批准，或按 X/N 拒绝。
 ────────────────────────────────────────────────────────────────────────────────
-1 waiting · capacity 3
-↑↓/j/k select  Enter fold  a approve  r reject  c cancel  ? help  q detach
+  ✓ 已完成   plan · 第1次
+› ◆ 待审批   security-review · 需要人工审批 · Approve production…
+  ○ 未开始   deploy
+── 节点：security-review ───────────────────────────────────────────────────────
+人工审批 · 等待处理 · 需要人工审批
+提示 · 需要人工审批 · Approve production deployment after reviewing duplicate-r…
+结果摘要 · Deployment awaits a human decision.
+────────────────────────────────────────────────────────────────────────────────
+1 个等待处理 · 并发上限 3
+↑↓/J/K 选择节点  Enter 收起详情  A/Y 批准  X/N 拒绝  C 取消任务  ? 操作帮助
+Q 退出观察
 
 ======================== approval / 120 columns ========================
-FISHYUME / production-release                                                                             APPROVAL 2m18s
-run run-approval-b72c · direct · capacity 3                                                                  1/3 settled
+FISHYUME / production-release                                                                             需要审批 2m18s
+任务 run-approval-b72c · direct · 并发上限 3                                                                  已结束 1/3
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ done    plan · agent · a1
-› ◆ approve security-review · approval · approval_required · Approve production deployment after reviewing…
-  ○ pending deploy · agent
-── security-review ─────────────────────────────────────────────────────────────────────────────────────────────────────
-approval · waiting · approval_required
-diagnostic · approval_required · Approve production deployment after reviewing duplicate-risk controls.
-result · Deployment awaits a human decision.
+⚠ 需要人工审批：security-review
+请先阅读下方审批说明，然后按 A/Y 批准，或按 X/N 拒绝。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-1 waiting · capacity 3
-↑↓/j/k select  Enter fold  a approve  r reject  c cancel  ? help  q detach
+  ✓ 已完成   plan · 智能体 · 第1次
+› ◆ 待审批   security-review · 人工审批 · 需要人工审批 · Approve production deployment after reviewing dup…
+  ○ 未开始   deploy · 智能体
+── 节点：security-review ───────────────────────────────────────────────────────────────────────────────────────────────
+人工审批 · 等待处理 · 需要人工审批
+提示 · 需要人工审批 · Approve production deployment after reviewing duplicate-risk controls.
+结果摘要 · Deployment awaits a human decision.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 个等待处理 · 并发上限 3
+↑↓/J/K 选择节点  Enter 收起详情  A/Y 批准  X/N 拒绝  C 取消任务  ? 操作帮助  Q 退出观察
 
 ======================== approval / 160 columns ========================
-FISHYUME / production-release                                                                                                                     APPROVAL 2m18s
-run run-approval-b72c · direct · capacity 3                                                                                                          1/3 settled
-state E:/团队/.fishyume/runs/run-approval-b72c/state-with-a-long-reviewable-path
+FISHYUME / production-release                                                                                                                     需要审批 2m18s
+任务 run-approval-b72c · direct · 并发上限 3                                                                                                          已结束 1/3
+状态目录 E:/团队/.fishyume/runs/run-approval-b72c/state-with-a-long-reviewable-path
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ done    plan · agent · a1
-› ◆ approve security-review · approval · approval_required · Approve production deployment after reviewing duplicate-risk controls.
-  ○ pending deploy · agent
-── security-review ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-approval · waiting · approval_required
-diagnostic · approval_required · Approve production deployment after reviewing duplicate-risk controls.
-result · Deployment awaits a human decision.
+⚠ 需要人工审批：security-review
+请先阅读下方审批说明，然后按 A/Y 批准，或按 X/N 拒绝。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-1 waiting · capacity 3
-↑↓/j/k select  Enter fold  a approve  r reject  c cancel  ? help  q detach
+  ✓ 已完成   plan · 智能体 · 第1次
+› ◆ 待审批   security-review · 人工审批 · 需要人工审批 · Approve production deployment after reviewing duplicate-risk controls.
+  ○ 未开始   deploy · 智能体
+── 节点：security-review ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+人工审批 · 等待处理 · 需要人工审批
+提示 · 需要人工审批 · Approve production deployment after reviewing duplicate-risk controls.
+结果摘要 · Deployment awaits a human decision.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 个等待处理 · 并发上限 3
+↑↓/J/K 选择节点  Enter 收起详情  A/Y 批准  X/N 拒绝  C 取消任务  ? 操作帮助  Q 退出观察
 
 ======================== retryable / 80 columns ========================
 FISHYUME / release-validation
-WAITING · 2m18s · 2/3 settled · capacity 3
-run run-retry-c83d · direct
+等待处理 · 2m18s · 已结束 2/3 · 并发上限 3
+任务 run-retry-c83d · direct
 ────────────────────────────────────────────────────────────────────────────────
-  ✓ done    build · a1
-› ! fail    integration-tests · a2 · invalid_result · Expected jun…
-  ○ pending package
-── integration-tests ───────────────────────────────────────────────────────────
-agent · completed · failed · invalid_result
-diagnostic · invalid_result · Expected junit.xml was not produced.
-result · Test runner exited before publishing results.
-warnings · Retry will create attempt 3.
-checks · typecheck passed · integration result missing
-artifacts · E:/团队/logs/integration-attempt-2.txt
+⚠ 有节点需要决定是否重试：integration-tests
+选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────
-1 failed · capacity 3
-↑↓/j/k select  Enter fold  R retry  c cancel  ? help  q detach
+  ✓ 已完成   build · 第1次
+› ! 已失败   integration-tests · 第2次 · 结果格式无效 · Expected j…
+  ○ 未开始   package
+── 节点：integration-tests ─────────────────────────────────────────────────────
+智能体 · 已结束 · 失败 · 结果格式无效
+提示 · 结果格式无效 · Expected junit.xml was not produced.
+结果摘要 · Test runner exited before publishing results.
+警告 · Retry will create attempt 3.
+检查项 · typecheck passed · integration result missing
+产物 · E:/团队/logs/integration-attempt-2.txt
+────────────────────────────────────────────────────────────────────────────────
+1 个失败 · 并发上限 3
+↑↓/J/K 选择节点  Enter 收起详情  T 重试  C 取消任务  ? 操作帮助  Q 退出观察
 
 ======================== retryable / 120 columns ========================
-FISHYUME / release-validation                                                                              WAITING 2m18s
-run run-retry-c83d · direct · capacity 3                                                                     2/3 settled
+FISHYUME / release-validation                                                                             等待处理 2m18s
+任务 run-retry-c83d · direct · 并发上限 3                                                                     已结束 2/3
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ done    build · agent · a1
-› ! fail    integration-tests · agent · a2 · invalid_result · Expected junit.xml was not produced.
-  ○ pending package · agent
-── integration-tests ───────────────────────────────────────────────────────────────────────────────────────────────────
-agent · completed · failed · invalid_result
-diagnostic · invalid_result · Expected junit.xml was not produced.
-result · Test runner exited before publishing results.
-warnings · Retry will create attempt 3.
-checks · typecheck passed · integration result missing
-artifacts · E:/团队/logs/integration-attempt-2.txt
+⚠ 有节点需要决定是否重试：integration-tests
+选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-1 failed · capacity 3
-↑↓/j/k select  Enter fold  R retry  c cancel  ? help  q detach
+  ✓ 已完成   build · 智能体 · 第1次
+› ! 已失败   integration-tests · 智能体 · 第2次 · 结果格式无效 · Expected junit.xml was not produced.
+  ○ 未开始   package · 智能体
+── 节点：integration-tests ─────────────────────────────────────────────────────────────────────────────────────────────
+智能体 · 已结束 · 失败 · 结果格式无效
+提示 · 结果格式无效 · Expected junit.xml was not produced.
+结果摘要 · Test runner exited before publishing results.
+警告 · Retry will create attempt 3.
+检查项 · typecheck passed · integration result missing
+产物 · E:/团队/logs/integration-attempt-2.txt
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 个失败 · 并发上限 3
+↑↓/J/K 选择节点  Enter 收起详情  T 重试  C 取消任务  ? 操作帮助  Q 退出观察
 
 ======================== retryable / 160 columns ========================
-FISHYUME / release-validation                                                                                                                      WAITING 2m18s
-run run-retry-c83d · direct · capacity 3                                                                                                             2/3 settled
-state E:/团队/.fishyume/runs/run-retry-c83d/state-with-a-long-reviewable-path
+FISHYUME / release-validation                                                                                                                     等待处理 2m18s
+任务 run-retry-c83d · direct · 并发上限 3                                                                                                             已结束 2/3
+状态目录 E:/团队/.fishyume/runs/run-retry-c83d/state-with-a-long-reviewable-path
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ done    build · agent · a1
-› ! fail    integration-tests · agent · a2 · invalid_result · Expected junit.xml was not produced.
-  ○ pending package · agent
-── integration-tests ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-agent · completed · failed · invalid_result
-diagnostic · invalid_result · Expected junit.xml was not produced.
-result · Test runner exited before publishing results.
-warnings · Retry will create attempt 3.
-checks · typecheck passed · integration result missing
-artifacts · E:/团队/logs/integration-attempt-2.txt
+⚠ 有节点需要决定是否重试：integration-tests
+选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-1 failed · capacity 3
-↑↓/j/k select  Enter fold  R retry  c cancel  ? help  q detach
+  ✓ 已完成   build · 智能体 · 第1次
+› ! 已失败   integration-tests · 智能体 · 第2次 · 结果格式无效 · Expected junit.xml was not produced.
+  ○ 未开始   package · 智能体
+── 节点：integration-tests ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+智能体 · 已结束 · 失败 · 结果格式无效
+提示 · 结果格式无效 · Expected junit.xml was not produced.
+结果摘要 · Test runner exited before publishing results.
+警告 · Retry will create attempt 3.
+检查项 · typecheck passed · integration result missing
+产物 · E:/团队/logs/integration-attempt-2.txt
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 个失败 · 并发上限 3
+↑↓/J/K 选择节点  Enter 收起详情  T 重试  C 取消任务  ? 操作帮助  Q 退出观察
 
 ======================== indeterminate / 80 columns ========================
 FISHYUME / artifact-release
-WAITING · 2m18s · 2/3 settled · capacity 3
-run run-unknown-d94e · direct
+等待处理 · 2m18s · 已结束 2/3 · 并发上限 3
+任务 run-unknown-d94e · direct
 ────────────────────────────────────────────────────────────────────────────────
-  ✓ done    prepare · a1
-› ? unknown publish-artifact · a3 · completion_missing · Backend …
-  ○ pending notify
-── ACTION / publish-artifact · retry · duplicate-risk ──────────────────────────
-Retry may repeat external effects. Explicit duplicate-risk acknowledgement is r…
+⚠ 有节点需要决定是否重试：publish-artifact
+选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────
-1 failed · capacity 3
-Enter confirm  Esc discard
+  ✓ 已完成   prepare · 第1次
+› ? 待确认   publish-artifact · 第3次 · 未确认执行完成 · Backend …
+  ○ 未开始   notify
+── 操作确认 / publish-artifact · 重试节点 · 存在重复副作用风险 ─────────────────
+重试可能再次产生外部副作用。确认你已了解重复执行风险后再继续。
+────────────────────────────────────────────────────────────────────────────────
+1 个失败 · 并发上限 3
+Enter 确认  Esc 放弃
 
 ======================== indeterminate / 120 columns ========================
-FISHYUME / artifact-release                                                                                WAITING 2m18s
-run run-unknown-d94e · direct · capacity 3                                                                   2/3 settled
+FISHYUME / artifact-release                                                                               等待处理 2m18s
+任务 run-unknown-d94e · direct · 并发上限 3                                                                   已结束 2/3
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ done    prepare · agent · a1
-› ? unknown publish-artifact · agent · a3 · completion_missing · Backend completion was not observed; exter…
-  ○ pending notify · agent
-── ACTION / publish-artifact · retry · duplicate-risk ──────────────────────────────────────────────────────────────────
-Retry may repeat external effects. Explicit duplicate-risk acknowledgement is required.
+⚠ 有节点需要决定是否重试：publish-artifact
+选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-1 failed · capacity 3
-Enter confirm  Esc discard
+  ✓ 已完成   prepare · 智能体 · 第1次
+› ? 待确认   publish-artifact · 智能体 · 第3次 · 未确认执行完成 · Backend completion was not observed; exte…
+  ○ 未开始   notify · 智能体
+── 操作确认 / publish-artifact · 重试节点 · 存在重复副作用风险 ─────────────────────────────────────────────────────────
+重试可能再次产生外部副作用。确认你已了解重复执行风险后再继续。
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 个失败 · 并发上限 3
+Enter 确认  Esc 放弃
 
 ======================== indeterminate / 160 columns ========================
-FISHYUME / artifact-release                                                                                                                        WAITING 2m18s
-run run-unknown-d94e · direct · capacity 3                                                                                                           2/3 settled
-state E:/团队/.fishyume/runs/run-unknown-d94e/state-with-a-long-reviewable-path
+FISHYUME / artifact-release                                                                                                                       等待处理 2m18s
+任务 run-unknown-d94e · direct · 并发上限 3                                                                                                           已结束 2/3
+状态目录 E:/团队/.fishyume/runs/run-unknown-d94e/state-with-a-long-reviewable-path
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ done    prepare · agent · a1
-› ? unknown publish-artifact · agent · a3 · completion_missing · Backend completion was not observed; external publish may already have happe…
-  ○ pending notify · agent
-── ACTION / publish-artifact · retry · duplicate-risk ──────────────────────────────────────────────────────────────────────────────────────────────────────────
-Retry may repeat external effects. Explicit duplicate-risk acknowledgement is required.
+⚠ 有节点需要决定是否重试：publish-artifact
+选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-1 failed · capacity 3
-Enter confirm  Esc discard
+  ✓ 已完成   prepare · 智能体 · 第1次
+› ? 待确认   publish-artifact · 智能体 · 第3次 · 未确认执行完成 · Backend completion was not observed; external publish may already have happ…
+  ○ 未开始   notify · 智能体
+── 操作确认 / publish-artifact · 重试节点 · 存在重复副作用风险 ─────────────────────────────────────────────────────────────────────────────────────────────────
+重试可能再次产生外部副作用。确认你已了解重复执行风险后再继续。
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 个失败 · 并发上限 3
+Enter 确认  Esc 放弃
 
 ======================== cancelling / 80 columns ========================
 FISHYUME / cancel-workflow
-CANCELLING · 2m18s · 1/4 settled · capacity 3
-run run-stopping-e15f · direct
+正在取消 · 2m18s · 已结束 1/4 · 并发上限 3
+任务 run-stopping-e15f · direct
 ────────────────────────────────────────────────────────────────────────────────
-  ✓ done    prepare · a1
-  ● run     stop-local-worker · a2 · direct · Cancellation request…
-› ● run     stop-remote-worker · a1 · ccpanes · Remote session stil…
-  ○ pending finalize
-── stop-remote-worker / attempt 1 ──────────────────────────────────────────────
-agent · running
-attempt 1 · ccpanes · session persisted · execution session:remote-9
-diagnostic · cancel_failed · Remote session still reports active.
+  ✓ 已完成   prepare · 第1次
+  ● 运行中   stop-local-worker · 第2次 · direct · Cancellation req…
+› ● 运行中   stop-remote-worker · 第1次 · ccpanes · Remote session …
+  ○ 未开始   finalize
+── 节点：stop-remote-worker / 第 1 次 ──────────────────────────────────────────
+智能体 · 运行中
+第 1 次尝试 · ccpanes · 会话已保存 · 执行标识 session:remote-9
+提示 · 取消尚未确认 · Remote session still reports active.
 ────────────────────────────────────────────────────────────────────────────────
-2 active · capacity 3
-↑↓/j/k select  Enter fold  ? help  q detach
+2 个运行中 · 并发上限 3
+↑↓/J/K 选择节点  Enter 收起详情  ? 操作帮助  Q 退出观察
 
 ======================== cancelling / 120 columns ========================
-FISHYUME / cancel-workflow                                                                              CANCELLING 2m18s
-run run-stopping-e15f · direct · capacity 3                                                                  1/4 settled
+FISHYUME / cancel-workflow                                                                                正在取消 2m18s
+任务 run-stopping-e15f · direct · 并发上限 3                                                                  已结束 1/4
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ done    prepare · agent · a1
-  ● run     stop-local-worker · agent · a2 · direct · handle persisted · exec pid:5100 · Cancellation reques…
-› ● run     stop-remote-worker · agent · a1 · ccpanes · session persisted · exec session:remote-9 · Remote se…
-  ○ pending finalize · agent
-── stop-remote-worker / attempt 1 ──────────────────────────────────────────────────────────────────────────────────────
-agent · running
-attempt 1 · ccpanes · session persisted · execution session:remote-9
-diagnostic · cancel_failed · Remote session still reports active.
+  ✓ 已完成   prepare · 智能体 · 第1次
+  ● 运行中   stop-local-worker · 智能体 · 第2次 · direct · 执行句柄已保存 · 执行 pid:5100 · Cancellation req…
+› ● 运行中   stop-remote-worker · 智能体 · 第1次 · ccpanes · 会话已保存 · 执行 session:remote-9 · Remote sess…
+  ○ 未开始   finalize · 智能体
+── 节点：stop-remote-worker / 第 1 次 ──────────────────────────────────────────────────────────────────────────────────
+智能体 · 运行中
+第 1 次尝试 · ccpanes · 会话已保存 · 执行标识 session:remote-9
+提示 · 取消尚未确认 · Remote session still reports active.
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-2 active · capacity 3
-↑↓/j/k select  Enter fold  ? help  q detach
+2 个运行中 · 并发上限 3
+↑↓/J/K 选择节点  Enter 收起详情  ? 操作帮助  Q 退出观察
 
 ======================== cancelling / 160 columns ========================
-FISHYUME / cancel-workflow                                                                                                                      CANCELLING 2m18s
-run run-stopping-e15f · direct · capacity 3                                                                                                          1/4 settled
-state E:/团队/.fishyume/runs/run-stopping-e15f/state-with-a-long-reviewable-path
+FISHYUME / cancel-workflow                                                                                                                        正在取消 2m18s
+任务 run-stopping-e15f · direct · 并发上限 3                                                                                                          已结束 1/4
+状态目录 E:/团队/.fishyume/runs/run-stopping-e15f/state-with-a-long-reviewable-path
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ done    prepare · agent · a1
-  ● run     stop-local-worker · agent · a2 · direct · handle persisted · exec pid:5100 · Cancellation requested; execution confirmation pendin…
-› ● run     stop-remote-worker · agent · a1 · ccpanes · session persisted · exec session:remote-9 · Remote session still reports active.
-  ○ pending finalize · agent
-── stop-remote-worker / attempt 1 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-agent · running
-attempt 1 · ccpanes · session persisted · execution session:remote-9
-diagnostic · cancel_failed · Remote session still reports active.
+  ✓ 已完成   prepare · 智能体 · 第1次
+  ● 运行中   stop-local-worker · 智能体 · 第2次 · direct · 执行句柄已保存 · 执行 pid:5100 · Cancellation requested; execution confirmation pen…
+› ● 运行中   stop-remote-worker · 智能体 · 第1次 · ccpanes · 会话已保存 · 执行 session:remote-9 · Remote session still reports active.
+  ○ 未开始   finalize · 智能体
+── 节点：stop-remote-worker / 第 1 次 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+智能体 · 运行中
+第 1 次尝试 · ccpanes · 会话已保存 · 执行标识 session:remote-9
+提示 · 取消尚未确认 · Remote session still reports active.
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-2 active · capacity 3
-↑↓/j/k select  Enter fold  ? help  q detach
+2 个运行中 · 并发上限 3
+↑↓/J/K 选择节点  Enter 收起详情  ? 操作帮助  Q 退出观察
 
 ======================== terminal / 80 columns ========================
 FISHYUME / release-workflow
-FAILED · 2m18s · 4/4 settled · capacity 3
-run run-terminal-f260 · direct
+已失败 · 2m18s · 已结束 4/4 · 并发上限 3
+任务 run-terminal-f260 · direct
 ────────────────────────────────────────────────────────────────────────────────
-  ✓ done    plan · a1
-› ! fail    verify · a2 · Two checks failed.
-  × cancel  cleanup · a1
-  × reject  approval · user_requested
-── verify ──────────────────────────────────────────────────────────────────────
-agent · completed · failed
-diagnostic · invalid_result · Two checks failed.
-result · Verification failed.
-warnings · Do not publish this build.
-checks · typecheck passed · unit tests failed
-summary · Release stopped: verification failed and approval was rejected.
-next · fishyume status run-terminal-f260
-state · E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-p…
+⚠ 有节点需要决定是否重试：verify
+选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────
-1 failed · capacity 3
-status fishyume status run-terminal-f260
-state E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path
-q exit
+  ✓ 已完成   plan · 第1次
+› ! 已失败   verify · 第2次 · Two checks failed.
+  × 已取消   cleanup · 第1次
+  × 已拒绝   approval · 用户操作
+── 节点：verify ────────────────────────────────────────────────────────────────
+智能体 · 已结束 · 失败
+提示 · 结果格式无效 · Two checks failed.
+结果摘要 · Verification failed.
+警告 · Do not publish this build.
+检查项 · typecheck passed · unit tests failed
+任务总结 · Release stopped: verification failed and approval was rejected.
+再次查看 · fishyume status run-terminal-f260
+状态目录 · E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewabl…
+────────────────────────────────────────────────────────────────────────────────
+1 个失败 · 并发上限 3
+再次查看 fishyume status run-terminal-f260
+状态目录 E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-…
+Q 退出
 
 ======================== terminal / 120 columns ========================
-FISHYUME / release-workflow                                                                                 FAILED 2m18s
-run run-terminal-f260 · direct · capacity 3                                                                  4/4 settled
+FISHYUME / release-workflow                                                                                 已失败 2m18s
+任务 run-terminal-f260 · direct · 并发上限 3                                                                  已结束 4/4
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ done    plan · agent · a1
-› ! fail    verify · agent · a2 · Two checks failed.
-  × cancel  cleanup · agent · a1
-  × reject  approval · approval · user_requested
-── verify ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
-agent · completed · failed
-diagnostic · invalid_result · Two checks failed.
-result · Verification failed.
-warnings · Do not publish this build.
-checks · typecheck passed · unit tests failed
-summary · Release stopped: verification failed and approval was rejected.
-next · fishyume status run-terminal-f260
-state · E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path
+⚠ 有节点需要决定是否重试：verify
+选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-1 failed · capacity 3
-status fishyume status run-terminal-f260
-state E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path  q exit
+  ✓ 已完成   plan · 智能体 · 第1次
+› ! 已失败   verify · 智能体 · 第2次 · Two checks failed.
+  × 已取消   cleanup · 智能体 · 第1次
+  × 已拒绝   approval · 人工审批 · 用户操作
+── 节点：verify ────────────────────────────────────────────────────────────────────────────────────────────────────────
+智能体 · 已结束 · 失败
+提示 · 结果格式无效 · Two checks failed.
+结果摘要 · Verification failed.
+警告 · Do not publish this build.
+检查项 · typecheck passed · unit tests failed
+任务总结 · Release stopped: verification failed and approval was rejected.
+再次查看 · fishyume status run-terminal-f260
+状态目录 · E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 个失败 · 并发上限 3
+再次查看 fishyume status run-terminal-f260
+状态目录 E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path  Q 退出
 
 ======================== terminal / 160 columns ========================
-FISHYUME / release-workflow                                                                                                                         FAILED 2m18s
-run run-terminal-f260 · direct · capacity 3                                                                                                          4/4 settled
-state E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path
+FISHYUME / release-workflow                                                                                                                         已失败 2m18s
+任务 run-terminal-f260 · direct · 并发上限 3                                                                                                          已结束 4/4
+状态目录 E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ done    plan · agent · a1
-› ! fail    verify · agent · a2 · Two checks failed.
-  × cancel  cleanup · agent · a1
-  × reject  approval · approval · user_requested
-── verify ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-agent · completed · failed
-diagnostic · invalid_result · Two checks failed.
-result · Verification failed.
-warnings · Do not publish this build.
-checks · typecheck passed · unit tests failed
-summary · Release stopped: verification failed and approval was rejected.
-next · fishyume status run-terminal-f260
-state · E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path
+⚠ 有节点需要决定是否重试：verify
+选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-1 failed · capacity 3
-status fishyume status run-terminal-f260  state E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path  q exit
+  ✓ 已完成   plan · 智能体 · 第1次
+› ! 已失败   verify · 智能体 · 第2次 · Two checks failed.
+  × 已取消   cleanup · 智能体 · 第1次
+  × 已拒绝   approval · 人工审批 · 用户操作
+── 节点：verify ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+智能体 · 已结束 · 失败
+提示 · 结果格式无效 · Two checks failed.
+结果摘要 · Verification failed.
+警告 · Do not publish this build.
+检查项 · typecheck passed · unit tests failed
+任务总结 · Release stopped: verification failed and approval was rejected.
+再次查看 · fishyume status run-terminal-f260
+状态目录 · E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+1 个失败 · 并发上限 3
+再次查看 fishyume status run-terminal-f260  状态目录 E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path  Q 退出

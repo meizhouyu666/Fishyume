@@ -8,9 +8,9 @@ import {renderRunText} from '../src/tui/presentation.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const outputPath = resolve(here, '../../docs/fishyume-m3.3-canonical-gallery.txt');
 const blocks: string[] = [
-  'Fishyume M3.3 Calm Operator Console — canonical text gallery',
-  'Generated from pure RunStatusView fixtures; elapsed time is fixed at 02:18.',
-  'Color capability is verified separately by tests; this file intentionally contains no ANSI escapes.',
+  'Fishyume 中文 Operator Console — canonical text gallery',
+  '由纯 RunStatusView fixtures 生成；elapsed time 固定为 02:18。',
+  '颜色能力由独立测试覆盖；本文件不包含 ANSI 转义。',
 ];
 
 for (const fixture of canonicalVisualFixtures) {

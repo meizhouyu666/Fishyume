@@ -176,9 +176,9 @@ npm --prefix wf run test:mcp-tui
 
 ## 终端体验
 
-交互式终端中的 `fishyume run` 使用 Calm Operator Console：Header 展示完整 Run 状态，紧凑 Workflow 行使用符号与短标签，当前焦点节点集中展示 Attempt、Approval、result 和 diagnostic 详情，底部只保留非零状态汇总与当前有效快捷键。界面不再为 Attempts、Approvals、Diagnostics 分别重复绘制 Panel，并在 80/120/160 columns 下保持有界、稳定和 scrollback 友好。`fishyume status <run-id> --watch` 可重新进入同一 Console；终态停止轮询并明确显示 summary、state 与下一步命令。
+交互式终端中的 `fishyume` Dashboard 与 Run Console 默认使用中文。Header 直接展示任务状态，紧凑 Workflow 行使用符号与中文短标签，当前焦点节点集中展示执行次数、审批说明、结果与诊断详情，底部只保留当前真正可用的操作。等待人工审批、回答或重试时，首屏会出现醒目的下一步提示；打开 Run 时优先聚焦第一个可操作节点。界面在 80/120/160 columns 下保持有界、稳定和 scrollback 友好。`fishyume status <run-id> --watch` 可重新进入同一 Console；终态停止轮询并明确显示任务总结、状态目录与下一步命令。
 
-Console 以 `j`/`k` 或上下方向键遍历全部 Workflow 节点，`Enter` 折叠或展开焦点详情；action key 只对当前由 Engine 判定为 actionable 的选中节点显示并生效。`a` approve 或提交当前 needs_input answer，`r` 输入 reject reason，`R` 确认 retry，`c` 确认 cancel，`?` 展开帮助，`Esc` 放弃当前输入或确认。answer 绑定 question ID 与 expected Attempt，scalar 或多问题 JSON answers 由 Engine 最终校验。action mode 继续按 `nodeId/kind/duplicateRisk` 固定目标；indeterminate retry 会明确显示 duplicate-risk，并只在确认后提交风险确认。`d`、`q` 或 `Ctrl+C` 安全离开并断开观察，不会暂停或隐式 cancel Run。
+Console 以 `J`/`K` 或上下方向键遍历全部 Workflow 节点，`Enter` 折叠或展开焦点详情；操作键只对当前由 Engine 判定为 actionable 的选中节点显示并生效。`A/Y` 批准或提交回答，`X/N` 拒绝并填写原因，`T` 确认重试，`C` 明确取消整个任务，`?` 展开中文帮助，`Esc` 放弃当前输入或确认；原有 `a/r/R/c/d/q` 按键继续兼容。answer 绑定 question ID 与 expected Attempt，scalar 或多问题 JSON answers 由 Engine 最终校验。操作模式继续按 `nodeId/kind/duplicateRisk` 固定目标；结果待确认的重试会明确提示重复副作用风险，并只在确认后提交风险确认。`D`、`Q` 或 `Ctrl+C` 只退出观察，不会暂停或取消 Run。
 
 非 TTY 或 CI 环境继续输出可流式处理的逐行纯文本；这些环境中的 `status --watch` 会返回诊断并建议使用普通 `status`，不会进入无限输出。`--watch --json` 会被拒绝，`fishyume status --json` 仍只输出一个 JSON 对象。`NO_COLOR` 会保留 TUI 结构并关闭颜色，TrueColor 不可用时自动降级到 256/16 色或单色；`TERM=dumb` 或 `FISHYUME_ASCII=1` 使用 ASCII 状态与 Divider fallback。实现与验收矩阵见 [`docs/fishyume-m3-tui-productization.md`](./docs/fishyume-m3-tui-productization.md)、[`docs/fishyume-m3.2-interactive-run-console.md`](./docs/fishyume-m3.2-interactive-run-console.md) 与 [`docs/fishyume-m3.3-calm-operator-console.md`](./docs/fishyume-m3.3-calm-operator-console.md)。六个确定性场景的可审阅输出见 [`docs/fishyume-m3.3-canonical-gallery.txt`](./docs/fishyume-m3.3-canonical-gallery.txt)。
 

@@ -32,7 +32,10 @@ The installer verifies Node.js 24+, Go 1.26+, builds the current CLI and Engine 
 
 - `fishyume` and `fishyume dashboard` open the same Run Dashboard.
 - Active and waiting Runs appear before terminal history.
-- Arrow keys or `j`/`k` select; `Enter` attaches; `r` refreshes; `q` or `Escape` exits.
+- Dashboard and Run Console default to concise Chinese operator copy while preserving machine JSON and API contracts.
+- Arrow keys or `J`/`K` select; `Enter` attaches; `R` refreshes; `Q` or `Escape` exits.
+- Waiting Runs display an explicit human-action prompt. On attach, the first actionable Approval, input, or retry node receives initial focus.
+- Approval renders a prominent two-line notice plus `A/Y 批准` and `X/N 拒绝`; retry uses `T`, Run cancellation uses `C`, and `Q` only detaches observation. Legacy action keys remain compatible.
 - The list refreshes every two seconds and remains bounded at 80, 120, and 160 columns.
 - Non-TTY use emits one finite summary with copyable `attach` and `doctor` commands.
 - Empty state points to the Host/CLI next step instead of asking for a Run ID.
