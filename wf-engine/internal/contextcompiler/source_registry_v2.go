@@ -389,6 +389,9 @@ func validateDeclaredAvailability(declaration SourceDeclarationV2) error {
 }
 
 func validateAllowedUpstreamNodesV2(source []string, currentNodeID string) (map[string]struct{}, error) {
+	if len(source) > MaxContextComponents {
+		return nil, contractError(CodeContextInvalidComponent, "explicit upstream allowlist count exceeds its bound", "")
+	}
 	ordered := append([]string(nil), source...)
 	sort.Strings(ordered)
 	allowed := make(map[string]struct{}, len(ordered))

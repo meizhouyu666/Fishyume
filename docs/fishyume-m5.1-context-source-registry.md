@@ -40,7 +40,7 @@ A missing, unreadable, oversized, non-regular, escaping, or cross-boundary symli
 
 ## Dependency isolation
 
-`allowedUpstreamNodes` is a separate caller-approved allowlist, not a list inferred from supplied Results. Resolution sorts a copy before validation, rejects invalid or duplicate Workflow Node IDs, and rejects the current Node itself. Caller allowlist order therefore changes neither output nor error selection.
+`allowedUpstreamNodes` is a separate caller-approved allowlist, not a list inferred from supplied Results. Before copying, sorting, or allocating a membership map, resolution bounds it to `MaxContextComponents`. It then sorts a copy for validation, rejects invalid or duplicate Workflow Node IDs, and rejects the current Node itself. Caller allowlist order therefore changes neither output nor error selection.
 
 `DependencyResultSourceV2` accepts one explicitly named upstream Node and one validated `workflow.Result`. Every supplied Result must match the allowlist; an unapproved sibling or the current Node is rejected even if the caller constructs a typed Result declaration for it. Two declarations for the same approved upstream Node are also a conflict. An allowlisted Node with no supplied Result adds no Component and triggers no lookup. There is no resolver input for all Run results, ancestors, or siblings, so only explicitly approved and explicitly supplied upstream Results can enter resolution.
 

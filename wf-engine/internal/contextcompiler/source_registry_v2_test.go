@@ -220,6 +220,14 @@ func TestContextSourceRegistryV2AcceptsOnlyExplicitDependencyResults(t *testing.
 		})
 	}
 
+	oversized := input
+	oversized.AllowedUpstreamNodes = make([]string, MaxContextComponents+1)
+	_, oversizedErr := BuiltinContextSourceRegistryV2().Resolve(oversized)
+	var oversizedContractErr *ContractError
+	if !errors.As(oversizedErr, &oversizedContractErr) || oversizedContractErr.Code != CodeContextInvalidComponent || !strings.Contains(oversizedContractErr.Message, "count exceeds") {
+		t.Fatalf("oversized allowlist error = %v", oversizedErr)
+	}
+
 	ordered := input
 	ordered.AllowedUpstreamNodes = []string{"z", "plan", "a"}
 	reversed := input
