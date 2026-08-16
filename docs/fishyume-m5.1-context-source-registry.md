@@ -19,7 +19,7 @@ Resolved Components use the full M5.0 canonical kind order, then stable Componen
 
 ## Typed resolution API
 
-`ContextSourceResolutionInputV2` accepts typed declarations for each built-in source. `ContextSourceRegistryV2.Resolve` returns `ContextSourceResolutionV2`, containing only M5.0 Components and Omissions. It computes `sourceHash`, `contentHash`, byte counts, and truncation from the exact resolved UTF-8 bytes; callers cannot inject those fields.
+`ContextSourceResolutionInputV2` accepts typed declarations for each built-in source plus an explicit `allowedUpstreamNodes` list for dependency isolation. `ContextSourceRegistryV2.Resolve` returns `ContextSourceResolutionV2`, containing only M5.0 Components and Omissions. It computes `sourceHash`, `contentHash`, byte counts, and truncation from the exact resolved UTF-8 bytes; callers cannot inject those fields.
 
 Every declaration supplies a stable Component ID, source version, bounded non-secret selection reason, attention tier, and sensitivity. The Node task additionally supplies its validated Workflow Node ID so provenance is `workflow:node/<nodeId>`. Project instructions, the current Node task, and a present user answer must use `required`. Workflow policies and dependency Results may use `required` or `important`. Memory is always `optional` and inherits sensitivity from its validated record. M5.1 never truncates content.
 
@@ -36,11 +36,17 @@ Project instructions may be supplied inline or by one explicit relative file pat
 - reads only the declared file and never scans or imports the repository;
 - records normalized project-relative provenance without persisting the project file body.
 
-A missing, unreadable, oversized, non-regular, escaping, or cross-boundary symlink target returns `context_source_unavailable` with a bounded error that does not contain source content.
+A missing, unreadable, oversized, non-regular, escaping, or cross-boundary symlink target returns `context_source_unavailable`. A selected file containing invalid UTF-8 returns `context_invalid_component` before hashing. Both errors are bounded and do not contain source content.
 
 ## Dependency isolation
 
-`DependencyResultSourceV2` accepts one explicitly named upstream Node and one validated `workflow.Result`. There is no resolver input for all Run results, ancestors, or siblings. The canonical Result JSON becomes the Component content, and two declarations for the same upstream Node are a conflict. Unrelated parallel sibling output therefore cannot enter resolution unless the caller explicitly and incorrectly declares it as a dependency.
+`allowedUpstreamNodes` is a separate caller-approved allowlist, not a list inferred from supplied Results. Resolution sorts a copy before validation, rejects invalid or duplicate Workflow Node IDs, and rejects the current Node itself. Caller allowlist order therefore changes neither output nor error selection.
+
+`DependencyResultSourceV2` accepts one explicitly named upstream Node and one validated `workflow.Result`. Every supplied Result must match the allowlist; an unapproved sibling or the current Node is rejected even if the caller constructs a typed Result declaration for it. Two declarations for the same approved upstream Node are also a conflict. An allowlisted Node with no supplied Result adds no Component and triggers no lookup. There is no resolver input for all Run results, ancestors, or siblings, so only explicitly approved and explicitly supplied upstream Results can enter resolution.
+
+## Exact UTF-8 boundary
+
+Every resolved body must be valid UTF-8 before byte accounting or hashing. This includes inline project, Workflow, and Node strings; selected project files; raw user-answer JSON; every string carried by a dependency `workflow.Result`; and selected Memory content and metadata. Source versions, selection reasons, and file provenance paths are checked at the same boundary. Invalid UTF-8 returns `context_invalid_component` with only the stable subject identity; content is never copied into the error. This prevents Go's JSON encoder from replacing invalid bytes with `U+FFFD` after a hash was computed over different bytes.
 
 ## Explicit Memory selection
 
@@ -65,6 +71,6 @@ Registry output is ephemeral source material. Durable metadata must continue thr
 
 ## Verification fixtures
 
-- `testdata/source-registry-v2.json` freezes all six source types, hashes, provenance, byte accounting, ordering, and active/superseded/deleted/expired Memory behavior.
+- `testdata/source-registry-v2.json` freezes all six source types, the explicit upstream allowlist, hashes, provenance, byte accounting, ordering, and active/superseded/deleted/expired Memory behavior.
 - `testdata/evaluation-v1.json` now includes an explicit expired-Memory regression fixture in addition to the original six risk classes.
-- Negative tests cover missing and unavailable sources, duplicates and conflicts, traversal and symbolic-link escape, file bounds, invalid/cross-project Memory, dependency isolation, and sensitive durable-metadata leakage.
+- Negative tests cover missing and unavailable sources, duplicates and conflicts, traversal and symbolic-link escape, file bounds, invalid/cross-project Memory, allowlist duplicates/invalid/self/unapproved siblings, invalid UTF-8 across every source representation, dependency isolation, and sensitive durable-metadata leakage.

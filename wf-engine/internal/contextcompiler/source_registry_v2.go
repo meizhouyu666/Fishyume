@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"wf.local/wf-engine/internal/workflow"
 )
@@ -63,14 +64,15 @@ type SelectedMemorySourceV2 struct {
 }
 
 type ContextSourceResolutionInputV2 struct {
-	ProjectRoot         string                       `json:"projectRoot"`
-	AsOf                time.Time                    `json:"asOf"`
-	ProjectInstructions []ProjectInstructionSourceV2 `json:"projectInstructions"`
-	WorkflowPolicies    []WorkflowPolicySourceV2     `json:"workflowPolicies"`
-	NodeTasks           []NodeTaskSourceV2           `json:"nodeTasks"`
-	DependencyResults   []DependencyResultSourceV2   `json:"dependencyResults"`
-	UserAnswers         []UserAnswerSourceV2         `json:"userAnswers"`
-	SelectedMemory      []SelectedMemorySourceV2     `json:"selectedMemory"`
+	ProjectRoot          string                       `json:"projectRoot"`
+	AsOf                 time.Time                    `json:"asOf"`
+	AllowedUpstreamNodes []string                     `json:"allowedUpstreamNodes"`
+	ProjectInstructions  []ProjectInstructionSourceV2 `json:"projectInstructions"`
+	WorkflowPolicies     []WorkflowPolicySourceV2     `json:"workflowPolicies"`
+	NodeTasks            []NodeTaskSourceV2           `json:"nodeTasks"`
+	DependencyResults    []DependencyResultSourceV2   `json:"dependencyResults"`
+	UserAnswers          []UserAnswerSourceV2         `json:"userAnswers"`
+	SelectedMemory       []SelectedMemorySourceV2     `json:"selectedMemory"`
 }
 
 type ContextSourceResolutionV2 struct {
@@ -125,6 +127,20 @@ func (registry ContextSourceRegistryV2) Resolve(input ContextSourceResolutionInp
 	if err := validateSourceIdentitiesV2(input); err != nil {
 		return ContextSourceResolutionV2{}, err
 	}
+	nodeSource := input.NodeTasks[0]
+	if err := validateDeclaredAvailability(nodeSource.Declaration); err != nil {
+		return ContextSourceResolutionV2{}, err
+	}
+	if nodeSource.Declaration.Tier != TierRequired {
+		return ContextSourceResolutionV2{}, contractError(CodeContextInvalidComponent, "current Node task must use the required tier", nodeSource.Declaration.ID)
+	}
+	if !contextSourceNodeIDPatternV2.MatchString(nodeSource.NodeID) {
+		return ContextSourceResolutionV2{}, contractError(CodeContextInvalidComponent, "current Node task source has an invalid Workflow Node ID", nodeSource.Declaration.ID)
+	}
+	allowedUpstreams, err := validateAllowedUpstreamNodesV2(input.AllowedUpstreamNodes, nodeSource.NodeID)
+	if err != nil {
+		return ContextSourceResolutionV2{}, err
+	}
 
 	projectRoot, err := resolutionProjectRoot(input)
 	if err != nil {
@@ -167,16 +183,6 @@ func (registry ContextSourceRegistryV2) Resolve(input ContextSourceResolutionInp
 		components = append(components, component)
 	}
 
-	nodeSource := input.NodeTasks[0]
-	if err := validateDeclaredAvailability(nodeSource.Declaration); err != nil {
-		return ContextSourceResolutionV2{}, err
-	}
-	if nodeSource.Declaration.Tier != TierRequired {
-		return ContextSourceResolutionV2{}, contractError(CodeContextInvalidComponent, "current Node task must use the required tier", nodeSource.Declaration.ID)
-	}
-	if !contextSourceNodeIDPatternV2.MatchString(nodeSource.NodeID) {
-		return ContextSourceResolutionV2{}, contractError(CodeContextInvalidComponent, "current Node task source has an invalid Workflow Node ID", nodeSource.Declaration.ID)
-	}
 	nodeComponent, err := resolvedComponentV2(nodeSource.Declaration, KindNodeTask, "workflow:node/"+nodeSource.NodeID, nodeSource.Content)
 	if err != nil {
 		return ContextSourceResolutionV2{}, err
@@ -211,8 +217,20 @@ func (registry ContextSourceRegistryV2) Resolve(input ContextSourceResolutionInp
 		if err := validateDeclaredAvailability(declaration); err != nil {
 			return ContextSourceResolutionV2{}, err
 		}
-		if !contextSourceNodeIDPatternV2.MatchString(source.UpstreamNode) || source.Result == nil {
+		if !contextSourceNodeIDPatternV2.MatchString(source.UpstreamNode) {
+			return ContextSourceResolutionV2{}, contractError(CodeContextInvalidComponent, "declared dependency Result has an invalid upstream Workflow Node ID", declaration.ID)
+		}
+		if source.Result == nil {
 			return ContextSourceResolutionV2{}, missingSourceError(declaration, "declared dependency Result is missing")
+		}
+		if source.UpstreamNode == nodeSource.NodeID {
+			return ContextSourceResolutionV2{}, contractError(CodeContextInvalidComponent, "current Node cannot be its own dependency Result source", declaration.ID)
+		}
+		if _, allowed := allowedUpstreams[source.UpstreamNode]; !allowed {
+			return ContextSourceResolutionV2{}, contractError(CodeContextInvalidComponent, "dependency Result source is not in the explicit upstream allowlist", declaration.ID)
+		}
+		if !validWorkflowResultUTF8V2(*source.Result) {
+			return ContextSourceResolutionV2{}, contractError(CodeContextInvalidComponent, "declared dependency Result contains invalid UTF-8", declaration.ID)
 		}
 		if err := workflow.ValidateResult(*source.Result); err != nil {
 			return ContextSourceResolutionV2{}, contractError(CodeContextInvalidComponent, "declared dependency Result is invalid", declaration.ID)
@@ -232,6 +250,9 @@ func (registry ContextSourceRegistryV2) Resolve(input ContextSourceResolutionInp
 	sort.Slice(memorySources, func(i, j int) bool { return memorySources[i].Record.ID < memorySources[j].Record.ID })
 	for _, selected := range memorySources {
 		record := selected.Record
+		if !validSelectedMemoryUTF8V2(selected) {
+			return ContextSourceResolutionV2{}, contractError(CodeContextInvalidComponent, "selected Memory contains invalid UTF-8", record.ID)
+		}
 		if err := ValidateMemoryRecordV1(record); err != nil {
 			return ContextSourceResolutionV2{}, err
 		}
@@ -361,7 +382,29 @@ func validateDeclaredAvailability(declaration SourceDeclarationV2) error {
 	if declaration.Unavailable {
 		return contractError(CodeContextSourceUnavailable, "declared Context source is unavailable", declaration.ID)
 	}
+	if !utf8.ValidString(declaration.SourceVersion) || !utf8.ValidString(declaration.Reason) {
+		return contractError(CodeContextInvalidComponent, "Context source metadata contains invalid UTF-8", declaration.ID)
+	}
 	return nil
+}
+
+func validateAllowedUpstreamNodesV2(source []string, currentNodeID string) (map[string]struct{}, error) {
+	ordered := append([]string(nil), source...)
+	sort.Strings(ordered)
+	allowed := make(map[string]struct{}, len(ordered))
+	for _, nodeID := range ordered {
+		if !contextSourceNodeIDPatternV2.MatchString(nodeID) {
+			return nil, contractError(CodeContextInvalidComponent, "explicit upstream allowlist contains an invalid Workflow Node ID", nodeID)
+		}
+		if nodeID == currentNodeID {
+			return nil, contractError(CodeContextInvalidComponent, "explicit upstream allowlist cannot contain the current Node", nodeID)
+		}
+		if _, exists := allowed[nodeID]; exists {
+			return nil, contractError(CodeContextInvalidComponent, "explicit upstream allowlist contains a duplicate Workflow Node ID", nodeID)
+		}
+		allowed[nodeID] = struct{}{}
+	}
+	return allowed, nil
 }
 
 func missingSourceError(declaration SourceDeclarationV2, message string) error {
@@ -372,6 +415,9 @@ func missingSourceError(declaration SourceDeclarationV2, message string) error {
 }
 
 func resolvedComponentV2(declaration SourceDeclarationV2, kind ComponentKind, sourceRef, content string) (ContextComponentV2, error) {
+	if !utf8.ValidString(content) {
+		return ContextComponentV2{}, contractError(CodeContextInvalidComponent, "resolved Context source content is not valid UTF-8", declaration.ID)
+	}
 	if strings.TrimSpace(content) == "" {
 		return ContextComponentV2{}, missingSourceError(declaration, "resolved Context source content is missing")
 	}
@@ -426,7 +472,7 @@ func resolveProjectInstructionsV2(projectRoot string, source ProjectInstructionS
 	if hasContent {
 		return source.Content, "project:instructions/" + declaration.ID, nil
 	}
-	if filepath.IsAbs(source.RelativePath) || filepath.Clean(source.RelativePath) == "." || len([]byte(filepath.ToSlash(source.RelativePath))) > MaxProvenanceRefBytes-len("project:file/") {
+	if !utf8.ValidString(source.RelativePath) || filepath.IsAbs(source.RelativePath) || filepath.Clean(source.RelativePath) == "." || len([]byte(filepath.ToSlash(source.RelativePath))) > MaxProvenanceRefBytes-len("project:file/") {
 		return "", "", contractError(CodeContextInvalidComponent, "project instruction file must be a relative file path", declaration.ID)
 	}
 	candidate, err := filepath.EvalSymlinks(filepath.Join(projectRoot, source.RelativePath))
@@ -469,6 +515,9 @@ func canonicalAnswerV2(answer json.RawMessage, subjectID string) (string, error)
 	if len(answer) == 0 {
 		return "", contractError(CodeContextRequiredMissing, "user answer content is missing", subjectID)
 	}
+	if !utf8.Valid(answer) {
+		return "", contractError(CodeContextInvalidComponent, "user answer is not valid UTF-8", subjectID)
+	}
 	if len(answer) > MaxComponentContentBytes {
 		return "", contractError(CodeContextInvalidComponent, "user answer exceeds its source bound", subjectID)
 	}
@@ -502,6 +551,40 @@ func memoryExpiredV2(record MemoryRecordV1, asOf time.Time) bool {
 func memoryOmissionV2(record MemoryRecordV1, reason OmissionReason) ContextOmissionV2 {
 	originalBytes := len([]byte(record.Content))
 	return ContextOmissionV2{ComponentID: record.ID, Kind: KindMemory, Tier: TierOptional, Reason: reason, SourceHash: record.ContentHash, OriginalBytes: originalBytes}
+}
+
+func validWorkflowResultUTF8V2(result workflow.Result) bool {
+	values := []string{result.Summary, result.Decision, result.Reason}
+	values = append(values, result.Artifacts...)
+	values = append(values, result.Warnings...)
+	values = append(values, result.Checks...)
+	for _, question := range result.Questions {
+		values = append(values, question.ID, question.Prompt)
+		values = append(values, question.Choices...)
+	}
+	for _, value := range values {
+		if !utf8.ValidString(value) {
+			return false
+		}
+	}
+	return true
+}
+
+func validSelectedMemoryUTF8V2(selected SelectedMemorySourceV2) bool {
+	record := selected.Record
+	values := []string{
+		selected.Reason, record.SchemaVersion, record.ID, record.Project, record.Scope, record.Content, record.ContentHash,
+		string(record.Type), string(record.Sensitivity), string(record.Provenance.Writer), record.Provenance.Source,
+		record.Provenance.SourceVersion, record.Provenance.SourceHash, record.Provenance.Reason,
+		record.CreatedAt, record.UpdatedAt, string(record.State), record.StateReason, record.Retention.ExpiresAt,
+	}
+	values = append(values, record.Supersedes...)
+	for _, value := range values {
+		if !utf8.ValidString(value) {
+			return false
+		}
+	}
+	return true
 }
 
 func sameCanonicalProjectV2(canonicalRoot, recordProject string) bool {

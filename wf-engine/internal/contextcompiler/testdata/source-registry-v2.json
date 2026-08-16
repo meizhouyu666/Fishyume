@@ -2,6 +2,7 @@
   "schemaVersion": "fishyume.context-source-registry-fixture/v1",
   "input": {
     "asOf": "2026-08-17T00:00:00Z",
+    "allowedUpstreamNodes": ["plan"],
     "projectInstructions": [
       {
         "declaration": {"id": "project-instructions", "sourceVersion": "1", "reason": "Configured mandatory project instructions.", "tier": "required", "sensitivity": "project"},

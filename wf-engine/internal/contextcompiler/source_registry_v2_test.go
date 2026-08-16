@@ -81,6 +81,7 @@ func TestContextSourceRegistryV2RequiredUnavailableDuplicateAndConflictErrors(t 
 		{name: "duplicate dependency declaration", edit: func(value *ContextSourceResolutionInputV2) {
 			first := DependencyResultSourceV2{Declaration: sourceDeclarationV2("dependency-a", TierImportant, SensitivityProject), UpstreamNode: "plan", Result: &workflow.Result{Summary: "a"}}
 			second := DependencyResultSourceV2{Declaration: sourceDeclarationV2("dependency-b", TierImportant, SensitivityProject), UpstreamNode: "plan", Result: &workflow.Result{Summary: "b"}}
+			value.AllowedUpstreamNodes = []string{"plan"}
 			value.DependencyResults = []DependencyResultSourceV2{second, first}
 		}, code: CodeContextInvalidComponent},
 		{name: "declared source count bounded", edit: func(value *ContextSourceResolutionInputV2) {
@@ -103,6 +104,7 @@ func TestContextSourceRegistryV2RequiredUnavailableDuplicateAndConflictErrors(t 
 
 func TestContextSourceRegistryV2SortsSameKindSourcesByStableID(t *testing.T) {
 	input := minimalSourceInputV2()
+	input.AllowedUpstreamNodes = []string{"z", "a"}
 	input.WorkflowPolicies = []WorkflowPolicySourceV2{
 		{Declaration: sourceDeclarationV2("workflow-z", TierImportant, SensitivityProject), Content: "z policy"},
 		{Declaration: sourceDeclarationV2("workflow-a", TierImportant, SensitivityProject), Content: "a policy"},
@@ -177,10 +179,10 @@ func TestContextSourceRegistryV2ProjectFileStaysInsideCanonicalRootAndIsBounded(
 
 func TestContextSourceRegistryV2AcceptsOnlyExplicitDependencyResults(t *testing.T) {
 	input := minimalSourceInputV2()
+	input.AllowedUpstreamNodes = []string{"plan"}
 	input.DependencyResults = []DependencyResultSourceV2{
 		{Declaration: sourceDeclarationV2("dependency-plan", TierImportant, SensitivityProject), UpstreamNode: "plan", Result: &workflow.Result{Summary: "declared plan"}},
 	}
-	unrelatedSibling := workflow.Result{Summary: "unrelated sibling marker"}
 	resolved, err := BuiltinContextSourceRegistryV2().Resolve(input)
 	if err != nil {
 		t.Fatal(err)
@@ -189,8 +191,59 @@ func TestContextSourceRegistryV2AcceptsOnlyExplicitDependencyResults(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), unrelatedSibling.Summary) || countKindV2(resolved.Components, KindDependencyResult) != 1 {
+	if countKindV2(resolved.Components, KindDependencyResult) != 1 {
 		t.Fatalf("unselected sibling crossed the dependency boundary: %s", encoded)
+	}
+
+	unauthorized := input
+	unauthorized.DependencyResults = append([]DependencyResultSourceV2(nil), input.DependencyResults...)
+	unauthorized.DependencyResults[0] = DependencyResultSourceV2{Declaration: sourceDeclarationV2("dependency-sibling", TierImportant, SensitivityProject), UpstreamNode: "sibling", Result: &workflow.Result{Summary: "unrelated sibling marker"}}
+	_, err = BuiltinContextSourceRegistryV2().Resolve(unauthorized)
+	assertContextErrorCodeV2(t, err, CodeContextInvalidComponent)
+
+	self := input
+	self.DependencyResults = append([]DependencyResultSourceV2(nil), input.DependencyResults...)
+	self.DependencyResults[0] = DependencyResultSourceV2{Declaration: sourceDeclarationV2("dependency-self", TierImportant, SensitivityProject), UpstreamNode: "node", Result: &workflow.Result{Summary: "self result"}}
+	_, err = BuiltinContextSourceRegistryV2().Resolve(self)
+	assertContextErrorCodeV2(t, err, CodeContextInvalidComponent)
+
+	for name, allowlist := range map[string][]string{
+		"duplicate allowlist": {"plan", "plan"},
+		"invalid allowlist":   {"bad/path"},
+		"self allowlist":      {"node"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := input
+			candidate.AllowedUpstreamNodes = allowlist
+			_, resolveErr := BuiltinContextSourceRegistryV2().Resolve(candidate)
+			assertContextErrorCodeV2(t, resolveErr, CodeContextInvalidComponent)
+		})
+	}
+
+	ordered := input
+	ordered.AllowedUpstreamNodes = []string{"z", "plan", "a"}
+	reversed := input
+	reversed.AllowedUpstreamNodes = []string{"a", "plan", "z"}
+	left, err := BuiltinContextSourceRegistryV2().Resolve(ordered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := BuiltinContextSourceRegistryV2().Resolve(reversed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(left, right) {
+		t.Fatalf("allowlist order changed resolution: %+v != %+v", left, right)
+	}
+
+	invalidLeft := input
+	invalidLeft.AllowedUpstreamNodes = []string{"bad/path", ""}
+	invalidRight := input
+	invalidRight.AllowedUpstreamNodes = []string{"", "bad/path"}
+	_, leftErr := BuiltinContextSourceRegistryV2().Resolve(invalidLeft)
+	_, rightErr := BuiltinContextSourceRegistryV2().Resolve(invalidRight)
+	if leftErr == nil || rightErr == nil || leftErr.Error() != rightErr.Error() {
+		t.Fatalf("allowlist order changed stable error: %v != %v", leftErr, rightErr)
 	}
 }
 
@@ -230,6 +283,80 @@ func TestContextSourceRegistryV2MemoryRequiresExplicitValidActiveUnexpiredRecord
 	assertContextErrorCodeV2(t, err, CodeMemoryConflict)
 }
 
+func TestContextSourceRegistryV2RejectsInvalidUTF8BeforeHashingWithoutContentLeak(t *testing.T) {
+	registry := BuiltinContextSourceRegistryV2()
+
+	t.Run("inline Node task", func(t *testing.T) {
+		const marker = "inline-secret-marker"
+		input := minimalSourceInputV2()
+		input.NodeTasks[0].Content = marker + string([]byte{0xff})
+		_, err := registry.Resolve(input)
+		assertContextErrorCodeV2(t, err, CodeContextInvalidComponent)
+		assertErrorDoesNotLeakV2(t, err, marker)
+	})
+
+	t.Run("project instruction file", func(t *testing.T) {
+		const marker = "file-secret-marker"
+		root := t.TempDir()
+		path := filepath.Join(root, "instructions.md")
+		content := append([]byte(marker), 0xff)
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		input := minimalSourceInputV2()
+		input.ProjectRoot = root
+		input.ProjectInstructions = []ProjectInstructionSourceV2{{Declaration: sourceDeclarationV2("project-file", TierRequired, SensitivityProject), RelativePath: "instructions.md"}}
+		_, err := registry.Resolve(input)
+		assertContextErrorCodeV2(t, err, CodeContextInvalidComponent)
+		assertErrorDoesNotLeakV2(t, err, marker)
+	})
+
+	t.Run("user answer", func(t *testing.T) {
+		const marker = "answer-secret-marker"
+		input := minimalSourceInputV2()
+		answer := append([]byte(`{"answer":"`+marker), 0xff)
+		answer = append(answer, []byte(`"}`)...)
+		input.UserAnswers = []UserAnswerSourceV2{{Declaration: sourceDeclarationV2("user-answer", TierRequired, SensitivitySensitive), Answer: answer}}
+		_, err := registry.Resolve(input)
+		assertContextErrorCodeV2(t, err, CodeContextInvalidComponent)
+		assertErrorDoesNotLeakV2(t, err, marker)
+	})
+
+	t.Run("dependency Result", func(t *testing.T) {
+		const marker = "dependency-secret-marker"
+		input := minimalSourceInputV2()
+		input.AllowedUpstreamNodes = []string{"plan"}
+		input.DependencyResults = []DependencyResultSourceV2{{Declaration: sourceDeclarationV2("dependency-plan", TierImportant, SensitivityProject), UpstreamNode: "plan", Result: &workflow.Result{Summary: marker + string([]byte{0xff})}}}
+		_, err := registry.Resolve(input)
+		assertContextErrorCodeV2(t, err, CodeContextInvalidComponent)
+		assertErrorDoesNotLeakV2(t, err, marker)
+	})
+
+	t.Run("selected Memory", func(t *testing.T) {
+		const marker = "memory-secret-marker"
+		fixture := loadSourceRegistryFixtureV2(t)
+		root := t.TempDir()
+		var selected SelectedMemorySourceV2
+		for _, candidate := range fixture.Input.SelectedMemory {
+			if candidate.Record.ID == "memory-determinism" {
+				selected = candidate
+				break
+			}
+		}
+		selected.Record.Project = root
+		selected.Record.Content = marker + string([]byte{0xff})
+		selected.Record.ContentHash = hashBytes([]byte(selected.Record.Content))
+		selected.Record.Provenance.SourceHash = selected.Record.ContentHash
+		input := minimalSourceInputV2()
+		input.ProjectRoot = root
+		input.AsOf = fixture.Input.AsOf
+		input.SelectedMemory = []SelectedMemorySourceV2{selected}
+		_, err := registry.Resolve(input)
+		assertContextErrorCodeV2(t, err, CodeContextInvalidComponent)
+		assertErrorDoesNotLeakV2(t, err, marker)
+	})
+}
+
 func TestContextSourceRegistryV2SensitiveBodyDoesNotEnterDurableManifest(t *testing.T) {
 	const marker = "relay-token-secret-marker"
 	input := minimalSourceInputV2()
@@ -263,7 +390,7 @@ func TestContextSourceRegistryV2SensitiveBodyDoesNotEnterDurableManifest(t *test
 }
 
 func minimalSourceInputV2() ContextSourceResolutionInputV2 {
-	return ContextSourceResolutionInputV2{NodeTasks: []NodeTaskSourceV2{{Declaration: sourceDeclarationV2("node-task", TierRequired, SensitivityProject), NodeID: "node", Content: "implement task"}}}
+	return ContextSourceResolutionInputV2{AllowedUpstreamNodes: []string{}, NodeTasks: []NodeTaskSourceV2{{Declaration: sourceDeclarationV2("node-task", TierRequired, SensitivityProject), NodeID: "node", Content: "implement task"}}}
 }
 
 func sourceDeclarationV2(id string, tier AttentionTier, sensitivity Sensitivity) SourceDeclarationV2 {
@@ -314,5 +441,12 @@ func assertContextErrorCodeV2(t *testing.T, err error, code ContextErrorCode) {
 	var contractErr *ContractError
 	if !errors.As(err, &contractErr) || contractErr.Code != code {
 		t.Fatalf("error = %v, want code %s", err, code)
+	}
+}
+
+func assertErrorDoesNotLeakV2(t *testing.T, err error, marker string) {
+	t.Helper()
+	if err == nil || strings.Contains(err.Error(), marker) {
+		t.Fatalf("error leaked source content marker %q: %v", marker, err)
 	}
 }
