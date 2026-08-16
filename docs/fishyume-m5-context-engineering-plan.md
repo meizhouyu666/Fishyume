@@ -1,6 +1,6 @@
 # Fishyume M5: Context Engineering and Memory
 
-> Status: M5.0 contract/evaluation baseline completed on 2026-08-15; M5.1 production source-registry work is next. The accepted M4.5 Developer Preview remains the product baseline.
+> Status: M5.0 contracts and M5.1 production source registry completed on 2026-08-17; M5.2 Memory Store work is next. The accepted M4.5 Developer Preview remains the product baseline.
 
 M5 turns the existing deterministic Context Compiler skeleton into the product layer
 that gives each Agent Attempt the smallest sufficient, auditable context. Fishyume
@@ -43,6 +43,8 @@ Completed in [`fishyume-m5.0-context-contracts.md`](./fishyume-m5.0-context-cont
 Implement typed sources for project instructions, Workflow policy, Node task,
 dependency Results, user answers, and explicitly selected memory. Resolution remains
 local, deterministic, ordered, and independently testable.
+
+Completed in [`fishyume-m5.1-context-source-registry.md`](./fishyume-m5.1-context-source-registry.md): the immutable six-source registry, canonical project-file boundary, explicit dependency isolation, selected `MemoryRecordV1` lifecycle resolution, golden fixture, and negative security tests are implemented without changing the production v1 Run path.
 
 ### M5.2: Memory store and lifecycle
 

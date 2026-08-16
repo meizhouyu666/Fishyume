@@ -24,6 +24,17 @@
       "requireDeterministicHash": false
     },
     {
+      "id": "expired-memory",
+      "detects": "stale_memory",
+      "description": "An explicitly selected Memory record past its retention boundary must be omitted deterministically.",
+      "expectedComponentOrder": ["node-task", "output-contract"],
+      "requiredComponentIds": ["node-task", "output-contract"],
+      "forbiddenComponentIds": ["memory-expired"],
+      "expectedOmissions": [{"componentId": "memory-expired", "reason": "expired"}],
+      "forbiddenPersistedText": [],
+      "requireDeterministicHash": false
+    },
+    {
       "id": "irrelevant-memory",
       "detects": "irrelevant_context",
       "description": "Available but irrelevant Memory must consume no attention budget.",

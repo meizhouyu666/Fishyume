@@ -1,0 +1,115 @@
+{
+  "schemaVersion": "fishyume.context-source-registry-fixture/v1",
+  "input": {
+    "asOf": "2026-08-17T00:00:00Z",
+    "projectInstructions": [
+      {
+        "declaration": {"id": "project-instructions", "sourceVersion": "1", "reason": "Configured mandatory project instructions.", "tier": "required", "sensitivity": "project"},
+        "content": "Project decisions are authoritative."
+      }
+    ],
+    "workflowPolicies": [
+      {
+        "declaration": {"id": "workflow-policy", "sourceVersion": "1", "reason": "Workflow policy applies to the current Node.", "tier": "important", "sensitivity": "project"},
+        "content": "Use the approved local-only policy."
+      }
+    ],
+    "nodeTasks": [
+      {
+        "declaration": {"id": "node-task", "sourceVersion": "1", "reason": "Current Node task is always required.", "tier": "required", "sensitivity": "project"},
+        "nodeId": "implement",
+        "content": "Implement the approved M5.0 contract."
+      }
+    ],
+    "dependencyResults": [
+      {
+        "declaration": {"id": "dependency-plan", "sourceVersion": "1", "reason": "Declared dependency result is relevant to implementation.", "tier": "important", "sensitivity": "project"},
+        "upstreamNode": "plan",
+        "result": {"summary": "Dependency plan completed."}
+      }
+    ],
+    "userAnswers": [
+      {
+        "declaration": {"id": "user-answer", "sourceVersion": "1", "reason": "Current explicit answer resolves the pending question.", "tier": "required", "sensitivity": "sensitive"},
+        "answer": {"question": "scope", "answer": "core"}
+      }
+    ],
+    "selectedMemory": [
+      {
+        "record": {
+          "schemaVersion": "fishyume.memory/v1", "id": "memory-old", "project": "<project-root>", "type": "decision", "scope": "project",
+          "content": "Old decision.", "contentHash": "35d9012c9bbd94fadac5901bdd49de87d01f6e414c38d7e03fe66eadecd6e571", "sensitivity": "project",
+          "provenance": {"writer": "host_agent", "source": "memory:old", "sourceVersion": "1", "sourceHash": "35d9012c9bbd94fadac5901bdd49de87d01f6e414c38d7e03fe66eadecd6e571", "reason": "Previously approved decision."},
+          "createdAt": "2026-08-01T00:00:00Z", "updatedAt": "2026-08-16T00:00:00Z", "supersedes": [], "state": "superseded", "stateReason": "Replaced by memory-determinism.", "useCount": 1, "retention": {}
+        },
+        "reason": "Explicitly selected stale record."
+      },
+      {
+        "record": {
+          "schemaVersion": "fishyume.memory/v1", "id": "memory-determinism", "project": "<project-root>", "type": "decision", "scope": "project",
+          "content": "Prefer deterministic context.", "contentHash": "cb94deb7e3f348bde8b0b35751cabd594ea3484399a77ac68de3218bc42e7b71", "sensitivity": "project",
+          "provenance": {"writer": "host_agent", "source": "memory:decision", "sourceVersion": "1", "sourceHash": "cb94deb7e3f348bde8b0b35751cabd594ea3484399a77ac68de3218bc42e7b71", "reason": "User approved deterministic context selection."},
+          "createdAt": "2026-08-15T00:00:00Z", "updatedAt": "2026-08-15T00:00:00Z", "supersedes": ["memory-old"], "state": "active", "useCount": 0, "retention": {"expiresAt": "2027-08-15T00:00:00Z", "maxUses": 100}
+        },
+        "reason": "Selected project decision directly matches the task."
+      },
+      {
+        "record": {
+          "schemaVersion": "fishyume.memory/v1", "id": "memory-expired", "project": "<project-root>", "type": "procedure", "scope": "project",
+          "content": "Expired procedure.", "contentHash": "6f69a916253c621c97b028dfdb18149000b431c0f117a687a567206c2949ca35", "sensitivity": "project",
+          "provenance": {"writer": "user", "source": "memory:procedure", "sourceVersion": "1", "sourceHash": "6f69a916253c621c97b028dfdb18149000b431c0f117a687a567206c2949ca35", "reason": "User recorded a temporary procedure."},
+          "createdAt": "2026-08-01T00:00:00Z", "updatedAt": "2026-08-01T00:00:00Z", "supersedes": [], "state": "active", "useCount": 0, "retention": {"expiresAt": "2026-08-16T00:00:00Z"}
+        },
+        "reason": "Explicitly selected historical procedure."
+      },
+      {
+        "record": {
+          "schemaVersion": "fishyume.memory/v1", "id": "memory-deleted", "project": "<project-root>", "type": "fact", "scope": "project",
+          "contentHash": "35d9012c9bbd94fadac5901bdd49de87d01f6e414c38d7e03fe66eadecd6e571", "sensitivity": "project",
+          "provenance": {"writer": "user", "source": "memory:delete", "sourceVersion": "1", "sourceHash": "35d9012c9bbd94fadac5901bdd49de87d01f6e414c38d7e03fe66eadecd6e571", "reason": "User originally recorded the fact."},
+          "createdAt": "2026-08-01T00:00:00Z", "updatedAt": "2026-08-16T00:00:00Z", "supersedes": [], "state": "deleted", "stateReason": "User deleted the obsolete fact.", "useCount": 0, "retention": {}
+        },
+        "reason": "Explicitly selected deleted record."
+      }
+    ]
+  },
+  "resolution": {
+    "components": [
+      {
+        "id": "project-instructions", "kind": "project_instructions", "tier": "required", "sensitivity": "project",
+        "provenance": {"source": "project:instructions/project-instructions", "sourceVersion": "1", "sourceHash": "a958615c2dfef989c784f6a70abd6da7a818731aa20940bb229707a39af8b9ac", "reason": "Configured mandatory project instructions."},
+        "content": "Project decisions are authoritative.", "contentHash": "a958615c2dfef989c784f6a70abd6da7a818731aa20940bb229707a39af8b9ac", "originalBytes": 36, "includedBytes": 36, "truncation": "none"
+      },
+      {
+        "id": "workflow-policy", "kind": "workflow_policy", "tier": "important", "sensitivity": "project",
+        "provenance": {"source": "workflow:policy/workflow-policy", "sourceVersion": "1", "sourceHash": "eee06d29b8388670cc577125a0b288922be46648823f7e038c0a3a92b8981dbe", "reason": "Workflow policy applies to the current Node."},
+        "content": "Use the approved local-only policy.", "contentHash": "eee06d29b8388670cc577125a0b288922be46648823f7e038c0a3a92b8981dbe", "originalBytes": 35, "includedBytes": 35, "truncation": "none"
+      },
+      {
+        "id": "node-task", "kind": "node_task", "tier": "required", "sensitivity": "project",
+        "provenance": {"source": "workflow:node/implement", "sourceVersion": "1", "sourceHash": "80a1f990ab82216636e1cc9306f5e41225c97fb5e9941883602c7a833a16d91e", "reason": "Current Node task is always required."},
+        "content": "Implement the approved M5.0 contract.", "contentHash": "80a1f990ab82216636e1cc9306f5e41225c97fb5e9941883602c7a833a16d91e", "originalBytes": 37, "includedBytes": 37, "truncation": "none"
+      },
+      {
+        "id": "user-answer", "kind": "user_answer", "tier": "required", "sensitivity": "sensitive",
+        "provenance": {"source": "run:answer/user-answer", "sourceVersion": "1", "sourceHash": "8d2f569e780153722a465814125ef7300cb48038d5e328daa0da0432f9274401", "reason": "Current explicit answer resolves the pending question."},
+        "content": "{\"answer\":\"core\",\"question\":\"scope\"}", "contentHash": "8d2f569e780153722a465814125ef7300cb48038d5e328daa0da0432f9274401", "originalBytes": 36, "includedBytes": 36, "truncation": "none"
+      },
+      {
+        "id": "dependency-plan", "kind": "dependency_result", "tier": "important", "sensitivity": "project",
+        "provenance": {"source": "run:node/plan/result", "sourceVersion": "1", "sourceHash": "cc8716f6d6db47c56aabab494ca0295bd5d523f1c6cb6c15ef123f090bbb7ff1", "reason": "Declared dependency result is relevant to implementation."},
+        "content": "{\"summary\":\"Dependency plan completed.\",\"usage\":{}}", "contentHash": "cc8716f6d6db47c56aabab494ca0295bd5d523f1c6cb6c15ef123f090bbb7ff1", "originalBytes": 51, "includedBytes": 51, "truncation": "none"
+      },
+      {
+        "id": "memory-determinism", "kind": "memory", "tier": "optional", "sensitivity": "project",
+        "provenance": {"source": "memory:memory-determinism", "sourceVersion": "fishyume.memory/v1", "sourceHash": "cb94deb7e3f348bde8b0b35751cabd594ea3484399a77ac68de3218bc42e7b71", "reason": "Selected project decision directly matches the task."},
+        "content": "Prefer deterministic context.", "contentHash": "cb94deb7e3f348bde8b0b35751cabd594ea3484399a77ac68de3218bc42e7b71", "originalBytes": 29, "includedBytes": 29, "truncation": "none"
+      }
+    ],
+    "omissions": [
+      {"componentId": "memory-deleted", "kind": "memory", "tier": "optional", "reason": "unavailable", "sourceHash": "35d9012c9bbd94fadac5901bdd49de87d01f6e414c38d7e03fe66eadecd6e571", "originalBytes": 0},
+      {"componentId": "memory-expired", "kind": "memory", "tier": "optional", "reason": "expired", "sourceHash": "6f69a916253c621c97b028dfdb18149000b431c0f117a687a567206c2949ca35", "originalBytes": 18},
+      {"componentId": "memory-old", "kind": "memory", "tier": "optional", "reason": "superseded", "sourceHash": "35d9012c9bbd94fadac5901bdd49de87d01f6e414c38d7e03fe66eadecd6e571", "originalBytes": 13}
+    ]
+  }
+}
