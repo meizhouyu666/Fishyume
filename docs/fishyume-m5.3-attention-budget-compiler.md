@@ -4,7 +4,7 @@ Status: implemented on 2026-08-17. M5.3 is an additive internal compiler and rem
 
 ## Inputs and boundary
 
-`CompileContextV2` accepts an Attempt identity, the M5.1 `ContextSourceResolutionV2`, two engine-owned `ContextComponentV2` values (`execution_contract` and `output_contract`), and a resolved `AttentionBudgetV2`. It performs no I/O, filesystem or Memory-store discovery, clock access, Provider/model lookup, tokenization, ranking, persistence, mutation, prompt rendering, or logging. Source resolution cannot provide or replace either engine-owned contract; duplicate and included/omitted identities fail closed.
+`CompileContextV2` accepts an Attempt identity, the M5.1 `ContextSourceResolutionV2`, two engine-owned `ContextComponentV2` values (`execution_contract` and `output_contract`), and a resolved `AttentionBudgetV2`. M5.1 candidates must be complete and untruncated (`none`, with equal original/included byte counts); M5.3 alone performs budget truncation. It performs no I/O, filesystem or Memory-store discovery, clock access, Provider/model lookup, tokenization, ranking, persistence, mutation, prompt rendering, or logging. Source resolution cannot provide or replace either engine-owned contract; duplicate and included/omitted identities fail closed.
 
 `BudgetPolicyV1` is internal. Its stable model-independent default is 128 KiB total: 64 KiB required, 48 KiB important, and 16 KiB optional (4:3:1). Product users and Host Agents do not pass budgets through CLI/MCP. The pure compiler also accepts an already-resolved `AttentionBudgetV2`, allowing a later Driver-aware resolver without changing allocation semantics.
 
@@ -25,4 +25,3 @@ The result is a validated ephemeral `ContextEnvelopeV2`, a metadata-only `Contex
 ## Compatibility and evidence
 
 Frozen M5.0 schemas, error codes, limits, order, and v1 behavior remain unchanged. The machine-readable golden fixture is `wf-engine/internal/contextcompiler/testdata/attention-compiler-v2.json`. Focused tests cover the exact golden hash/usage, 100-repeat determinism, input permutation and aliasing, required overflow/no borrowing, balanced UTF-8-safe truncation, whole-record Memory selection, omission merging, policy validation, and metadata leakage. Existing M5 evaluation fixtures continue to run unchanged.
-

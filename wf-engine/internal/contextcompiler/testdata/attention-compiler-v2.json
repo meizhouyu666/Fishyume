@@ -1,11 +1,104 @@
 {
   "schemaVersion": "fishyume.attention-compiler-fixture/v1",
-  "description": "Deterministic M5.3 golden: engine-owned contracts, balanced important tier, UTF-8-safe truncation coverage, active Memory, lifecycle and budget omissions.",
   "policy": {"totalBytes": 131072, "requiredBytes": 65536, "importantBytes": 49152, "optionalBytes": 16384},
   "expected": {
-    "envelopeHash": "bd566cf8b962b887da95f05b0eed19422b3e64a3bf17d1f1566d56557a883735",
-    "usage": {"totalBytes": 103, "requiredBytes": 65, "importantBytes": 30, "optionalBytes": 8},
-    "omissions": [{"componentId": "memory-b", "kind": "memory", "tier": "optional", "reason": "budget_exhausted", "sourceHash": "dfd8af6329c8ba11e7d96bb6924beb34dd02518298edef1bfbe95166c610c66e", "originalBytes": 320}],
-    "includedComponentIds": ["execution-contract", "policy-a", "policy-b", "node-task", "memory-a", "output-contract"]
+    "envelope": {
+      "schemaVersion": "fishyume.context/v2",
+      "compilerVersion": "context-compiler/v2",
+      "identity": {"runId": "run-golden-m53", "nodeId": "implement", "attempt": 2},
+      "budget": {"totalBytes": 109, "requiredBytes": 80, "importantBytes": 17, "optionalBytes": 12},
+      "components": [
+        {
+          "id": "execution-contract", "kind": "execution_contract", "tier": "required", "sensitivity": "project",
+          "provenance": {"source": "test:execution-contract", "sourceVersion": "v1", "sourceHash": "c34ed9b78ec9950ac98a0ed7268f76d13b00cc6cfc06a8e93a345700ad070463", "reason": "approved test source"},
+          "content": "execute safely", "contentHash": "c34ed9b78ec9950ac98a0ed7268f76d13b00cc6cfc06a8e93a345700ad070463", "originalBytes": 14, "includedBytes": 14, "truncation": "none"
+        },
+        {
+          "id": "policy-a-small", "kind": "workflow_policy", "tier": "important", "sensitivity": "project",
+          "provenance": {"source": "test:policy-a-small", "sourceVersion": "v1", "sourceHash": "81db8ebbbbc69c6c6ad4a6aa92b76e0c08af547da236b9e2c9dbe1d8285a8130", "reason": "approved test source"},
+          "content": "small", "contentHash": "81db8ebbbbc69c6c6ad4a6aa92b76e0c08af547da236b9e2c9dbe1d8285a8130", "originalBytes": 5, "includedBytes": 5, "truncation": "none"
+        },
+        {
+          "id": "policy-b-mixed", "kind": "workflow_policy", "tier": "important", "sensitivity": "project",
+          "provenance": {"source": "test:policy-b-mixed", "sourceVersion": "v1", "sourceHash": "06849957bce302f8e7aa2dfaba9d8536453db20bb6e591b3e77d27255744aaf2", "reason": "approved test source"},
+          "content": "TAIL", "contentHash": "6a6964c54ae66986779e855641d8ad3179f7cd433de8705fec85e7b3f46bcaf4", "originalBytes": 20, "includedBytes": 4, "truncation": "tail"
+        },
+        {
+          "id": "policy-c-mixed", "kind": "workflow_policy", "tier": "important", "sensitivity": "project",
+          "provenance": {"source": "test:policy-c-mixed", "sourceVersion": "v1", "sourceHash": "b5881a6e267214b598e957602e2a8803609ab602dc8ec4b770e4e6d996aa8021", "reason": "approved test source"},
+          "content": "終端", "contentHash": "fd201455c92e349916baf364377f4af9e0e70fd20156a4018047caaece0457c3", "originalBytes": 15, "includedBytes": 6, "truncation": "tail"
+        },
+        {
+          "id": "node-task", "kind": "node_task", "tier": "required", "sensitivity": "project",
+          "provenance": {"source": "test:node-task", "sourceVersion": "v1", "sourceHash": "9226ba5617004907e96bfeda4519b6dc69e3173326570b3e347b26e0c36be9c3", "reason": "approved test source"},
+          "content": "implement the approved task", "contentHash": "9226ba5617004907e96bfeda4519b6dc69e3173326570b3e347b26e0c36be9c3", "originalBytes": 27, "includedBytes": 27, "truncation": "none"
+        },
+        {
+          "id": "memory-z-small", "kind": "memory", "tier": "optional", "sensitivity": "project",
+          "provenance": {"source": "test:memory-z-small", "sourceVersion": "v1", "sourceHash": "35379d9c009e290d702b72abf3f5f9bdbaa7e00a63fc37b5174fc3825c8095e3", "reason": "approved test source"},
+          "content": "remember", "contentHash": "35379d9c009e290d702b72abf3f5f9bdbaa7e00a63fc37b5174fc3825c8095e3", "originalBytes": 8, "includedBytes": 8, "truncation": "none"
+        },
+        {
+          "id": "output-contract", "kind": "output_contract", "tier": "required", "sensitivity": "project",
+          "provenance": {"source": "test:output-contract", "sourceVersion": "v1", "sourceHash": "12730a2798c368919c11cadf4e17fa2dcc84e868b064ad9a04286cf158508713", "reason": "approved test source"},
+          "content": "return structured result", "contentHash": "12730a2798c368919c11cadf4e17fa2dcc84e868b064ad9a04286cf158508713", "originalBytes": 24, "includedBytes": 24, "truncation": "none"
+        }
+      ],
+      "omissions": [
+        {"componentId": "memory-a-large", "kind": "memory", "tier": "optional", "reason": "budget_exhausted", "sourceHash": "0841bcee95cd4587b26ede09797783c854f738df55911566c135a7acb8e20bf1", "originalBytes": 20},
+        {"componentId": "memory-expired", "kind": "memory", "tier": "optional", "reason": "expired", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "originalBytes": 7},
+        {"componentId": "memory-superseded", "kind": "memory", "tier": "optional", "reason": "superseded", "sourceHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "originalBytes": 11}
+      ]
+    },
+    "manifest": {
+      "schemaVersion": "fishyume.context-manifest/v2",
+      "compilerVersion": "context-compiler/v2",
+      "envelopeHash": "93ef13536e377b2664caa6825494e4e72a799dc0a7a45d5dc8cc6d0116d7a506",
+      "budget": {"totalBytes": 109, "requiredBytes": 80, "importantBytes": 17, "optionalBytes": 12},
+      "usage": {"totalBytes": 88, "requiredBytes": 65, "importantBytes": 15, "optionalBytes": 8},
+      "components": [
+        {
+          "id": "execution-contract", "kind": "execution_contract", "tier": "required", "sensitivity": "project",
+          "provenance": {"source": "test:execution-contract", "sourceVersion": "v1", "sourceHash": "c34ed9b78ec9950ac98a0ed7268f76d13b00cc6cfc06a8e93a345700ad070463", "reason": "approved test source"},
+          "contentHash": "c34ed9b78ec9950ac98a0ed7268f76d13b00cc6cfc06a8e93a345700ad070463", "originalBytes": 14, "includedBytes": 14, "truncation": "none"
+        },
+        {
+          "id": "policy-a-small", "kind": "workflow_policy", "tier": "important", "sensitivity": "project",
+          "provenance": {"source": "test:policy-a-small", "sourceVersion": "v1", "sourceHash": "81db8ebbbbc69c6c6ad4a6aa92b76e0c08af547da236b9e2c9dbe1d8285a8130", "reason": "approved test source"},
+          "contentHash": "81db8ebbbbc69c6c6ad4a6aa92b76e0c08af547da236b9e2c9dbe1d8285a8130", "originalBytes": 5, "includedBytes": 5, "truncation": "none"
+        },
+        {
+          "id": "policy-b-mixed", "kind": "workflow_policy", "tier": "important", "sensitivity": "project",
+          "provenance": {"source": "test:policy-b-mixed", "sourceVersion": "v1", "sourceHash": "06849957bce302f8e7aa2dfaba9d8536453db20bb6e591b3e77d27255744aaf2", "reason": "approved test source"},
+          "contentHash": "6a6964c54ae66986779e855641d8ad3179f7cd433de8705fec85e7b3f46bcaf4", "originalBytes": 20, "includedBytes": 4, "truncation": "tail"
+        },
+        {
+          "id": "policy-c-mixed", "kind": "workflow_policy", "tier": "important", "sensitivity": "project",
+          "provenance": {"source": "test:policy-c-mixed", "sourceVersion": "v1", "sourceHash": "b5881a6e267214b598e957602e2a8803609ab602dc8ec4b770e4e6d996aa8021", "reason": "approved test source"},
+          "contentHash": "fd201455c92e349916baf364377f4af9e0e70fd20156a4018047caaece0457c3", "originalBytes": 15, "includedBytes": 6, "truncation": "tail"
+        },
+        {
+          "id": "node-task", "kind": "node_task", "tier": "required", "sensitivity": "project",
+          "provenance": {"source": "test:node-task", "sourceVersion": "v1", "sourceHash": "9226ba5617004907e96bfeda4519b6dc69e3173326570b3e347b26e0c36be9c3", "reason": "approved test source"},
+          "contentHash": "9226ba5617004907e96bfeda4519b6dc69e3173326570b3e347b26e0c36be9c3", "originalBytes": 27, "includedBytes": 27, "truncation": "none"
+        },
+        {
+          "id": "memory-z-small", "kind": "memory", "tier": "optional", "sensitivity": "project",
+          "provenance": {"source": "test:memory-z-small", "sourceVersion": "v1", "sourceHash": "35379d9c009e290d702b72abf3f5f9bdbaa7e00a63fc37b5174fc3825c8095e3", "reason": "approved test source"},
+          "contentHash": "35379d9c009e290d702b72abf3f5f9bdbaa7e00a63fc37b5174fc3825c8095e3", "originalBytes": 8, "includedBytes": 8, "truncation": "none"
+        },
+        {
+          "id": "output-contract", "kind": "output_contract", "tier": "required", "sensitivity": "project",
+          "provenance": {"source": "test:output-contract", "sourceVersion": "v1", "sourceHash": "12730a2798c368919c11cadf4e17fa2dcc84e868b064ad9a04286cf158508713", "reason": "approved test source"},
+          "contentHash": "12730a2798c368919c11cadf4e17fa2dcc84e868b064ad9a04286cf158508713", "originalBytes": 24, "includedBytes": 24, "truncation": "none"
+        }
+      ],
+      "omissions": [
+        {"componentId": "memory-a-large", "kind": "memory", "tier": "optional", "reason": "budget_exhausted", "sourceHash": "0841bcee95cd4587b26ede09797783c854f738df55911566c135a7acb8e20bf1", "originalBytes": 20},
+        {"componentId": "memory-expired", "kind": "memory", "tier": "optional", "reason": "expired", "sourceHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "originalBytes": 7},
+        {"componentId": "memory-superseded", "kind": "memory", "tier": "optional", "reason": "superseded", "sourceHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "originalBytes": 11}
+      ]
+    },
+    "hash": "93ef13536e377b2664caa6825494e4e72a799dc0a7a45d5dc8cc6d0116d7a506"
   }
 }

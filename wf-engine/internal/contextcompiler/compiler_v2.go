@@ -12,11 +12,11 @@ import (
 // pure compiler. ExecutionContract and OutputContract are engine-owned values;
 // source resolution is never allowed to supply either kind.
 type ContextCompilerInputV2 struct {
-	Identity          agent.AttemptIdentity
-	Resolution        ContextSourceResolutionV2
-	ExecutionContract ContextComponentV2
-	OutputContract    ContextComponentV2
-	Budget            AttentionBudgetV2
+	Identity          agent.AttemptIdentity     `json:"identity"`
+	Resolution        ContextSourceResolutionV2 `json:"resolution"`
+	ExecutionContract ContextComponentV2        `json:"executionContract"`
+	OutputContract    ContextComponentV2        `json:"outputContract"`
+	Budget            AttentionBudgetV2         `json:"budget"`
 }
 
 type CompilationV2 struct {
@@ -55,6 +55,9 @@ func CompileContextV2(input ContextCompilerInputV2) (CompilationV2, error) {
 		}
 		if err := validateComponentV2(component); err != nil {
 			return CompilationV2{}, err
+		}
+		if component.Truncation != TruncationNone || component.OriginalBytes != component.IncludedBytes {
+			return CompilationV2{}, contractError(CodeContextInvalidComponent, "source resolution components must be complete and untruncated", component.ID)
 		}
 		if _, ok := seen[component.ID]; ok {
 			return CompilationV2{}, contractError(CodeContextInvalidComponent, "duplicate Context component ID", component.ID)
