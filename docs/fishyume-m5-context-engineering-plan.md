@@ -1,6 +1,6 @@
 # Fishyume M5: Context Engineering and Memory
 
-> Status: M5.0 contracts and M5.1 production source registry completed on 2026-08-17; M5.2 Memory Store work is next. The accepted M4.5 Developer Preview remains the product baseline.
+> Status: M5.0 contracts, M5.1 source registry, and M5.2 project Memory ledger completed on 2026-08-17; M5.3 Attention Budget Compiler is next. The accepted M4.5 Developer Preview remains the product baseline.
 
 M5 turns the existing deterministic Context Compiler skeleton into the product layer
 that gives each Agent Attempt the smallest sufficient, auditable context. Fishyume
@@ -51,6 +51,12 @@ Completed in [`fishyume-m5.1-context-source-registry.md`](./fishyume-m5.1-contex
 Add project-scoped typed memory with provenance, creation reason, supersession,
 retention bounds, and explicit deletion. Do not persist full conversation history as
 memory. Reads and writes must be inspectable through the Application API.
+
+Completed in [`fishyume-m5.2-memory-store.md`](./fishyume-m5.2-memory-store.md):
+canonical project identity, bounded strict JSON catalogs, cross-process locking,
+atomic revision/receipt commits, create/get/list/supersede/delete lifecycle, and fixed
+user/host-agent CLI/MCP writers are implemented. Production Run, Attempt, Workflow,
+Driver, and Context Compiler integration remains unchanged for M5.4.
 
 ### M5.3: Attention budget compiler
 

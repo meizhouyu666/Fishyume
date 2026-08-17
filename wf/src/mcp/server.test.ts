@@ -30,6 +30,15 @@ class FakeApplicationClient implements EngineClient {
   async close(): Promise<void> {this.closed = true; this.closeCount++}
 }
 
+class RecordingMemoryClient extends FakeApplicationClient {
+  calls: Array<{method: string; params?: unknown}> = [];
+  override async call<T>(method: string, params?: unknown): Promise<T> {
+    this.calls.push({method, params});
+    if (method === 'memory.host.create') return {apiVersion: 'fishyume.application/v1', revision: 1, recordId: 'memory-a', affectedIds: [], replayed: false} as T;
+    return super.call<T>(method);
+  }
+}
+
 test('MCP transport close settles the command and closes the EngineClient exactly once', async () => {
   const engine = new FakeApplicationClient();
   const [hostTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -81,7 +90,7 @@ test('MCP and Machine CLI expose identical Application response JSON', async () 
   await Promise.all([mcpServer.connect(serverTransport), mcpClient.connect(clientTransport)]);
   try {
     const listed = await mcpClient.listTools();
-    assert.deepEqual(listed.tools.map(tool => tool.name), ['system.capabilities', 'workflow.validate', 'workflow.explain', 'run.start', 'run.list', 'run.get', 'run.events', 'run.action', 'run.result']);
+    assert.deepEqual(listed.tools.map(tool => tool.name), ['system.capabilities', 'workflow.validate', 'workflow.explain', 'run.start', 'run.list', 'run.get', 'run.events', 'run.action', 'run.result', 'memory.create', 'memory.get', 'memory.list', 'memory.supersede', 'memory.delete']);
     for (const tool of listed.tools) {
       const schema = JSON.stringify(tool.inputSchema);
       for (const legacy of ['"backend"', '"tool"', '"runtime"']) assert.equal(schema.includes(legacy), false, `${tool.name} exposed ${legacy}`);
@@ -99,5 +108,24 @@ test('MCP and Machine CLI expose identical Application response JSON', async () 
   } finally {
     await mcpClient.close();
     await mcpServer.close();
+  }
+});
+
+test('MCP Memory writes use the fixed host_agent RPC facade and require an audit reason', async () => {
+  const engine = new RecordingMemoryClient();
+  const server = createMCPServer(engine);
+  const host = new Client({name: 'memory-host', version: '1.0.0'});
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverTransport), host.connect(clientTransport)]);
+  try {
+    const rejected = await host.callTool({name: 'memory.create', arguments: {project: 'p', mutationId: 'm', type: 'fact', content: 'value', sensitivity: 'project'}});
+    assert.equal(rejected.isError, true);
+    const result = await host.callTool({name: 'memory.create', arguments: {project: 'p', mutationId: 'm', type: 'fact', content: 'value', sensitivity: 'project', reason: 'explicit host audit'}});
+    assert.notEqual(result.isError, true);
+    assert.equal(engine.calls.at(-1)?.method, 'memory.host.create');
+    assert.deepEqual(engine.calls.at(-1)?.params, {project: 'p', mutationId: 'm', type: 'fact', content: 'value', sensitivity: 'project', reason: 'explicit host audit'});
+  } finally {
+    await host.close();
+    await server.close();
   }
 });

@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"time"
 )
 
 type FaultInjector func(operation, path string) error
@@ -23,11 +24,13 @@ type Store struct {
 
 	faultMu       sync.RWMutex
 	faultInjector FaultInjector
+	memoryClockMu sync.RWMutex
+	memoryClock   func() time.Time
 }
 
 var safeID = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,127}$`)
 
-func New(root string) *Store { return &Store{root: root} }
+func New(root string) *Store { return &Store{root: root, memoryClock: time.Now} }
 
 // LegacyFallback returns the former default store for read-only compatibility
 // lookup. Callers must not use it for new writes or migration.

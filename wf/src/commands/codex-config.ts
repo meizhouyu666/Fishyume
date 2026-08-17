@@ -13,6 +13,11 @@ export const fishyumeMcpTools = [
   'run.events',
   'run.action',
   'run.result',
+  'memory.create',
+  'memory.get',
+  'memory.list',
+  'memory.supersede',
+  'memory.delete',
 ] as const;
 
 export function codexConfigPath(environment: NodeJS.ProcessEnv = process.env): string {

@@ -4,7 +4,7 @@ import type {AttemptSnapshot, Conclusion, NodePhase, NodeResult, NodeSnapshot, R
 
 export const applicationApiVersion = 'fishyume.application/v1' as const;
 export type JsonScalar = string | number | boolean;
-export type ApplicationMethod = 'system.capabilities' | 'workflow.validate' | 'workflow.explain' | 'run.start' | 'run.list' | 'run.get' | 'run.events' | 'run.action' | 'run.result';
+export type ApplicationMethod = 'system.capabilities' | 'workflow.validate' | 'workflow.explain' | 'run.start' | 'run.list' | 'run.get' | 'run.events' | 'run.action' | 'run.result' | 'memory.create' | 'memory.get' | 'memory.list' | 'memory.supersede' | 'memory.delete';
 export type ApplicationErrorCode = 'invalid_argument' | 'invalid_workflow' | 'not_found' | 'conflict' | 'capability_unavailable' | 'not_ready' | 'protocol_mismatch' | 'internal';
 export interface ApplicationError {code: ApplicationErrorCode; message: string; data?: Record<string, unknown>}
 
@@ -34,10 +34,27 @@ export interface RunActionRequest {actionId: string; runId: string; type: Action
 export interface RunActionResponse {apiVersion: typeof applicationApiVersion; actionId: string; runId: string; type: ActionType; stateVersion: number; phase: RunPhase; conclusion?: Conclusion}
 export interface RunResultRequest {runId: string}
 export interface RunResultResponse {apiVersion: typeof applicationApiVersion; runId: string; conclusion: Conclusion; summary?: string; results: Array<{nodeId: string; conclusion?: Conclusion; result?: ApplicationResult}>; completedAt: string}
+export type MemoryType = 'decision' | 'constraint' | 'fact' | 'procedure' | 'preference';
+export type MemoryState = 'active' | 'superseded' | 'deleted';
+export type MemorySensitivity = 'public' | 'project';
+export type MemoryWriter = 'user' | 'host_agent' | 'migration';
+export interface MemoryProvenance {writer: MemoryWriter; source: string; sourceVersion: string; sourceHash: string; reason: string}
+export interface MemoryRetention {expiresAt?: string; maxUses?: number}
+export interface MemoryRecord {schemaVersion: 'fishyume.memory/v1'; id: string; project: string; type: MemoryType; scope: 'project'; content?: string; contentHash: string; sensitivity: MemorySensitivity; provenance: MemoryProvenance; createdAt: string; updatedAt: string; supersedes: string[]; state: MemoryState; stateReason?: string; useCount: number; retention: MemoryRetention}
+export type MemoryRecordMetadata = Omit<MemoryRecord, 'content'>;
+export interface MemoryCreateRequest {project: string; mutationId: string; type: MemoryType; content: string; sensitivity: MemorySensitivity; reason: string; expiresAt?: string; maxUses?: number}
+export interface MemoryGetRequest {project: string; recordId: string}
+export interface MemoryListRequest {project: string; filter?: {type?: MemoryType; state?: MemoryState; sensitivity?: MemorySensitivity; writer?: MemoryWriter}; cursor?: string; limit?: number}
+export interface MemorySupersedeRequest extends MemoryCreateRequest {supersedes: string[]}
+export interface MemoryDeleteRequest {project: string; mutationId: string; recordId: string; reason: string}
+export interface MemoryMutationResponse {apiVersion: typeof applicationApiVersion; revision: number; recordId: string; affectedIds: string[]; replayed: boolean}
+export interface MemoryGetResponse {apiVersion: typeof applicationApiVersion; revision: number; record: MemoryRecord}
+export interface MemoryListResponse {apiVersion: typeof applicationApiVersion; revision: number; items: MemoryRecordMetadata[]; nextCursor?: string}
 
 export interface ApplicationResponses {
   'system.capabilities': SystemCapabilitiesResponse; 'workflow.validate': WorkflowValidateResponse; 'workflow.explain': WorkflowExplainResponse;
   'run.start': RunStartResponse; 'run.list': RunListResponse; 'run.get': RunGetResponse; 'run.events': RunEventsResponse; 'run.action': RunActionResponse; 'run.result': RunResultResponse;
+  'memory.create': MemoryMutationResponse; 'memory.get': MemoryGetResponse; 'memory.list': MemoryListResponse; 'memory.supersede': MemoryMutationResponse; 'memory.delete': MemoryMutationResponse;
 }
 
 export class ApplicationCallError extends Error {
@@ -46,6 +63,15 @@ export class ApplicationCallError extends Error {
 
 export async function callApplication<M extends ApplicationMethod>(client: EngineClient, method: M, request: unknown): Promise<ApplicationResponses[M]> {
   try {return await client.call<ApplicationResponses[M]>(method, request)}
+  catch (error) {
+    if (error instanceof EngineRpcError && isApplicationError(error.data)) throw new ApplicationCallError(error.data);
+    throw error;
+  }
+}
+
+export async function callHostMemory<M extends 'memory.create' | 'memory.supersede' | 'memory.delete'>(client: EngineClient, method: M, request: unknown): Promise<ApplicationResponses[M]> {
+  const internalMethod = method.replace('memory.', 'memory.host.');
+  try {return await client.call<ApplicationResponses[M]>(internalMethod, request)}
   catch (error) {
     if (error instanceof EngineRpcError && isApplicationError(error.data)) throw new ApplicationCallError(error.data);
     throw error;

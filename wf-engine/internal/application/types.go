@@ -3,6 +3,9 @@ package application
 import (
 	"encoding/json"
 	"time"
+
+	"wf.local/wf-engine/internal/contextcompiler"
+	"wf.local/wf-engine/internal/store"
 )
 
 const (
@@ -41,15 +44,21 @@ type DriverCapability struct {
 }
 
 type Limits struct {
-	DefaultListLimit       int `json:"defaultListLimit"`
-	MaxListLimit           int `json:"maxListLimit"`
-	DefaultEventLimit      int `json:"defaultEventLimit"`
-	MaxEventLimit          int `json:"maxEventLimit"`
-	MaxEventWaitMS         int `json:"maxEventWaitMs"`
-	MaxResponseBytes       int `json:"maxResponseBytes"`
-	MaxSchemaResponseBytes int `json:"maxSchemaResponseBytes"`
-	MaxErrorDataBytes      int `json:"maxErrorDataBytes"`
-	MaxRequestIDBytes      int `json:"maxRequestIdBytes"`
+	DefaultListLimit        int `json:"defaultListLimit"`
+	MaxListLimit            int `json:"maxListLimit"`
+	DefaultEventLimit       int `json:"defaultEventLimit"`
+	MaxEventLimit           int `json:"maxEventLimit"`
+	MaxEventWaitMS          int `json:"maxEventWaitMs"`
+	MaxResponseBytes        int `json:"maxResponseBytes"`
+	MaxSchemaResponseBytes  int `json:"maxSchemaResponseBytes"`
+	MaxErrorDataBytes       int `json:"maxErrorDataBytes"`
+	MaxRequestIDBytes       int `json:"maxRequestIdBytes"`
+	MaxMemoryContentBytes   int `json:"maxMemoryContentBytes"`
+	MaxProjectMemoryRecords int `json:"maxProjectMemoryRecords"`
+	MaxMemorySupersedes     int `json:"maxMemorySupersedes"`
+	MaxMemoryReceipts       int `json:"maxMemoryReceipts"`
+	DefaultMemoryListLimit  int `json:"defaultMemoryListLimit"`
+	MaxMemoryListLimit      int `json:"maxMemoryListLimit"`
 }
 
 type SystemCapabilitiesRequest struct {
@@ -309,8 +318,80 @@ type RunResultResponse struct {
 	CompletedAt string       `json:"completedAt"`
 }
 
+type MemoryCreateRequest struct {
+	Project     string                      `json:"project"`
+	MutationID  string                      `json:"mutationId"`
+	Type        contextcompiler.MemoryType  `json:"type"`
+	Content     string                      `json:"content"`
+	Sensitivity contextcompiler.Sensitivity `json:"sensitivity"`
+	Reason      string                      `json:"reason"`
+	ExpiresAt   string                      `json:"expiresAt,omitempty"`
+	MaxUses     int                         `json:"maxUses,omitempty"`
+}
+
+type MemoryGetRequest struct {
+	Project  string `json:"project"`
+	RecordID string `json:"recordId"`
+}
+
+type MemoryListFilter struct {
+	Type        contextcompiler.MemoryType   `json:"type,omitempty"`
+	State       contextcompiler.MemoryState  `json:"state,omitempty"`
+	Sensitivity contextcompiler.Sensitivity  `json:"sensitivity,omitempty"`
+	Writer      contextcompiler.MemoryWriter `json:"writer,omitempty"`
+}
+
+type MemoryListRequest struct {
+	Project string           `json:"project"`
+	Filter  MemoryListFilter `json:"filter,omitempty"`
+	Cursor  string           `json:"cursor,omitempty"`
+	Limit   int              `json:"limit,omitempty"`
+}
+
+type MemorySupersedeRequest struct {
+	Project     string                      `json:"project"`
+	MutationID  string                      `json:"mutationId"`
+	Supersedes  []string                    `json:"supersedes"`
+	Type        contextcompiler.MemoryType  `json:"type"`
+	Content     string                      `json:"content"`
+	Sensitivity contextcompiler.Sensitivity `json:"sensitivity"`
+	Reason      string                      `json:"reason"`
+	ExpiresAt   string                      `json:"expiresAt,omitempty"`
+	MaxUses     int                         `json:"maxUses,omitempty"`
+}
+
+type MemoryDeleteRequest struct {
+	Project    string `json:"project"`
+	MutationID string `json:"mutationId"`
+	RecordID   string `json:"recordId"`
+	Reason     string `json:"reason"`
+}
+
+type MemoryMutationResponse struct {
+	APIVersion  string   `json:"apiVersion"`
+	Revision    uint64   `json:"revision"`
+	RecordID    string   `json:"recordId"`
+	AffectedIDs []string `json:"affectedIds"`
+	Replayed    bool     `json:"replayed"`
+}
+
+type MemoryGetResponse struct {
+	APIVersion string                         `json:"apiVersion"`
+	Revision   uint64                         `json:"revision"`
+	Record     contextcompiler.MemoryRecordV1 `json:"record"`
+}
+
+type MemoryRecordMetadata = store.MemoryRecordMetadata
+
+type MemoryListResponse struct {
+	APIVersion string                 `json:"apiVersion"`
+	Revision   uint64                 `json:"revision"`
+	Items      []MemoryRecordMetadata `json:"items"`
+	NextCursor string                 `json:"nextCursor,omitempty"`
+}
+
 func StableLimits() Limits {
-	return Limits{DefaultListLimit: DefaultListLimit, MaxListLimit: MaxListLimit, DefaultEventLimit: DefaultEventLimit, MaxEventLimit: MaxEventLimit, MaxEventWaitMS: MaxEventWaitMS, MaxResponseBytes: MaxResponseBytes, MaxSchemaResponseBytes: MaxSchemaResponseBytes, MaxErrorDataBytes: MaxErrorDataBytes, MaxRequestIDBytes: MaxRequestIDBytes}
+	return Limits{DefaultListLimit: DefaultListLimit, MaxListLimit: MaxListLimit, DefaultEventLimit: DefaultEventLimit, MaxEventLimit: MaxEventLimit, MaxEventWaitMS: MaxEventWaitMS, MaxResponseBytes: MaxResponseBytes, MaxSchemaResponseBytes: MaxSchemaResponseBytes, MaxErrorDataBytes: MaxErrorDataBytes, MaxRequestIDBytes: MaxRequestIDBytes, MaxMemoryContentBytes: contextcompiler.MaxMemoryContentBytes, MaxProjectMemoryRecords: contextcompiler.MaxProjectMemoryRecords, MaxMemorySupersedes: contextcompiler.MaxMemorySupersedes, MaxMemoryReceipts: store.MaxMemoryReceipts, DefaultMemoryListLimit: store.DefaultMemoryListLimit, MaxMemoryListLimit: store.MaxMemoryListLimit}
 }
 
 func formatTime(value time.Time) string {

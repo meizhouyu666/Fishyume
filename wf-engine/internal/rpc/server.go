@@ -22,7 +22,7 @@ const (
 	MaxMessageSize = 1 << 20
 )
 
-var supportedMethods = []string{"engine.hello", "run.start", "run.startWorkflow", "run.status", "run.resume", "run.cancel", "run.detach", "system.capabilities", "workflow.validate", "workflow.explain", "run.list", "run.get", "run.events", "run.action", "run.result"}
+var supportedMethods = []string{"engine.hello", "run.start", "run.startWorkflow", "run.status", "run.resume", "run.cancel", "run.detach", "system.capabilities", "workflow.validate", "workflow.explain", "run.list", "run.get", "run.events", "run.action", "run.result", "memory.create", "memory.get", "memory.list", "memory.supersede", "memory.delete"}
 
 type Server struct {
 	reader               *bufio.Reader
@@ -193,6 +193,22 @@ func (s *Server) handle(ctx context.Context, request Request) {
 		invokeApplication(ctx, s, id, request.Params, application.RunActionRequest{}, s.application.RunAction)
 	case "run.result":
 		invokeApplication(ctx, s, id, request.Params, application.RunResultRequest{}, s.application.RunResult)
+	case "memory.create":
+		invokeApplication(ctx, s, id, request.Params, application.MemoryCreateRequest{}, s.application.MemoryCreate)
+	case "memory.get":
+		invokeApplication(ctx, s, id, request.Params, application.MemoryGetRequest{}, s.application.MemoryGet)
+	case "memory.list":
+		invokeApplication(ctx, s, id, request.Params, application.MemoryListRequest{}, s.application.MemoryList)
+	case "memory.supersede":
+		invokeApplication(ctx, s, id, request.Params, application.MemorySupersedeRequest{}, s.application.MemorySupersede)
+	case "memory.delete":
+		invokeApplication(ctx, s, id, request.Params, application.MemoryDeleteRequest{}, s.application.MemoryDelete)
+	case "memory.host.create":
+		invokeApplication(ctx, s, id, request.Params, application.MemoryCreateRequest{}, s.application.MemoryCreateHost)
+	case "memory.host.supersede":
+		invokeApplication(ctx, s, id, request.Params, application.MemorySupersedeRequest{}, s.application.MemorySupersedeHost)
+	case "memory.host.delete":
+		invokeApplication(ctx, s, id, request.Params, application.MemoryDeleteRequest{}, s.application.MemoryDeleteHost)
 	case "run.status":
 		params, ok := s.parseRunID(id, request.Params)
 		if !ok {
@@ -239,7 +255,7 @@ func (s *Server) handle(ctx context.Context, request Request) {
 
 func isMutation(method string) bool {
 	switch method {
-	case "run.start", "run.startWorkflow", "run.resume", "run.cancel", "run.action":
+	case "run.start", "run.startWorkflow", "run.resume", "run.cancel", "run.action", "memory.create", "memory.supersede", "memory.delete", "memory.host.create", "memory.host.supersede", "memory.host.delete":
 		return true
 	default:
 		return false

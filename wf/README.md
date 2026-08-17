@@ -14,7 +14,7 @@ fishyume doctor --project "E:\project"
 fishyume
 ```
 
-`setup codex` idempotently registers the canonical absolute Node/installed-CLI transport through the official Codex CLI, then treats that explicit setup action as authorization for the nine Fishyume Application tools in Fishyume's own Codex config section. `--print` only emits the low-level transport command, and `--force` is required to replace a conflicting entry. Doctor checks Engine/protocol/Driver/project plus Codex CLI, login, canonical MCP transport, and approval policy with an executable recovery command for every failure. After a Host Agent starts work, zero-argument `fishyume` opens the Chinese Run Dashboard; select with arrows or `J`/`K` and press `Enter` to attach. The Console prioritizes the first actionable node and shows prominent Chinese approval/input/retry guidance. `A/Y` approves, `X/N` rejects, `T` retries, `C` cancels the Run, and `Q` only detaches observation. The normal path does not require a handwritten Workflow or copied Run ID.
+`setup codex` idempotently registers the canonical absolute Node/installed-CLI transport through the official Codex CLI, then treats that explicit setup action as authorization for the fourteen Fishyume Application tools in Fishyume's own Codex config section. `--print` only emits the low-level transport command, and `--force` is required to replace a conflicting entry. Doctor checks Engine/protocol/Driver/project plus Codex CLI, login, canonical MCP transport, and approval policy with an executable recovery command for every failure. After a Host Agent starts work, zero-argument `fishyume` opens the Chinese Run Dashboard; select with arrows or `J`/`K` and press `Enter` to attach. The Console prioritizes the first actionable node and shows prominent Chinese approval/input/retry guidance. `A/Y` approves, `X/N` rejects, `T` retries, `C` cancels the Run, and `Q` only detaches observation. The normal path does not require a handwritten Workflow or copied Run ID.
 
 ## Start and observe a Run
 
@@ -37,13 +37,19 @@ defaults:
 
 ## Agent interfaces
 
-The MCP server and Machine CLI expose only the current Application API: `system.capabilities`, `workflow.validate`, `workflow.explain`, `run.start`, `run.list`, `run.get`, `run.events`, `run.action`, and `run.result`.
+The MCP server and Machine CLI expose the current Application API: `system.capabilities`, `workflow.validate`, `workflow.explain`, `run.start`, `run.list`, `run.get`, `run.events`, `run.action`, `run.result`, and project-scoped `memory.create/get/list/supersede/delete`.
 
 ```powershell
 fishyume machine system.capabilities --params '{}'
 fishyume machine run.get --params '{"runId":"<run-id>"}'
 fishyume mcp
 ```
+
+Memory writes require a durable `mutationId` and explicit audit reason. CLI content is
+read from `--stdin` or `--file`, never an inline shell-history flag. CLI writes are fixed
+to writer `user`; MCP writes are fixed to `host_agent`. `memory.list` returns bounded
+metadata, while `memory.get` returns one full record. See
+[`../docs/fishyume-m5.2-memory-store.md`](../docs/fishyume-m5.2-memory-store.md).
 
 Call `system.capabilities` before authoring automation. `run.start` is idempotent by caller-owned `clientRequestId`; `run.action` requires a unique `actionId` and the observed `stateVersion`. Event reads and responses are bounded. Machine output is one Application response JSON object; MCP returns the same response types.
 

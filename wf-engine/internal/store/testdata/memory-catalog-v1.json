@@ -1,0 +1,91 @@
+{
+  "schemaVersion": "fishyume.memory-catalog/v1",
+  "project": "/fixture/project",
+  "projectHash": "4c92ce3babb53d978d3b98d59b1368c1724e365237465ff9cda3b5526d80d05d",
+  "revision": 3,
+  "records": [
+    {
+      "schemaVersion": "fishyume.memory/v1",
+      "id": "memory-c97625d8ef2a449a266f23cf41daac77",
+      "project": "/fixture/project",
+      "type": "fact",
+      "scope": "project",
+      "content": "Keep fixture deterministic.",
+      "contentHash": "1a3666177b960c2e6c7c499f43a70828eaf712b876771130fd6eb4ea095f0552",
+      "sensitivity": "project",
+      "provenance": {
+        "writer": "user",
+        "source": "fishyume.cli",
+        "sourceVersion": "fishyume.application/v1",
+        "sourceHash": "0e840070927b760a0efded932d3b08a9e34ec52d18d2ce2b07f7092f937048c2",
+        "reason": "fixture create"
+      },
+      "createdAt": "2026-08-17T08:30:00Z",
+      "updatedAt": "2026-08-17T08:30:00Z",
+      "supersedes": [],
+      "state": "active",
+      "useCount": 0,
+      "retention": {}
+    },
+    {
+      "schemaVersion": "fishyume.memory/v1",
+      "id": "memory-ceb2d4bdacecab1bff76fc5620d71abb",
+      "project": "/fixture/project",
+      "type": "constraint",
+      "scope": "project",
+      "contentHash": "85d86e07f2a5e1c6867674241172c6ebe88c56f1b06cac8a793589f807c0e7b7",
+      "sensitivity": "project",
+      "provenance": {
+        "writer": "user",
+        "source": "fishyume.cli",
+        "sourceVersion": "fishyume.application/v1",
+        "sourceHash": "0e840070927b760a0efded932d3b08a9e34ec52d18d2ce2b07f7092f937048c2",
+        "reason": "fixture create"
+      },
+      "createdAt": "2026-08-17T08:30:00Z",
+      "updatedAt": "2026-08-17T08:31:00Z",
+      "supersedes": [],
+      "state": "deleted",
+      "stateReason": "fixture delete",
+      "useCount": 0,
+      "retention": {}
+    }
+  ],
+  "receipts": [
+    {
+      "mutationId": "fixture-create-a",
+      "requestHash": "8fea5c694a41bb64867a1e88867873ba93004da319fe1b3e69035954f4a2b1e0",
+      "operation": "create",
+      "writer": "user",
+      "reason": "fixture create",
+      "revision": 1,
+      "recordId": "memory-c97625d8ef2a449a266f23cf41daac77",
+      "affectedIds": [],
+      "createdAt": "2026-08-17T08:30:00Z"
+    },
+    {
+      "mutationId": "fixture-create-b",
+      "requestHash": "eca55574b58d39b4d714eaa87ac0a14fda41a55bce8ac927ed7bdd2d06e820f3",
+      "operation": "create",
+      "writer": "user",
+      "reason": "fixture create",
+      "revision": 2,
+      "recordId": "memory-ceb2d4bdacecab1bff76fc5620d71abb",
+      "affectedIds": [],
+      "createdAt": "2026-08-17T08:30:00Z"
+    },
+    {
+      "mutationId": "fixture-delete-b",
+      "requestHash": "aa281e64aac1c2c66c774fcf26a5c02185aa7be53a0f270ad4106daf16760e24",
+      "operation": "delete",
+      "writer": "user",
+      "reason": "fixture delete",
+      "revision": 3,
+      "recordId": "memory-ceb2d4bdacecab1bff76fc5620d71abb",
+      "affectedIds": [
+        "memory-ceb2d4bdacecab1bff76fc5620d71abb"
+      ],
+      "createdAt": "2026-08-17T08:31:00Z"
+    }
+  ]
+}

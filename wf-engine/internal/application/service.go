@@ -47,6 +47,7 @@ type Service struct {
 	core          Core
 	defaultDriver string
 	journal       Journal
+	memory        MemoryBackend
 	now           func() time.Time
 	mutationMu    sync.Mutex
 }
@@ -60,7 +61,11 @@ func NewService(core Core, defaultDriver string, journals ...Journal) *Service {
 	if len(journals) > 0 {
 		journal = journals[0]
 	}
-	return &Service{core: core, defaultDriver: defaultDriver, journal: journal, now: time.Now}
+	var memory MemoryBackend
+	if candidate, ok := journal.(MemoryBackend); ok {
+		memory = candidate
+	}
+	return &Service{core: core, defaultDriver: defaultDriver, journal: journal, memory: memory, now: time.Now}
 }
 
 func (s *Service) SystemCapabilities(ctx context.Context, request SystemCapabilitiesRequest) (SystemCapabilitiesResponse, *Error) {

@@ -10,6 +10,7 @@ import {MachineCommand} from './commands/machine.js';
 import {MCPCommand} from './commands/mcp.js';
 import {DashboardCommand} from './commands/dashboard.js';
 import {SetupCodexCommand} from './commands/setup.js';
+import {MemoryCreateCommand, MemoryDeleteCommand, MemoryGetCommand, MemoryListCommand, MemorySupersedeCommand} from './commands/memory.js';
 
 const cli = new Cli({binaryLabel: 'Fishyume', binaryName: 'fishyume', binaryVersion: '0.2.1-alpha.1'});
 cli.register(Builtins.HelpCommand);
@@ -24,5 +25,10 @@ cli.register(CancelCommand);
 cli.register(AttachCommand);
 cli.register(MachineCommand);
 cli.register(MCPCommand);
+cli.register(MemoryCreateCommand);
+cli.register(MemoryGetCommand);
+cli.register(MemoryListCommand);
+cli.register(MemorySupersedeCommand);
+cli.register(MemoryDeleteCommand);
 const args = process.argv.slice(2);
 await cli.runExit(args.length === 0 ? ['dashboard'] : args, Cli.defaultContext);

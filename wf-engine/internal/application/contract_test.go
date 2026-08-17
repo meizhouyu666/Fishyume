@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+
+	"wf.local/wf-engine/internal/contextcompiler"
 )
 
 func TestApplicationContractFixture(t *testing.T) {
@@ -17,7 +19,7 @@ func TestApplicationContractFixture(t *testing.T) {
 	if err := json.Unmarshal(data, &fixture); err != nil {
 		t.Fatal(err)
 	}
-	wanted := []string{"error", "run.action.request", "run.action.response", "run.events.response", "run.get.response", "run.list.response", "run.result.response", "run.start.request", "run.start.response", "system.capabilities.response", "workflow.explain.response", "workflow.validate.response"}
+	wanted := []string{"error", "memory.create.request", "memory.delete.request", "memory.get.response", "memory.list.response", "memory.mutation.response", "memory.supersede.request", "run.action.request", "run.action.response", "run.events.response", "run.get.response", "run.list.response", "run.result.response", "run.start.request", "run.start.response", "system.capabilities.response", "workflow.explain.response", "workflow.validate.response"}
 	got := make([]string, 0, len(fixture))
 	for key, raw := range fixture {
 		got = append(got, key)
@@ -31,6 +33,13 @@ func TestApplicationContractFixture(t *testing.T) {
 	if !reflect.DeepEqual(got, wanted) {
 		t.Fatalf("fixture keys = %v, want %v", got, wanted)
 	}
+	var memoryGet MemoryGetResponse
+	if err := json.Unmarshal(fixture["memory.get.response"], &memoryGet); err != nil {
+		t.Fatal(err)
+	}
+	if err := contextcompiler.ValidateMemoryRecordV1(memoryGet.Record); err != nil {
+		t.Fatalf("memory.get fixture record: %v", err)
+	}
 }
 
 func TestStableContractLimitsAndErrors(t *testing.T) {
@@ -42,7 +51,7 @@ func TestStableContractLimitsAndErrors(t *testing.T) {
 		t.Fatalf("error codes = %v, want %v", StableErrorCodes, want)
 	}
 	limits := StableLimits()
-	if limits.DefaultListLimit <= 0 || limits.DefaultListLimit > limits.MaxListLimit || limits.DefaultEventLimit <= 0 || limits.DefaultEventLimit > limits.MaxEventLimit || limits.MaxEventWaitMS <= 0 || limits.MaxResponseBytes <= limits.MaxErrorDataBytes {
+	if limits.DefaultListLimit <= 0 || limits.DefaultListLimit > limits.MaxListLimit || limits.DefaultEventLimit <= 0 || limits.DefaultEventLimit > limits.MaxEventLimit || limits.MaxEventWaitMS <= 0 || limits.MaxResponseBytes <= limits.MaxErrorDataBytes || limits.MaxMemoryContentBytes != 16*1024 || limits.MaxProjectMemoryRecords != 2048 || limits.MaxMemorySupersedes != 16 || limits.MaxMemoryReceipts != 4096 || limits.DefaultMemoryListLimit > limits.MaxMemoryListLimit {
 		t.Fatalf("invalid stable limits: %+v", limits)
 	}
 }

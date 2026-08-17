@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
+import {mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import test from 'node:test';
 
 function invoke(...args: string[]) {
@@ -23,11 +26,42 @@ test('command help remains available', () => {
     assert.equal(result.status, 0, `${command}: ${result.stderr}`);
     assert.match(result.stdout, new RegExp(`fishyume ${command}`));
   }
+  for (const command of ['create', 'get', 'list', 'supersede', 'delete']) {
+    const result = invoke('memory', command, '--help');
+    assert.equal(result.status, 0, `memory ${command}: ${result.stderr}`);
+    assert.match(result.stdout, new RegExp(`fishyume memory ${command}`));
+  }
+  const createMemory = invoke('memory', 'create', '--help');
+  assert.match(createMemory.stdout, /--stdin/);
+  assert.match(createMemory.stdout, /--file/);
+  assert.doesNotMatch(createMemory.stdout, /--content/);
   const setup = invoke('setup', 'codex', '--help');
   assert.equal(setup.status, 0, setup.stderr);
   assert.match(setup.stdout, /fishyume setup codex/);
   assert.match(setup.stdout, /--print/);
   assert.match(setup.stdout, /--force/);
+});
+
+test('memory file content rejects oversized and invalid UTF-8 input before starting the Engine', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fishyume-memory-cli-'));
+  try {
+    const common = ['memory', 'create', '--project', directory, '--mutation-id', 'bounded-file', '--type', 'fact', '--reason', 'bounded CLI test', '--file'];
+    const oversized = join(directory, 'oversized.txt');
+    writeFileSync(oversized, Buffer.alloc(16 * 1024 + 1, 0x61));
+    const oversizedResult = invoke(...common, oversized);
+    assert.equal(oversizedResult.status, 6, oversizedResult.stderr);
+    assert.equal(JSON.parse(oversizedResult.stdout).error.code, 'invalid_argument');
+    assert.match(JSON.parse(oversizedResult.stdout).error.message, /no larger than 16 KiB/);
+
+    const invalid = join(directory, 'invalid.txt');
+    writeFileSync(invalid, Buffer.from([0xff, 0xfe]));
+    const invalidResult = invoke(...common, invalid);
+    assert.equal(invalidResult.status, 6, invalidResult.stderr);
+    assert.equal(JSON.parse(invalidResult.stdout).error.code, 'invalid_argument');
+    assert.match(JSON.parse(invalidResult.stdout).error.message, /valid UTF-8/);
+  } finally {
+    rmSync(directory, {recursive: true, force: true});
+  }
 });
 
 test('command help describes the Agent-facing control-plane surface', () => {
