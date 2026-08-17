@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"wf.local/wf-engine/internal/agent"
 )
@@ -444,7 +445,10 @@ func ValidateMemoryRecordV1(record MemoryRecordV1) error {
 }
 
 func validateBudgetV2(budget AttentionBudgetV2) error {
-	if budget.TotalBytes < 1 || budget.TotalBytes > MaxContextPayloadBytes || budget.RequiredBytes < 1 || budget.ImportantBytes < 0 || budget.OptionalBytes < 0 || budget.RequiredBytes+budget.ImportantBytes+budget.OptionalBytes != budget.TotalBytes {
+	if budget.TotalBytes < 1 || budget.TotalBytes > MaxContextPayloadBytes || budget.RequiredBytes < 1 || budget.ImportantBytes < 0 || budget.OptionalBytes < 0 || budget.RequiredBytes > budget.TotalBytes || budget.ImportantBytes > budget.TotalBytes || budget.OptionalBytes > budget.TotalBytes {
+		return contractError(CodeContextBudgetUnsatisfiable, "attention tier budgets must be non-negative, bounded, and sum to totalBytes", "")
+	}
+	if budget.RequiredBytes > budget.TotalBytes-budget.ImportantBytes || budget.RequiredBytes+budget.ImportantBytes > budget.TotalBytes-budget.OptionalBytes || budget.RequiredBytes+budget.ImportantBytes+budget.OptionalBytes != budget.TotalBytes {
 		return contractError(CodeContextBudgetUnsatisfiable, "attention tier budgets must be non-negative, bounded, and sum to totalBytes", "")
 	}
 	return nil
@@ -459,6 +463,9 @@ func validateComponentV2(component ContextComponentV2) error {
 	}
 	if err := validateProvenance(component.Provenance.Source, component.Provenance.SourceVersion, component.Provenance.SourceHash); err != nil || strings.TrimSpace(component.Provenance.Reason) == "" || component.Provenance.Reason != strings.TrimSpace(component.Provenance.Reason) || len(component.Provenance.Reason) > 1024 {
 		return contractError(CodeContextInvalidComponent, "Context component provenance is invalid", component.ID)
+	}
+	if !utf8.ValidString(component.Content) {
+		return contractError(CodeContextInvalidComponent, "Context component content is not valid UTF-8", component.ID)
 	}
 	included := len([]byte(component.Content))
 	if included == 0 || included > MaxComponentContentBytes || component.IncludedBytes != included || component.OriginalBytes < included {

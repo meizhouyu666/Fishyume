@@ -1,6 +1,6 @@
 # Fishyume M5: Context Engineering and Memory
 
-> Status: M5.0 contracts, M5.1 source registry, and M5.2 project Memory ledger completed on 2026-08-17; M5.3 Attention Budget Compiler is next. The accepted M4.5 Developer Preview remains the product baseline.
+> Status: M5.0 contracts, M5.1 source registry, M5.2 project Memory ledger, and M5.3 Attention Budget Compiler completed on 2026-08-17; M5.4 Run integration is next. The accepted M4.5 Developer Preview remains the product baseline.
 
 M5 turns the existing deterministic Context Compiler skeleton into the product layer
 that gives each Agent Attempt the smallest sufficient, auditable context. Fishyume
@@ -62,7 +62,9 @@ Driver, and Context Compiler integration remains unchanged for M5.4.
 
 Allocate bounded context by required/important/optional tiers, preserve component
 boundaries, record omissions, and produce a manifest/hash without logging the complete
-prompt. Compilation must be replayable from the same approved inputs.
+prompt. Compilation must be replayable from the same approved inputs. Implemented in
+`internal/contextcompiler` with the stable `BudgetPolicyV1` default and additive
+`CompileContextV2`; production integration remains deferred to M5.4.
 
 ### M5.4: Run integration and product surface
 

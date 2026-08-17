@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "fishyume.attention-compiler-fixture/v1",
+  "description": "Deterministic M5.3 golden: engine-owned contracts, balanced important tier, UTF-8-safe truncation coverage, active Memory, lifecycle and budget omissions.",
+  "policy": {"totalBytes": 131072, "requiredBytes": 65536, "importantBytes": 49152, "optionalBytes": 16384},
+  "expected": {
+    "envelopeHash": "bd566cf8b962b887da95f05b0eed19422b3e64a3bf17d1f1566d56557a883735",
+    "usage": {"totalBytes": 103, "requiredBytes": 65, "importantBytes": 30, "optionalBytes": 8},
+    "omissions": [{"componentId": "memory-b", "kind": "memory", "tier": "optional", "reason": "budget_exhausted", "sourceHash": "dfd8af6329c8ba11e7d96bb6924beb34dd02518298edef1bfbe95166c610c66e", "originalBytes": 320}],
+    "includedComponentIds": ["execution-contract", "policy-a", "policy-b", "node-task", "memory-a", "output-contract"]
+  }
+}
