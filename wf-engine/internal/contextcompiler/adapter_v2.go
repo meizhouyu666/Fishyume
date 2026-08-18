@@ -31,6 +31,19 @@ func AdaptEnvelopeV2WithSkills(envelope ContextEnvelopeV2, workspace, target str
 	if skills == nil {
 		skills = []string{}
 	}
+	// Required skills are a set at the wire boundary.  Canonicalize their
+	// order (and remove duplicate declarations) so adapter output does not
+	// depend on workflow/YAML ordering while preserving the caller's slice.
+	sort.Strings(skills)
+	if len(skills) > 1 {
+		unique := skills[:1]
+		for _, skill := range skills[1:] {
+			if skill != unique[len(unique)-1] {
+				unique = append(unique, skill)
+			}
+		}
+		skills = unique
+	}
 	envelopeValue := agent.AttemptEnvelope{ProtocolVersion: agent.ProtocolVersion, Identity: envelope.Identity, Workspace: workspace, Target: target,
 		Context: agent.AttemptContext{UpstreamResults: []agent.UpstreamResult{}, RequiredSkills: skills}, Constraints: map[string]string{}, Budget: map[string]int64{},
 		ResultContract: agent.ResultContract{MaxBytes: 64 * 1024}}
