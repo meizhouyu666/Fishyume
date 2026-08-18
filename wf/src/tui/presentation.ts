@@ -193,6 +193,12 @@ function nodeDetail(
     lines.push([
       `第 ${attempt.number} 次尝试`, attempt.resolvedDriver ?? attempt.backend, human(attempt.launchState), attempt.execution ? `执行标识 ${attempt.execution.id}` : undefined,
     ].filter((value): value is string => Boolean(value)).join(separator));
+    if (attempt.context) {
+      const context = attempt.context;
+      const components = context.components.map(component => `${component.id}:${component.kind}`).join(',');
+      const omissions = context.omissions?.length ? ` omissions=${context.omissions.join(',')}` : '';
+      lines.push(`context ${context.compilerVersion}${context.hash ? ` hash=${context.hash}` : ''} usage=${context.usage.totalBytes ?? 0}/${context.budget.totalBytes ?? 0} components=${components}${omissions}${context.truncated ? ' truncated' : ''}`);
+    }
   }
   for (const diagnostic of diagnosticsFor(view, node)) {
     const text = [human(diagnostic.reason), diagnostic.message].filter((value): value is string => Boolean(value)).join(separator);

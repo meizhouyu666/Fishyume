@@ -68,10 +68,26 @@ prompt. Compilation must be replayable from the same approved inputs. Implemente
 
 ### M5.4: Run integration and product surface
 
-Persist only bounded Context metadata on Attempts, expose explain/inspect operations to
-Host Agents and the TUI, add migration behavior for Context Compiler v1 snapshots, and
-run real Codex single/parallel acceptance without making Provider credentials a public
-CI dependency.
+M5.4 integrates the deterministic compiler into production Run/Attempt creation and
+inspection without turning the compiler into a Provider prompt logger. New Attempts use
+`context-compiler/v2`; historical v1 snapshots remain readable and resumable through the
+v1 compatibility path and are never rewritten. A deterministic v2 adapter renders the
+ephemeral `ContextEnvelopeV2` into the existing `agent.AttemptEnvelope` contract. Full
+rendered instructions exist only in process memory and the driver launch payload; durable
+state stores bounded metadata (compiler version, manifest, hash, budget/usage,
+component identities, truncation and omissions), never component content or a complete
+prompt.
+
+The Run assembly layer supplies the six approved source classes explicitly: project
+instructions, workflow policy, the rendered node task, explicitly allowed dependency
+results, the current user answer, and explicitly selected Memory IDs. Memory is not
+automatically searched or promoted from node results. M5.4 uses the engine-owned default
+`BudgetPolicyV1`; model/target-aware budgets and routing remain later work.
+
+`run.get`/Application/RPC/MCP and the TUI expose a bounded context inspect view (compiler
+version, hash, budget/usage, component IDs/kinds, omissions and truncation) while
+redacting all component content and complete prompts. Provider credentials are not needed
+by public CI; Codex single-node and parallel acceptance is a local/controlled gate.
 
 ## M5 entry gates
 

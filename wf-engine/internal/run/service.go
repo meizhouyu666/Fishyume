@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"wf.local/wf-engine/internal/agent"
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/contextcompiler"
 	"wf.local/wf-engine/internal/store"
@@ -1464,18 +1463,13 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 					ancestorResults[ancestorID] = result
 				}
 			}
-			compiled, err := contextcompiler.Compile(contextcompiler.Input{
-				Identity: agent.AttemptIdentity{RunID: run.ID, NodeID: node.ID, Attempt: number}, Workspace: run.Project, Target: target, Task: renderedTask,
-				AncestorResults: ancestorResults, RequiredSkills: definition.RequiredSkills,
-				Constraints: map[string]string{"interaction": "none", "processMode": "one-shot", "pty": "disabled"}, Budget: map[string]int64{},
-				ResultSchema: agentResultContractSchema(), ResultMaxBytes: workflow.MaxResultBytes, InputAnswer: node.PendingInputAnswer,
-			})
+			compiled, err := s.compileRunContext(ContextAssembly{Identity: agentIdentity(run.ID, node.ID, number), Project: run.Project, Target: target, NodeID: node.ID, NodeTask: renderedTask, RequiredSkills: definition.RequiredSkills, WorkflowPolicy: workflowPolicy(normalized.Document), DependencyResults: ancestorResults, UserAnswer: node.PendingInputAnswer})
 			if err != nil {
 				return err
 			}
 			attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: run.ID, NodeID: node.ID, Number: number, Phase: NodePhaseRunning, LaunchState: LaunchPrepared,
 				ResolvedDriver: driver, ResolvedTarget: target, Backend: driver,
-				ContextCompilerVersion: compiled.Manifest.CompilerVersion, ContextManifest: compiled.Manifest, ContextHash: compiled.Hash, PromptHash: compiled.Hash, StartedAt: now, UpdatedAt: now}
+				ContextCompilerVersion: contextcompiler.Version, ContextCompilerVersionV2: compiled.Compilation.Manifest.CompilerVersion, ContextManifest: compiled.LegacyManifest, ContextManifestV2: &compiled.Compilation.Manifest, ContextHash: compiled.Compilation.Hash, StartedAt: now, UpdatedAt: now}
 			if err := s.writeAttempt(attempt, true); err != nil {
 				return err
 			}
@@ -1490,7 +1484,7 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			}
 			launch = &pendingLaunch{runID: run.ID, nodeID: node.ID, attempt: number, backend: driver,
 				launchSpec: backend.AgentExecutionSpec{RunID: run.ID, NodeID: node.ID, Attempt: number, Workspace: run.Project, Tool: legacyToolForDriver(s.registry, driver), Runtime: target,
-					Instructions: compiled.Prompt, RequiredSkills: append([]string(nil), definition.RequiredSkills...), ResultContract: backend.ResultContract{Schema: compiled.Envelope.ResultContract.Schema, MaxBytes: workflow.MaxResultBytes}, Envelope: &compiled.Envelope}}
+					Instructions: compiled.Envelope.Prompt, RequiredSkills: append([]string(nil), definition.RequiredSkills...), ResultContract: backend.ResultContract{Schema: compiled.Envelope.ResultContract.Schema, MaxBytes: workflow.MaxResultBytes}, Envelope: &compiled.Envelope}}
 			progressed = true
 			return nil
 		}

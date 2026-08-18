@@ -137,27 +137,29 @@ const (
 )
 
 type AttemptSnapshot struct {
-	ProtocolVersion        int                      `json:"protocolVersion"`
-	StateSchemaVersion     int                      `json:"stateSchemaVersion"`
-	RunID                  string                   `json:"runId"`
-	NodeID                 string                   `json:"nodeId"`
-	Number                 int                      `json:"number"`
-	Phase                  NodePhase                `json:"phase"`
-	Conclusion             Conclusion               `json:"conclusion,omitempty"`
-	Reason                 Reason                   `json:"reason,omitempty"`
-	ResolvedDriver         string                   `json:"resolvedDriver"`
-	ResolvedTarget         string                   `json:"resolvedTarget"`
-	Backend                string                   `json:"-"`
-	LaunchState            LaunchState              `json:"launchState,omitempty"`
-	Execution              *backend.ExecutionHandle `json:"execution,omitempty"`
-	ResultConsumed         bool                     `json:"resultConsumed"`
-	ContextCompilerVersion string                   `json:"contextCompilerVersion,omitempty"`
-	ContextManifest        contextcompiler.Manifest `json:"contextManifest"`
-	ContextHash            string                   `json:"contextHash"`
-	PromptHash             string                   `json:"-"`
-	StartedAt              time.Time                `json:"startedAt"`
-	UpdatedAt              time.Time                `json:"updatedAt"`
-	CompletedAt            *time.Time               `json:"completedAt,omitempty"`
+	ProtocolVersion          int                                `json:"protocolVersion"`
+	StateSchemaVersion       int                                `json:"stateSchemaVersion"`
+	RunID                    string                             `json:"runId"`
+	NodeID                   string                             `json:"nodeId"`
+	Number                   int                                `json:"number"`
+	Phase                    NodePhase                          `json:"phase"`
+	Conclusion               Conclusion                         `json:"conclusion,omitempty"`
+	Reason                   Reason                             `json:"reason,omitempty"`
+	ResolvedDriver           string                             `json:"resolvedDriver"`
+	ResolvedTarget           string                             `json:"resolvedTarget"`
+	Backend                  string                             `json:"-"`
+	LaunchState              LaunchState                        `json:"launchState,omitempty"`
+	Execution                *backend.ExecutionHandle           `json:"execution,omitempty"`
+	ResultConsumed           bool                               `json:"resultConsumed"`
+	ContextCompilerVersion   string                             `json:"contextCompilerVersion,omitempty"`
+	ContextCompilerVersionV2 string                             `json:"contextCompilerVersionV2,omitempty"`
+	ContextManifest          contextcompiler.Manifest           `json:"contextManifest"`
+	ContextManifestV2        *contextcompiler.ContextManifestV2 `json:"contextManifestV2,omitempty"`
+	ContextHash              string                             `json:"contextHash"`
+	PromptHash               string                             `json:"-"`
+	StartedAt                time.Time                          `json:"startedAt"`
+	UpdatedAt                time.Time                          `json:"updatedAt"`
+	CompletedAt              *time.Time                         `json:"completedAt,omitempty"`
 
 	legacyExecution *legacyExecutionSnapshot
 }

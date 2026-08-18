@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {EngineRpcError, type EngineClient} from './engine.js';
-import type {AttemptSnapshot, Conclusion, NodePhase, NodeResult, NodeSnapshot, Reason, RunPhase, RunStatusView, WorkflowSnapshot} from './types.js';
+import type {AttemptSnapshot, Conclusion, ContextInspect, NodePhase, NodeResult, NodeSnapshot, Reason, RunPhase, RunStatusView, WorkflowSnapshot} from './types.js';
 
 export const applicationApiVersion = 'fishyume.application/v1' as const;
 export type JsonScalar = string | number | boolean;
@@ -22,7 +22,7 @@ export interface RunListRequest {filter?: {project?: string; phase?: string; con
 export interface RunSummary {runId: string; workflowName: string; project: string; driver: string; target: string; phase: RunPhase; conclusion?: Conclusion; stateVersion: number; createdAt: string; updatedAt: string}
 export interface RunListResponse {apiVersion: typeof applicationApiVersion; items: RunSummary[]; nextCursor?: string}
 export interface ApplicationResult {summary?: string; artifacts: string[]; warnings: string[]; checks: string[]; questions: Array<{id: string; prompt: string; choices: string[]; required: boolean}>; decision?: string; reason?: string; usage?: Record<string, number>}
-export interface ApplicationNodeView {nodeId: string; type: 'agent' | 'approval'; phase: NodePhase; conclusion?: Conclusion; reason?: Reason; diagnostic?: string; currentAttempt?: number; attempt?: {number: number; phase: string; conclusion?: string; reason?: string; driver: string; target: string; contextHash?: string; startedAt: string; updatedAt: string; completedAt?: string}; result?: ApplicationResult}
+export interface ApplicationNodeView {nodeId: string; type: 'agent' | 'approval'; phase: NodePhase; conclusion?: Conclusion; reason?: Reason; diagnostic?: string; currentAttempt?: number; attempt?: {number: number; phase: string; conclusion?: string; reason?: string; driver: string; target: string; contextHash?: string; context?: ContextInspect; startedAt: string; updatedAt: string; completedAt?: string}; result?: ApplicationResult}
 export interface ApplicationRunView extends RunSummary {summary?: string; cancelRequested: boolean; effectiveConcurrency: number; topologicalOrder: string[]; nodes: ApplicationNodeView[]; deprecationWarnings: string[]}
 export interface RunGetRequest {runId: string}
 export interface RunGetResponse {apiVersion: typeof applicationApiVersion; run: ApplicationRunView}
@@ -103,7 +103,7 @@ export function applicationRunToStatus(response: RunGetResponse): RunStatusView 
   const attempts: AttemptSnapshot[] = source.nodes.flatMap(node => node.attempt ? [{
     protocolVersion: 2 as const, runId: source.runId, nodeId: node.nodeId, number: node.attempt.number, phase: node.attempt.phase as NodePhase,
     conclusion: node.attempt.conclusion as Conclusion | undefined, reason: node.attempt.reason as Reason | undefined, resolvedDriver: node.attempt.driver, resolvedTarget: node.attempt.target,
-    contextHash: node.attempt.contextHash, startedAt: node.attempt.startedAt, updatedAt: node.attempt.updatedAt, completedAt: node.attempt.completedAt,
+    contextHash: node.attempt.contextHash, context: node.attempt.context, startedAt: node.attempt.startedAt, updatedAt: node.attempt.updatedAt, completedAt: node.attempt.completedAt,
   }] : []);
   return {
     protocolVersion: 2, legacy: false, run, nodes: snapshots,

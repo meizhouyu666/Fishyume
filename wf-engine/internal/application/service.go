@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"wf.local/wf-engine/internal/contextcompiler"
 	"wf.local/wf-engine/internal/run"
 	"wf.local/wf-engine/internal/store"
 	"wf.local/wf-engine/internal/workflow"
@@ -731,7 +732,7 @@ func (s *Service) mapRunView(view run.StatusView) RunView {
 			mapped := NodeView{NodeID: node.ID, Type: node.Type, Phase: string(node.Phase), Conclusion: string(node.Conclusion), Reason: string(node.Reason), Diagnostic: node.Diagnostic, CurrentAttempt: node.CurrentAttempt, Result: mapResult(node.Result)}
 			if node.CurrentAttempt > 0 {
 				if attempt, err := s.core.ReadAttempt(snapshot.ID, node.ID, node.CurrentAttempt); err == nil {
-					mapped.Attempt = &AttemptView{Number: attempt.Number, Phase: string(attempt.Phase), Conclusion: string(attempt.Conclusion), Reason: string(attempt.Reason), Driver: runAttemptDriver(attempt), Target: runAttemptTarget(attempt), ContextHash: attempt.ContextHash, StartedAt: formatTime(attempt.StartedAt), UpdatedAt: formatTime(attempt.UpdatedAt)}
+					mapped.Attempt = &AttemptView{Number: attempt.Number, Phase: string(attempt.Phase), Conclusion: string(attempt.Conclusion), Reason: string(attempt.Reason), Driver: runAttemptDriver(attempt), Target: runAttemptTarget(attempt), ContextHash: attempt.ContextHash, Context: inspectContext(attempt), StartedAt: formatTime(attempt.StartedAt), UpdatedAt: formatTime(attempt.UpdatedAt)}
 					if attempt.CompletedAt != nil {
 						mapped.Attempt.CompletedAt = formatTime(*attempt.CompletedAt)
 					}
@@ -742,6 +743,20 @@ func (s *Service) mapRunView(view run.StatusView) RunView {
 		}
 	}
 	return result
+}
+
+func inspectContext(attempt run.AttemptSnapshot) *ContextInspect {
+	if attempt.ContextManifestV2 == nil {
+		if attempt.ContextCompilerVersion == "" && attempt.ContextHash == "" { return nil }
+		components := make([]ContextComponentInspect, 0, len(attempt.ContextManifest.Components))
+		for _, component := range attempt.ContextManifest.Components { components = append(components, ContextComponentInspect{ID: component.Name, Kind: component.Name}) }
+		return &ContextInspect{CompilerVersion: attempt.ContextCompilerVersion, Hash: attempt.ContextHash, Components: components, Budget: map[string]int{}, Usage: map[string]int{}}
+	}
+	manifest := attempt.ContextManifestV2
+	components := make([]ContextComponentInspect, 0, len(manifest.Components)); truncated := false
+	for _, component := range manifest.Components { components = append(components, ContextComponentInspect{ID: component.ID, Kind: string(component.Kind), Tier: string(component.Tier), Truncation: string(component.Truncation)}); truncated = truncated || component.Truncation != contextcompiler.TruncationNone }
+	omissions := make([]string, 0, len(manifest.Omissions)); for _, omission := range manifest.Omissions { omissions = append(omissions, omission.ComponentID) }
+	return &ContextInspect{SchemaVersion: manifest.SchemaVersion, CompilerVersion: manifest.CompilerVersion, Hash: manifest.EnvelopeHash, Budget: map[string]int{"totalBytes": manifest.Budget.TotalBytes, "requiredBytes": manifest.Budget.RequiredBytes, "importantBytes": manifest.Budget.ImportantBytes, "optionalBytes": manifest.Budget.OptionalBytes}, Usage: map[string]int{"totalBytes": manifest.Usage.TotalBytes, "requiredBytes": manifest.Usage.RequiredBytes, "importantBytes": manifest.Usage.ImportantBytes, "optionalBytes": manifest.Usage.OptionalBytes}, Components: components, Omissions: omissions, Truncated: truncated}
 }
 
 func summarizeRun(snapshot run.WorkflowSnapshot) RunSummary {

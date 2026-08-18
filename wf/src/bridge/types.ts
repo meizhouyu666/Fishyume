@@ -35,9 +35,10 @@ export interface AttemptSnapshot {
   conclusion?: Conclusion; reason?: Reason; resolvedDriver?: string; resolvedTarget?: string; backend?: string;
   launchState?: 'prepared' | 'dispatching' | 'handle_persisted' | 'finished_without_handle' | 'session_persisted' | 'finished_without_session';
   execution?: ExecutionHandle; resultConsumed?: boolean;
-  contextCompilerVersion?: string; contextManifest?: {compilerVersion: string; components: Array<{name: string; source: string; version: string}>}; contextHash?: string; promptHash?: string;
+  contextCompilerVersion?: string; contextCompilerVersionV2?: string; contextManifest?: {compilerVersion: string; components: Array<{name: string; source: string; version: string}>}; contextHash?: string; context?: ContextInspect; promptHash?: string;
   startedAt: string; updatedAt: string; completedAt?: string;
 }
+export interface ContextInspect {schemaVersion?: string; compilerVersion: string; hash?: string; budget: Record<string, number>; usage: Record<string, number>; components: Array<{id: string; kind: string; tier?: string; truncation?: string}>; omissions?: string[]; truncated: boolean}
 export interface LegacySnapshot {protocolVersion: 1; id: string; status: string; nodeStatus: string; project: string; summary?: string; stateDir: string; createdAt: string; updatedAt: string}
 export interface NodeDiagnostic {nodeId: string; reason?: Reason; message?: string}
 export interface RunStatusView {

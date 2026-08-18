@@ -207,9 +207,22 @@ type AttemptView struct {
 	Driver      string `json:"driver"`
 	Target      string `json:"target"`
 	ContextHash string `json:"contextHash,omitempty"`
+	Context     *ContextInspect `json:"context,omitempty"`
 	StartedAt   string `json:"startedAt"`
 	UpdatedAt   string `json:"updatedAt"`
 	CompletedAt string `json:"completedAt,omitempty"`
+}
+
+type ContextComponentInspect struct { ID string `json:"id"`; Kind string `json:"kind"`; Tier string `json:"tier"`; Truncation string `json:"truncation"` }
+type ContextInspect struct {
+	SchemaVersion string `json:"schemaVersion"`
+	CompilerVersion string `json:"compilerVersion"`
+	Hash string `json:"hash,omitempty"`
+	Budget map[string]int `json:"budget"`
+	Usage map[string]int `json:"usage"`
+	Components []ContextComponentInspect `json:"components"`
+	Omissions []string `json:"omissions,omitempty"`
+	Truncated bool `json:"truncated"`
 }
 
 type NodeView struct {
