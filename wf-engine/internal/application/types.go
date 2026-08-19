@@ -10,21 +10,24 @@ import (
 )
 
 const (
-	APIVersion             = "fishyume.application/v1"
-	WorkflowSchemaVersion  = "fishyume/v2"
-	DefaultListLimit       = 50
-	MaxListLimit           = 100
-	DefaultEventLimit      = 50
-	MaxEventLimit          = 100
-	MaxEventWaitMS         = 30_000
-	MaxResponseBytes       = 512 * 1024
-	MaxSchemaResponseBytes = 256 * 1024
-	MaxErrorDataBytes      = 8 * 1024
-	MaxRequestIDBytes      = 256
-	AuthoringGuideVersion  = "fishyume.authoring-guide/v1"
-	MaxAuthoringFlowSteps  = 16
-	MaxAuthoringRules      = 16
-	MaxAuthoringRuleBytes  = 1024
+	APIVersion                     = "fishyume.application/v1"
+	WorkflowSchemaVersion          = "fishyume/v2"
+	DefaultListLimit               = 50
+	MaxListLimit                   = 100
+	DefaultEventLimit              = 50
+	MaxEventLimit                  = 100
+	MaxEventWaitMS                 = 30_000
+	MaxResponseBytes               = 512 * 1024
+	MaxSchemaResponseBytes         = 256 * 1024
+	MaxErrorDataBytes              = 8 * 1024
+	MaxRequestIDBytes              = 256
+	AuthoringGuideVersion          = "fishyume.authoring-guide/v1"
+	MaxAuthoringFlowSteps          = 16
+	MaxAuthoringRules              = 16
+	MaxAuthoringRuleBytes          = 1024
+	MaxAttemptActivityItems        = 12
+	MaxAttemptActivityMessageBytes = 240
+	MaxAttemptActivityReadBytes    = 32 * 1024
 )
 
 type JSONScalar any
@@ -49,21 +52,24 @@ type DriverCapability struct {
 }
 
 type Limits struct {
-	DefaultListLimit        int `json:"defaultListLimit"`
-	MaxListLimit            int `json:"maxListLimit"`
-	DefaultEventLimit       int `json:"defaultEventLimit"`
-	MaxEventLimit           int `json:"maxEventLimit"`
-	MaxEventWaitMS          int `json:"maxEventWaitMs"`
-	MaxResponseBytes        int `json:"maxResponseBytes"`
-	MaxSchemaResponseBytes  int `json:"maxSchemaResponseBytes"`
-	MaxErrorDataBytes       int `json:"maxErrorDataBytes"`
-	MaxRequestIDBytes       int `json:"maxRequestIdBytes"`
-	MaxMemoryContentBytes   int `json:"maxMemoryContentBytes"`
-	MaxProjectMemoryRecords int `json:"maxProjectMemoryRecords"`
-	MaxMemorySupersedes     int `json:"maxMemorySupersedes"`
-	MaxMemoryReceipts       int `json:"maxMemoryReceipts"`
-	DefaultMemoryListLimit  int `json:"defaultMemoryListLimit"`
-	MaxMemoryListLimit      int `json:"maxMemoryListLimit"`
+	DefaultListLimit               int `json:"defaultListLimit"`
+	MaxListLimit                   int `json:"maxListLimit"`
+	DefaultEventLimit              int `json:"defaultEventLimit"`
+	MaxEventLimit                  int `json:"maxEventLimit"`
+	MaxEventWaitMS                 int `json:"maxEventWaitMs"`
+	MaxResponseBytes               int `json:"maxResponseBytes"`
+	MaxSchemaResponseBytes         int `json:"maxSchemaResponseBytes"`
+	MaxErrorDataBytes              int `json:"maxErrorDataBytes"`
+	MaxRequestIDBytes              int `json:"maxRequestIdBytes"`
+	MaxMemoryContentBytes          int `json:"maxMemoryContentBytes"`
+	MaxProjectMemoryRecords        int `json:"maxProjectMemoryRecords"`
+	MaxMemorySupersedes            int `json:"maxMemorySupersedes"`
+	MaxMemoryReceipts              int `json:"maxMemoryReceipts"`
+	DefaultMemoryListLimit         int `json:"defaultMemoryListLimit"`
+	MaxMemoryListLimit             int `json:"maxMemoryListLimit"`
+	MaxAttemptActivityItems        int `json:"maxAttemptActivityItems"`
+	MaxAttemptActivityMessageBytes int `json:"maxAttemptActivityMessageBytes"`
+	MaxAttemptActivityReadBytes    int `json:"maxAttemptActivityReadBytes"`
 }
 
 type SystemCapabilitiesRequest struct {
@@ -221,18 +227,32 @@ type Result struct {
 }
 
 type AttemptView struct {
-	Number      int                 `json:"number"`
-	Phase       string              `json:"phase"`
-	Conclusion  string              `json:"conclusion,omitempty"`
-	Reason      string              `json:"reason,omitempty"`
-	Driver      string              `json:"driver"`
-	Target      string              `json:"target"`
-	ContextHash string              `json:"contextHash,omitempty"`
-	Context     *ContextInspect     `json:"context,omitempty"`
-	MemoryUsage *MemoryUsageInspect `json:"memoryUsage,omitempty"`
-	StartedAt   string              `json:"startedAt"`
-	UpdatedAt   string              `json:"updatedAt"`
-	CompletedAt string              `json:"completedAt,omitempty"`
+	Number      int                  `json:"number"`
+	Phase       string               `json:"phase"`
+	Conclusion  string               `json:"conclusion,omitempty"`
+	Reason      string               `json:"reason,omitempty"`
+	Driver      string               `json:"driver"`
+	Target      string               `json:"target"`
+	ContextHash string               `json:"contextHash,omitempty"`
+	Context     *ContextInspect      `json:"context,omitempty"`
+	MemoryUsage *MemoryUsageInspect  `json:"memoryUsage,omitempty"`
+	StartedAt   string               `json:"startedAt"`
+	UpdatedAt   string               `json:"updatedAt"`
+	CompletedAt string               `json:"completedAt,omitempty"`
+	Activity    *AttemptActivityView `json:"activity,omitempty"`
+}
+
+type ActivityItemView struct {
+	Kind    string `json:"kind"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+type AttemptActivityView struct {
+	SchemaVersion string             `json:"schemaVersion"`
+	Summary       string             `json:"summary,omitempty"`
+	Items         []ActivityItemView `json:"items"`
+	Truncated     bool               `json:"truncated"`
 }
 
 type ContextComponentInspect struct {
@@ -446,7 +466,7 @@ type MemoryListResponse struct {
 }
 
 func StableLimits() Limits {
-	return Limits{DefaultListLimit: DefaultListLimit, MaxListLimit: MaxListLimit, DefaultEventLimit: DefaultEventLimit, MaxEventLimit: MaxEventLimit, MaxEventWaitMS: MaxEventWaitMS, MaxResponseBytes: MaxResponseBytes, MaxSchemaResponseBytes: MaxSchemaResponseBytes, MaxErrorDataBytes: MaxErrorDataBytes, MaxRequestIDBytes: MaxRequestIDBytes, MaxMemoryContentBytes: contextcompiler.MaxMemoryContentBytes, MaxProjectMemoryRecords: contextcompiler.MaxProjectMemoryRecords, MaxMemorySupersedes: contextcompiler.MaxMemorySupersedes, MaxMemoryReceipts: store.MaxMemoryReceipts, DefaultMemoryListLimit: store.DefaultMemoryListLimit, MaxMemoryListLimit: store.MaxMemoryListLimit}
+	return Limits{DefaultListLimit: DefaultListLimit, MaxListLimit: MaxListLimit, DefaultEventLimit: DefaultEventLimit, MaxEventLimit: MaxEventLimit, MaxEventWaitMS: MaxEventWaitMS, MaxResponseBytes: MaxResponseBytes, MaxSchemaResponseBytes: MaxSchemaResponseBytes, MaxErrorDataBytes: MaxErrorDataBytes, MaxRequestIDBytes: MaxRequestIDBytes, MaxMemoryContentBytes: contextcompiler.MaxMemoryContentBytes, MaxProjectMemoryRecords: contextcompiler.MaxProjectMemoryRecords, MaxMemorySupersedes: contextcompiler.MaxMemorySupersedes, MaxMemoryReceipts: store.MaxMemoryReceipts, DefaultMemoryListLimit: store.DefaultMemoryListLimit, MaxMemoryListLimit: store.MaxMemoryListLimit, MaxAttemptActivityItems: MaxAttemptActivityItems, MaxAttemptActivityMessageBytes: MaxAttemptActivityMessageBytes, MaxAttemptActivityReadBytes: MaxAttemptActivityReadBytes}
 }
 
 func formatTime(value time.Time) string {

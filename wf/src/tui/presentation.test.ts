@@ -93,6 +93,23 @@ test('waiting Agent detail exposes structured needs_input questions and choices'
   assert.match(text, /可选答案.*yes.*no/);
 });
 
+test('active Agent activity is visible in Chinese and bounded at supported widths', () => {
+  const fixture = structuredClone(canonicalFixture('concurrent'));
+  fixture.selectedNodeId = fixture.view.activeAttempts?.[0]?.nodeId ?? fixture.selectedNodeId;
+  const attempt = fixture.view.activeAttempts?.find(item => item.nodeId === fixture.selectedNodeId);
+  assert.ok(attempt);
+  attempt.activity = {schemaVersion: 'fishyume.attempt-activity/v1', summary: '正在执行命令：go test ./...', items: [
+    {kind: 'turn', status: 'running', message: 'Codex 正在处理任务'},
+    {kind: 'command', status: 'running', message: '正在执行命令：go test ./...'},
+  ], truncated: false};
+  for (const width of [80, 120, 160]) {
+    const text = renderRunText(fixture.view, width, 138_000, optionsFor(fixture));
+    assert.match(text, /当前活动.*正在执行命令/);
+    assert.match(text, /活动.*进行中.*Codex 正在处理任务/);
+    assert.equal(assertWidth(text.split('\n'), width), true);
+  }
+});
+
 test('Focus Detail folds locally while action detail overrides the folded node view', () => {
   const fixture = canonicalFixture('retryable');
   const folded = buildRunTextPresentation(fixture.view, 80, 138_000, {...optionsFor(fixture), detailExpanded: false});

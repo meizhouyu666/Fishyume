@@ -15,6 +15,7 @@ test('M5.4 application projection exposes bounded context metadata only', () => 
         number: 1, phase: 'running', driver: 'codex', target: 'local', contextHash: 'a'.repeat(64),
         context: {schemaVersion: 'fishyume.context-manifest/v2', compilerVersion: 'context-compiler/v2', hash: 'a'.repeat(64),
           budget: {totalBytes: 1024}, usage: {totalBytes: 128}, components: [{id: 'node-task', kind: 'node_task', tier: 'required', truncation: 'none'}], omissions: ['memory-secret'], truncated: false},
+        activity: {schemaVersion: 'fishyume.attempt-activity/v1', summary: '正在执行命令：go test ./...', items: [{kind: 'command', status: 'running', message: '正在执行命令：go test ./...'}], truncated: false},
         startedAt: '2026-08-19T00:00:00Z', updatedAt: '2026-08-19T00:00:01Z',
       }, diagnostic: marker}],
     },
@@ -26,4 +27,5 @@ test('M5.4 application projection exposes bounded context metadata only', () => 
   assert.match(encoded, /node_task/);
   assert.match(encoded, new RegExp(marker));
   assert.equal(view.activeAttempts?.[0]?.context?.components.length, 1);
+  assert.equal(view.activeAttempts?.[0]?.activity?.summary, '正在执行命令：go test ./...');
 });

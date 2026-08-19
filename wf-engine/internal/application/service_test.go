@@ -24,6 +24,7 @@ type fakeCore struct {
 	views                    map[string]run.StatusView
 	events                   map[string][]run.WorkflowEvent
 	attempts                 map[string]run.AttemptSnapshot
+	outputs                  map[string]string
 	sinks                    map[int]run.EventSink
 	nextSink                 int
 	started                  run.StartWorkflowRequest
@@ -130,6 +131,9 @@ func (f *fakeCore) ReadEvents(id string) ([]run.WorkflowEvent, error) {
 func (f *fakeCore) ReadAttempt(runID, nodeID string, number int) (run.AttemptSnapshot, error) {
 	return f.attempts[runID+"/"+nodeID], nil
 }
+func (f *fakeCore) ReadAttemptOutput(runID, nodeID string, number int) (string, error) {
+	return f.outputs[runID+"/"+nodeID], nil
+}
 func (f *fakeCore) Detach(id string) (run.WorkflowSnapshot, error) {
 	view, err := f.Status(id)
 	if err != nil || view.Run == nil {
@@ -218,14 +222,14 @@ func TestDocumentedSmokeWorkflowValidatesThroughApplicationAPI(t *testing.T) {
 	}
 	service := NewService(newFakeCore(), "codex", store.New(t.TempDir()))
 	validated, appErr := service.WorkflowValidate(context.Background(), WorkflowValidateRequest{
-		Project: "project",
+		Project:  "project",
 		Workflow: WorkflowInput{Source: &WorkflowSource{Filename: filepath.Base(path), Content: string(content)}},
 	})
 	if appErr != nil || !validated.Valid || len(validated.Issues) != 0 || len(validated.CapabilityGaps) != 0 || len(validated.Warnings) != 0 {
 		t.Fatalf("documented smoke workflow validate = %+v, error = %v", validated, appErr)
 	}
 	explained, appErr := service.WorkflowExplain(context.Background(), WorkflowValidateRequest{
-		Project: "project",
+		Project:  "project",
 		Workflow: WorkflowInput{Source: &WorkflowSource{Filename: filepath.Base(path), Content: string(content)}},
 	})
 	if appErr != nil || !reflect.DeepEqual(explained.ParallelLayers[0], []string{"plan", "review"}) {
@@ -301,6 +305,13 @@ func TestRunApplicationQueriesActionsAndResult(t *testing.T) {
 	got, appErr := service.RunGet(context.Background(), RunGetRequest{RunID: "run-waiting"})
 	if appErr != nil || len(got.Run.Nodes) != 1 || got.Run.Nodes[0].Attempt == nil || got.Run.Nodes[0].Attempt.Driver != "codex" {
 		t.Fatalf("get = %+v, error = %v", got, appErr)
+	}
+	if got.Run.Nodes[0].Attempt.Activity == nil || got.Run.Nodes[0].Attempt.Activity.Summary != "正在执行命令：go test ./..." {
+		t.Fatalf("activity projection = %+v", got.Run.Nodes[0].Attempt.Activity)
+	}
+	again, appErr := service.RunGet(context.Background(), RunGetRequest{RunID: "run-waiting"})
+	if appErr != nil || again.Run.StateVersion != got.Run.StateVersion || !reflect.DeepEqual(again.Run.Nodes[0].Attempt.Activity, got.Run.Nodes[0].Attempt.Activity) {
+		t.Fatalf("activity observation mutated state: first=%+v second=%+v error=%v", got.Run, again.Run, appErr)
 	}
 	attempt := 1
 	action, appErr := service.RunAction(context.Background(), RunActionRequest{ActionID: "action-1", RunID: "run-waiting", Type: ActionAnswer, ExpectedStateVersion: 4, NodeID: "plan", ExpectedAttempt: &attempt, Answers: map[string]any{"scope": "core"}})
@@ -598,6 +609,11 @@ func newFakeCore() *fakeCore {
 		attempts: map[string]run.AttemptSnapshot{
 			"run-waiting/plan":  {Number: 1, Phase: run.NodePhaseWaiting, ResolvedDriver: "codex", ResolvedTarget: "local", ContextHash: "hash", StartedAt: created, UpdatedAt: created.Add(time.Second)},
 			"run-complete/plan": {Number: 1, Phase: run.NodePhaseCompleted, Conclusion: run.ConclusionSucceeded, ResolvedDriver: "codex", ResolvedTarget: "local", ContextHash: "hash", StartedAt: created, UpdatedAt: created.Add(time.Second)},
+		},
+		outputs: map[string]string{
+			"run-waiting/plan": `events:
+{"type":"turn.started"}
+{"type":"item.started","item":{"type":"command_execution","command":"go test ./...","status":"in_progress"}}`,
 		},
 	}
 }

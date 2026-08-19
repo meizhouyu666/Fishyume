@@ -36,6 +36,7 @@ export interface AttemptSnapshot {
   launchState?: 'prepared' | 'dispatching' | 'handle_persisted' | 'finished_without_handle' | 'session_persisted' | 'finished_without_session';
   execution?: ExecutionHandle; resultConsumed?: boolean;
   contextCompilerVersion?: string; contextCompilerVersionV2?: string; contextManifest?: {compilerVersion: string; components: Array<{name: string; source: string; version: string}>}; contextHash?: string; memoryUsage?: {schemaVersion: string; recordIds: string[]; committed: boolean}; context?: ContextInspect; promptHash?: string;
+  activity?: {schemaVersion: 'fishyume.attempt-activity/v1'; summary?: string; items: Array<{kind: string; status: string; message: string}>; truncated: boolean};
   startedAt: string; updatedAt: string; completedAt?: string;
 }
 export interface ContextInspect {schemaVersion?: string; compilerVersion: string; hash?: string; budget: Record<string, number>; usage: Record<string, number>; components: Array<{id: string; kind: string; tier?: string; selectionReason?: string; source?: string; originalBytes?: number; includedBytes?: number; truncation?: string}>; omissions?: Array<string | {id: string; kind?: string; reason?: string; originalBytes?: number}>; truncated: boolean; memoryUsage?: {recordIds: string[]; committed: boolean}}
@@ -43,6 +44,7 @@ export interface LegacySnapshot {protocolVersion: 1; id: string; status: string;
 export interface NodeDiagnostic {nodeId: string; reason?: Reason; message?: string}
 export interface RunStatusView {
   protocolVersion: 2; legacy: boolean; run?: WorkflowSnapshot; legacyRun?: LegacySnapshot; nodes?: NodeSnapshot[];
+  attempts?: AttemptSnapshot[];
   activeAttempt?: AttemptSnapshot; activeNodes?: NodeSummary[]; activeAttempts?: AttemptSnapshot[];
   waitingApprovals?: NodeSummary[]; diagnostics?: NodeDiagnostic[];
 }

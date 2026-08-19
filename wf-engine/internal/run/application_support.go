@@ -83,3 +83,10 @@ func (s *Service) ReadAttempt(runID, nodeID string, number int) (AttemptSnapshot
 	}
 	return attempt, nil
 }
+
+func (s *Service) ReadAttemptOutput(runID, nodeID string, number int) (string, error) {
+	if s.store == nil {
+		return "", fmt.Errorf("workflow state directory is unavailable")
+	}
+	return s.store.ReadNodeOutput(runID, nodeID, number, 32*1024)
+}

@@ -215,6 +215,6 @@ M4.0-M4.4 已完成合同冻结、Codex Driver、Context Compiler、CC-Panes 新
 - MCP、Machine CLI、`fishyume attach` 与 TUI 共享同一 Application Service。
 
 正式架构见 [`docs/fishyume-m4-agent-native-control-plane.md`](./docs/fishyume-m4-agent-native-control-plane.md)，分批实施与门禁见 [`docs/fishyume-m4-implementation-plan.md`](./docs/fishyume-m4-implementation-plan.md)。
-最终自动化、live、审查与 CI 证据见 [`docs/fishyume-release-readiness.md`](./docs/fishyume-release-readiness.md)。M5.0-M5.5 已完成 Context contracts、Source Registry、Memory ledger、Attention Budget Compiler、生产 Run 集成、`fishyume/v2` Context Policy 与 exactly-once Memory usage，并通过 Windows/Ubuntu 公共 CI。当前 M5.6 是 M5 最后的产品收口：让外部 Host Agent 能从公开能力自发现完整 authoring golden path。总体计划见 [`docs/fishyume-m5-context-engineering-plan.md`](./docs/fishyume-m5-context-engineering-plan.md)，M5.6 设计与任务顺序见 [`docs/fishyume-m5.6-agent-native-authoring-acceptance.md`](./docs/fishyume-m5.6-agent-native-authoring-acceptance.md)。
+最终自动化、live、审查与 CI 证据见 [`docs/fishyume-release-readiness.md`](./docs/fishyume-release-readiness.md)。M5.0-M5.6 已完成 Context contracts、Source Registry、Memory ledger、Attention Budget Compiler、生产 Run 集成、`fishyume/v2` Context Policy、exactly-once Memory usage 与 Agent-native authoring golden path，并通过 Windows/Ubuntu 公共 CI。M5.7 在不引入内置 Harness 的前提下，为 Host Agent 和中文 TUI 增加安全、有限的 Node Agent 活动可观测性。总体计划见 [`docs/fishyume-m5-context-engineering-plan.md`](./docs/fishyume-m5-context-engineering-plan.md)，活动边界见 [`docs/fishyume-m5.7-agent-activity-observability.md`](./docs/fishyume-m5.7-agent-activity-observability.md)。
 
 更完整的需求、架构和里程碑说明见 [`docs/`](./docs/)。

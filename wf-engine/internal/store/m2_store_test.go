@@ -50,6 +50,10 @@ func TestM2StoreRoundTripAndAttemptPreservation(t *testing.T) {
 	if _, err := os.Stat(state.NodeOutputPath("run-safe_1", "Plan_A", 1)); err != nil {
 		t.Fatal(err)
 	}
+	output, err := state.ReadNodeOutput("run-safe_1", "Plan_A", 1, 8)
+	if err != nil || output != "t output" {
+		t.Fatalf("bounded output=%q err=%v", output, err)
+	}
 	kind, err := state.DetectSnapshot("run-safe_1")
 	if err != nil || kind != SnapshotM2 {
 		t.Fatalf("kind=%s err=%v", kind, err)

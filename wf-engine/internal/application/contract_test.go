@@ -52,7 +52,7 @@ func TestStableContractLimitsAndErrors(t *testing.T) {
 		t.Fatalf("error codes = %v, want %v", StableErrorCodes, want)
 	}
 	limits := StableLimits()
-	if limits.DefaultListLimit <= 0 || limits.DefaultListLimit > limits.MaxListLimit || limits.DefaultEventLimit <= 0 || limits.DefaultEventLimit > limits.MaxEventLimit || limits.MaxEventWaitMS <= 0 || limits.MaxResponseBytes <= limits.MaxErrorDataBytes || limits.MaxMemoryContentBytes != 16*1024 || limits.MaxProjectMemoryRecords != 2048 || limits.MaxMemorySupersedes != 16 || limits.MaxMemoryReceipts != 4096 || limits.DefaultMemoryListLimit > limits.MaxMemoryListLimit {
+	if limits.DefaultListLimit <= 0 || limits.DefaultListLimit > limits.MaxListLimit || limits.DefaultEventLimit <= 0 || limits.DefaultEventLimit > limits.MaxEventLimit || limits.MaxEventWaitMS <= 0 || limits.MaxResponseBytes <= limits.MaxErrorDataBytes || limits.MaxMemoryContentBytes != 16*1024 || limits.MaxProjectMemoryRecords != 2048 || limits.MaxMemorySupersedes != 16 || limits.MaxMemoryReceipts != 4096 || limits.DefaultMemoryListLimit > limits.MaxMemoryListLimit || limits.MaxAttemptActivityItems != 12 || limits.MaxAttemptActivityMessageBytes != 240 || limits.MaxAttemptActivityReadBytes != 32*1024 {
 		t.Fatalf("invalid stable limits: %+v", limits)
 	}
 }

@@ -59,7 +59,7 @@ export interface RunPresentationOptions {
 }
 
 function attemptMap(view: RunStatusView): Map<string, AttemptSnapshot> {
-  const attempts = view.activeAttempts ?? (view.activeAttempt ? [view.activeAttempt] : []);
+  const attempts = view.attempts ?? view.activeAttempts ?? (view.activeAttempt ? [view.activeAttempt] : []);
   return new Map(attempts.map(attempt => [attempt.nodeId, attempt]));
 }
 
@@ -143,7 +143,7 @@ function nodeTail(node: NodeSummary, attempt: AttemptSnapshot | undefined, size:
   const execution = attempt?.execution?.id ? `执行 ${attempt.execution.id}` : undefined;
   const launch = human(attempt?.launchState);
   const primary = size === 'narrow' ? [attemptText, backend] : [human(node.type), attemptText, backend, launch, execution];
-  return [...primary, human(node.reason), node.diagnostic].filter((value): value is string => Boolean(value)).map(value => value.replaceAll(' · ', separator));
+  return [...primary, attempt?.activity?.summary ? `活动 ${attempt.activity.summary}` : undefined, human(node.reason), node.diagnostic].filter((value): value is string => Boolean(value)).map(value => value.replaceAll(' · ', separator));
 }
 
 export function formatWorkflowRow(
@@ -199,6 +199,13 @@ function nodeDetail(
       const omissions = context.omissions?.length ? ` omissions=${context.omissions.map(omission => typeof omission === 'string' ? omission : `${omission.id}:${omission.reason ?? 'omitted'}`).join(',')}` : '';
       const memory = context.memoryUsage ? ` memory=${context.memoryUsage.recordIds.join(',')} ${context.memoryUsage.committed ? 'committed' : 'pending'}` : '';
       lines.push(`context ${context.compilerVersion}${context.hash ? ` hash=${context.hash}` : ''} usage=${context.usage.totalBytes ?? 0}/${context.budget.totalBytes ?? 0} components=${components}${omissions}${memory}${context.truncated ? ' truncated' : ''}`);
+    }
+    if (attempt.activity) {
+      lines.push(`当前活动${separator}${attempt.activity.summary ?? 'Codex 正在工作'}`);
+      for (const item of attempt.activity.items.slice(-6)) {
+        lines.push(`活动${separator}${item.status === 'completed' ? '已完成' : '进行中'}${separator}${item.message}`);
+      }
+      if (attempt.activity.truncated) lines.push(`活动${separator}较早记录已截断`);
     }
   }
   for (const diagnostic of diagnosticsFor(view, node)) {

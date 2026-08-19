@@ -761,6 +761,13 @@ func (s *Service) mapRunView(view run.StatusView) RunView {
 			if node.CurrentAttempt > 0 {
 				if attempt, err := s.core.ReadAttempt(snapshot.ID, node.ID, node.CurrentAttempt); err == nil {
 					mapped.Attempt = &AttemptView{Number: attempt.Number, Phase: string(attempt.Phase), Conclusion: string(attempt.Conclusion), Reason: string(attempt.Reason), Driver: runAttemptDriver(attempt), Target: runAttemptTarget(attempt), ContextHash: attempt.ContextHash, Context: inspectContext(attempt), MemoryUsage: memoryUsageInspect(attempt), StartedAt: formatTime(attempt.StartedAt), UpdatedAt: formatTime(attempt.UpdatedAt)}
+					if reader, ok := s.core.(interface {
+						ReadAttemptOutput(string, string, int) (string, error)
+					}); ok {
+						if output, outputErr := reader.ReadAttemptOutput(snapshot.ID, node.ID, node.CurrentAttempt); outputErr == nil {
+							mapped.Attempt.Activity = parseAttemptActivity(output)
+						}
+					}
 					if attempt.CompletedAt != nil {
 						mapped.Attempt.CompletedAt = formatTime(*attempt.CompletedAt)
 					}

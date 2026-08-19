@@ -2,6 +2,7 @@ package store
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -391,6 +392,47 @@ func (s *Store) ReadResult(runID, nodeID string, number int, target any) error {
 		return err
 	}
 	return readJSON(s.ResultPath(runID, nodeID, number), target)
+}
+
+// ReadNodeOutput returns at most maxBytes from the tail of an Attempt output
+// log. Output is observational evidence, not durable workflow state, so reads
+// must remain bounded even if a legacy store contains a larger file.
+func (s *Store) ReadNodeOutput(runID, nodeID string, number, maxBytes int) (string, error) {
+	if err := validateAttempt(runID, nodeID, number); err != nil {
+		return "", err
+	}
+	if maxBytes <= 0 {
+		maxBytes = 32 * 1024
+	}
+	if maxBytes > 128*1024 {
+		maxBytes = 128 * 1024
+	}
+	file, err := os.Open(s.NodeOutputPath(runID, nodeID, number))
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return "", err
+	}
+	start := info.Size() - int64(maxBytes)
+	if start < 0 {
+		start = 0
+	}
+	if _, err := file.Seek(start, io.SeekStart); err != nil {
+		return "", err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, int64(maxBytes)))
+	if err != nil {
+		return "", err
+	}
+	if start > 0 {
+		if newline := bytes.IndexByte(data, '\n'); newline >= 0 && newline+1 < len(data) {
+			data = data[newline+1:]
+		}
+	}
+	return string(data), nil
 }
 
 func (s *Store) ListNodeIDs(runID string) ([]string, error) {

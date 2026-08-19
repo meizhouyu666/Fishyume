@@ -14,7 +14,7 @@ fishyume doctor --project "E:\project"
 fishyume
 ```
 
-`setup codex` idempotently registers the canonical absolute Node/installed-CLI transport through the official Codex CLI, then treats that explicit setup action as authorization for the fourteen Fishyume Application tools in Fishyume's own Codex config section. `--print` only emits the low-level transport command, and `--force` is required to replace a conflicting entry. Doctor checks Engine/protocol/Driver/project plus Codex CLI, login, canonical MCP transport, and approval policy with an executable recovery command for every failure. After a Host Agent starts work, zero-argument `fishyume` opens the Chinese Run Dashboard; select with arrows or `J`/`K` and press `Enter` to attach. The Console prioritizes the first actionable node and shows prominent Chinese approval/input/retry guidance. `A/Y` approves, `X/N` rejects, `T` retries, `C` cancels the Run, and `Q` only detaches observation. The normal path does not require a handwritten Workflow or copied Run ID.
+`setup codex` idempotently registers the canonical absolute Node/installed-CLI transport through the official Codex CLI, then treats that explicit setup action as authorization for the fourteen Fishyume Application tools in Fishyume's own Codex config section. `--print` only emits the low-level transport command, and `--force` is required to replace a conflicting entry. Doctor checks Engine/protocol/Driver/project plus Codex CLI, login, canonical MCP transport, and approval policy with an executable recovery command for every failure. After a Host Agent starts work, zero-argument `fishyume` opens the Chinese Run Dashboard; select with arrows or `J`/`K` and press `Enter` to attach. The Console shows safe bounded Node Agent activity, prioritizes the first actionable node, and gives prominent Chinese approval/input/retry guidance. `A/Y` approves, `X/N` rejects, `T` retries, `C` cancels the Run, and `Q` only detaches observation. The normal path does not require a handwritten Workflow or copied Run ID.
 
 ## Start and observe a Run
 
@@ -70,7 +70,7 @@ types.
 
 ## Human console
 
-The TUI presents one Run, compact Workflow rows, one selected-node detail view, and only currently valid actions. `a` approves or answers, `r` rejects, `R` retries, and `c` cancels after confirmation. `d`, `q`, and `Ctrl+C` disconnect observation without pausing or cancelling the Run. Non-TTY/CI output remains line-oriented; `status --watch` requires an interactive terminal, and `status --json` emits one object.
+The TUI presents one Run, compact Workflow rows, safe bounded activity for headless Node Agents, one selected-node detail view, and only currently valid actions. `a` approves or answers, `r` rejects, `R` retries, and `c` cancels after confirmation. `d`, `q`, and `Ctrl+C` disconnect observation without pausing or cancelling the Run. Non-TTY/CI output remains line-oriented; `status --watch` requires an interactive terminal, and `status --json` emits one object.
 
 The console supports 80/120/160 columns, CJK display width, TrueColor through monochrome, `NO_COLOR`, and ASCII fallback through `TERM=dumb` or `FISHYUME_ASCII=1`.
 

@@ -1,6 +1,6 @@
 # Fishyume M5: Context Engineering and Memory
 
-> Status: M5.0-M5.6 completed. M5.6 Agent-native Authoring and Acceptance is the accepted M5 product-closure batch: the public contract is self-discovering for external Host Agents through the bounded versioned authoring guide, canonical v2 examples, and a Provider-independent Host/TUI golden path. The accepted M4.5 Developer Preview remains the product baseline.
+> Status: M5.0-M5.6 completed. M5.6 Agent-native Authoring and Acceptance is the accepted M5 product-closure batch. M5.7 is a post-closure, additive Agent Activity Observability increment; it does not reopen the Context or execution contracts. The accepted M4.5 Developer Preview remains the product baseline.
 
 M5 turns the existing deterministic Context Compiler skeleton into the product layer
 that gives each Agent Attempt the smallest sufficient, auditable context. Fishyume
@@ -113,6 +113,14 @@ Local preflight (`go test ./...`, `go vet ./...`, `go build ./cmd/wf-engine`,
 run [32243762097](https://github.com/meizhouyu666/Fishyume/actions/runs/32243762097)
 passed all six jobs (Windows/Ubuntu verify, Windows/Ubuntu platform-install, artifacts,
 and deterministic stress). No package or GitHub Release was published.
+
+### M5.7: Agent Activity Observability
+
+M5.7 projects the already bounded Attempt output into a safe, versioned activity
+view for `run.get`, the Host Agent, and the Chinese TUI. Activity does not mutate
+Run state or become a high-frequency permanent event stream. The exact safety and
+product boundary is recorded in
+[`fishyume-m5.7-agent-activity-observability.md`](./fishyume-m5.7-agent-activity-observability.md).
 
 ## M5 entry gates
 
