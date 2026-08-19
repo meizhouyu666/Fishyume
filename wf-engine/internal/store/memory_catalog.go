@@ -114,6 +114,13 @@ type MemoryDeleteInput struct {
 	Reason     string
 }
 
+type MemoryConsumeInput struct {
+	Project    string
+	MutationID string
+	RecordIDs  []string
+	Reason     string
+}
+
 type MemoryMutationResult struct {
 	Revision    uint64   `json:"revision"`
 	RecordID    string   `json:"recordId"`
@@ -321,6 +328,53 @@ func (s *Store) DeleteMemory(input MemoryDeleteInput) (MemoryMutationResult, err
 			return "", nil, memoryError(MemoryStoreInvalid, err.Error())
 		}
 		return request.RecordID, []string{request.RecordID}, nil
+	})
+}
+
+// ConsumeMemory reserves one use of each selected record under an idempotent
+// receipt. It is engine-owned and only increments records that actually fit in
+// the compiled Context Envelope.
+func (s *Store) ConsumeMemory(input MemoryConsumeInput) (MemoryMutationResult, error) {
+	ids := append([]string(nil), input.RecordIDs...)
+	sort.Strings(ids)
+	if len(ids) == 0 || len(ids) > contextcompiler.MaxSelectedMemoryRecords || hasDuplicateStrings(ids) || validateMutationIdentity(input.MutationID) != nil || !validAuditReason(input.Reason) {
+		return MemoryMutationResult{}, memoryError(MemoryStoreInvalid, "Memory consume request is invalid")
+	}
+	for _, id := range ids {
+		if !validMemoryRecordID(id) {
+			return MemoryMutationResult{}, memoryError(MemoryStoreInvalid, "Memory consume contains an invalid record ID")
+		}
+	}
+	request := struct {
+		RecordIDs []string `json:"recordIds"`
+		Reason    string   `json:"reason"`
+	}{ids, input.Reason}
+	return s.mutateMemory(input.Project, input.MutationID, "consume", contextcompiler.MemoryWriterEngine, input.Reason, request, func(catalog *MemoryCatalogV1, _ memoryProjectIdentity, now time.Time) (string, []string, error) {
+		stamp := now.UTC().Format(time.RFC3339Nano)
+		for _, id := range ids {
+			index := findMemoryRecord(catalog.Records, id)
+			if index < 0 {
+				return "", nil, memoryError(MemoryStoreNotFound, "Memory record was not found")
+			}
+			record := &catalog.Records[index]
+			if record.State != contextcompiler.MemoryActive {
+				return "", nil, memoryError(MemoryStoreConflict, "selected Memory record is not active")
+			}
+			if record.Retention.ExpiresAt != "" {
+				if expiry, err := time.Parse(time.RFC3339, record.Retention.ExpiresAt); err != nil || !expiry.After(now) {
+					return "", nil, memoryError(MemoryStoreConflict, "selected Memory record is expired")
+				}
+			}
+			if record.Retention.MaxUses > 0 && record.UseCount >= record.Retention.MaxUses {
+				return "", nil, memoryError(MemoryStoreConflict, "selected Memory record has reached maxUses")
+			}
+		}
+		for _, id := range ids {
+			index := findMemoryRecord(catalog.Records, id)
+			catalog.Records[index].UseCount++
+			catalog.Records[index].UpdatedAt = stamp
+		}
+		return ids[0], ids[1:], nil
 	})
 }
 
@@ -563,7 +617,7 @@ func validateMemoryCatalog(catalog MemoryCatalogV1, identity memoryProjectIdenti
 	receiptIDs := make(map[string]struct{}, len(catalog.Receipts))
 	var lastRevision uint64
 	for _, receipt := range catalog.Receipts {
-		if err := validateMutationIdentity(receipt.MutationID); err != nil || !validHashString(receipt.RequestHash) || !validMemoryWriter(receipt.Writer) || !validAuditReason(receipt.Reason) || receipt.Revision == 0 || receipt.Revision > catalog.Revision || receipt.Revision <= lastRevision || !validReceiptOperation(receipt.Operation) || !validMemoryRecordID(receipt.RecordID) || receipt.AffectedIDs == nil || !sort.StringsAreSorted(receipt.AffectedIDs) || hasDuplicateStrings(receipt.AffectedIDs) {
+		if err := validateMutationIdentity(receipt.MutationID); err != nil || !validHashString(receipt.RequestHash) || !validMemoryReceiptWriter(receipt.Writer) || !validAuditReason(receipt.Reason) || receipt.Revision == 0 || receipt.Revision > catalog.Revision || receipt.Revision <= lastRevision || !validReceiptOperation(receipt.Operation) || !validMemoryRecordID(receipt.RecordID) || receipt.AffectedIDs == nil || !sort.StringsAreSorted(receipt.AffectedIDs) || hasDuplicateStrings(receipt.AffectedIDs) {
 			return memoryError(MemoryStoreCorrupt, "Memory catalog contains an invalid receipt")
 		}
 		if _, exists := receiptIDs[receipt.MutationID]; exists {
@@ -593,6 +647,14 @@ func validateMemoryCatalog(catalog MemoryCatalogV1, identity memoryProjectIdenti
 		case "delete":
 			if len(receipt.AffectedIDs) != 1 || receipt.AffectedIDs[0] != receipt.RecordID {
 				return memoryError(MemoryStoreCorrupt, "Memory delete receipt does not match its tombstone")
+			}
+		case "consume":
+			if receipt.Writer != contextcompiler.MemoryWriterEngine || len(receipt.AffectedIDs) > contextcompiler.MaxSelectedMemoryRecords-1 || (len(receipt.AffectedIDs) > 0 && receipt.RecordID >= receipt.AffectedIDs[0]) {
+				return memoryError(MemoryStoreCorrupt, "Memory consume receipt exceeds its bound")
+			}
+		default:
+			if receipt.Writer == contextcompiler.MemoryWriterEngine {
+				return memoryError(MemoryStoreCorrupt, "Memory engine writer is only valid for consume receipts")
 			}
 		}
 		if _, err := time.Parse(time.RFC3339, receipt.CreatedAt); err != nil {
@@ -729,6 +791,10 @@ func validMemoryWriter(value contextcompiler.MemoryWriter) bool {
 	return value == contextcompiler.MemoryWriterUser || value == contextcompiler.MemoryWriterHostAgent || value == contextcompiler.MemoryWriterMigration
 }
 
+func validMemoryReceiptWriter(value contextcompiler.MemoryWriter) bool {
+	return validMemoryWriter(value) || value == contextcompiler.MemoryWriterEngine
+}
+
 func validMemoryType(value contextcompiler.MemoryType) bool {
 	switch value {
 	case contextcompiler.MemoryDecision, contextcompiler.MemoryConstraint, contextcompiler.MemoryFact, contextcompiler.MemoryProcedure, contextcompiler.MemoryPreference:
@@ -803,7 +869,7 @@ func validMemoryRecordID(value string) bool {
 }
 
 func validReceiptOperation(value string) bool {
-	return value == "create" || value == "supersede" || value == "delete"
+	return value == "create" || value == "supersede" || value == "delete" || value == "consume"
 }
 
 func hasDuplicateStrings(values []string) bool {

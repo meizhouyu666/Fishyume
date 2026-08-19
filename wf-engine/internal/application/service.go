@@ -92,6 +92,10 @@ func (s *Service) WorkflowValidate(ctx context.Context, request WorkflowValidate
 		response.Issues = issues
 		return response, nil
 	}
+	if err := workflow.ValidateContextBindings(normalized.Document, request.ContextBindings); err != nil {
+		response.Issues = append(response.Issues, ValidationIssue{Kind: "static", Path: "$.contextBindings", Code: "context_bindings", Message: err.Error()})
+		return response, nil
+	}
 	response.Warnings = append(response.Warnings, normalized.Warnings...)
 	response.CapabilityGaps = s.capabilityGaps(ctx, strings.TrimSpace(request.Project), normalized, request.Driver, request.Target)
 	response.Valid = len(response.Issues) == 0
@@ -105,6 +109,9 @@ func (s *Service) WorkflowExplain(ctx context.Context, request WorkflowExplainRe
 	normalized, issues := parseWorkflow(request.Workflow, request.Inputs)
 	if len(issues) > 0 {
 		return WorkflowExplainResponse{}, NewError(CodeInvalidWorkflow, "workflow is invalid", map[string]any{"issues": issues})
+	}
+	if err := workflow.ValidateContextBindings(normalized.Document, request.ContextBindings); err != nil {
+		return WorkflowExplainResponse{}, NewError(CodeInvalidWorkflow, "workflow context bindings are invalid", map[string]any{"issues": []ValidationIssue{{Kind: "static", Path: "$.contextBindings", Code: "context_bindings", Message: err.Error()}}})
 	}
 	layers := make([][]string, 0)
 	levels := make(map[string]int, len(normalized.TopologicalOrder))
@@ -122,8 +129,9 @@ func (s *Service) WorkflowExplain(ctx context.Context, request WorkflowExplainRe
 			layers = append(layers, []string{})
 		}
 		layers[level] = append(layers[level], nodeID)
-		contextSources := orderedAncestors(normalized, nodeID)
-		node := ExplainNode{ID: nodeID, Type: definition.Type, DependsOn: append([]string(nil), definition.DependsOn...), ParallelLayer: level, ContextSources: contextSources}
+		policy := workflow.EffectiveContextPolicy(normalized.Document, definition)
+		contextSources := orderedContextSources(normalized, nodeID, policy)
+		node := ExplainNode{ID: nodeID, Type: definition.Type, DependsOn: append([]string(nil), definition.DependsOn...), ParallelLayer: level, ContextSources: contextSources, ProjectInstructions: append([]string(nil), policy.ProjectInstructions...), MemoryBindings: append([]workflow.MemoryBinding(nil), request.ContextBindings.MemoryByNode[nodeID]...), ContextPolicyVersion: normalized.ContextPolicyVersion}
 		if definition.Type == "approval" {
 			node.ApprovalPrompt = definition.Prompt
 		} else {
@@ -160,6 +168,9 @@ func (s *Service) RunStart(ctx context.Context, request RunStartRequest) (RunSta
 	normalized, issues := parseWorkflow(request.Workflow, request.Inputs)
 	if len(issues) > 0 {
 		return RunStartResponse{}, NewError(CodeInvalidWorkflow, "workflow is invalid", map[string]any{"issues": issues})
+	}
+	if err := workflow.ValidateContextBindings(normalized.Document, request.ContextBindings); err != nil {
+		return RunStartResponse{}, NewError(CodeInvalidWorkflow, "workflow context bindings are invalid", map[string]any{"issues": []ValidationIssue{{Kind: "static", Path: "$.contextBindings", Code: "context_bindings", Message: err.Error()}}})
 	}
 	return s.runStartNormalized(ctx, request, project, normalized)
 }
@@ -202,7 +213,7 @@ func (s *Service) runStartNormalized(ctx context.Context, request RunStartReques
 			return RunStartResponse{}, mapJournalError(err, request.ClientRequestID)
 		}
 	}
-	snapshot, err := s.core.StartWorkflow(ctx, run.StartWorkflowRequest{RunID: record.PlannedRunID, Project: project, Driver: strings.TrimSpace(request.Driver), Target: strings.TrimSpace(request.Target), Normalized: &normalized, Inputs: request.Inputs})
+	snapshot, err := s.core.StartWorkflow(ctx, run.StartWorkflowRequest{RunID: record.PlannedRunID, Project: project, Driver: strings.TrimSpace(request.Driver), Target: strings.TrimSpace(request.Target), Normalized: &normalized, Inputs: request.Inputs, ContextBindings: request.ContextBindings})
 	if err != nil {
 		return RunStartResponse{}, mapCoreError(err, "could not start run")
 	}
@@ -721,6 +732,23 @@ func orderedAncestors(normalized workflow.Normalized, nodeID string) []string {
 	return result
 }
 
+func orderedContextSources(normalized workflow.Normalized, nodeID string, policy workflow.ContextPolicy) []string {
+	if normalized.ContextPolicyVersion != "context-policy/v1" {
+		return orderedAncestors(normalized, nodeID)
+	}
+	selected := make(map[string]bool, len(policy.Dependencies))
+	for _, dependency := range policy.Dependencies {
+		selected[dependency] = true
+	}
+	result := make([]string, 0, len(selected))
+	for _, candidate := range normalized.TopologicalOrder {
+		if selected[candidate] {
+			result = append(result, candidate)
+		}
+	}
+	return result
+}
+
 func (s *Service) mapRunView(view run.StatusView) RunView {
 	snapshot := *view.Run
 	result := RunView{RunSummary: summarizeRun(snapshot), Summary: snapshot.Summary, CancelRequested: snapshot.CancelRequested, EffectiveConcurrency: snapshot.EffectiveConcurrency, TopologicalOrder: append([]string(nil), snapshot.TopologicalOrder...), Nodes: make([]NodeView, 0, len(view.Nodes)), DeprecationWarnings: append([]string(nil), snapshot.DeprecationWarnings...)}
@@ -732,7 +760,7 @@ func (s *Service) mapRunView(view run.StatusView) RunView {
 			mapped := NodeView{NodeID: node.ID, Type: node.Type, Phase: string(node.Phase), Conclusion: string(node.Conclusion), Reason: string(node.Reason), Diagnostic: node.Diagnostic, CurrentAttempt: node.CurrentAttempt, Result: mapResult(node.Result)}
 			if node.CurrentAttempt > 0 {
 				if attempt, err := s.core.ReadAttempt(snapshot.ID, node.ID, node.CurrentAttempt); err == nil {
-					mapped.Attempt = &AttemptView{Number: attempt.Number, Phase: string(attempt.Phase), Conclusion: string(attempt.Conclusion), Reason: string(attempt.Reason), Driver: runAttemptDriver(attempt), Target: runAttemptTarget(attempt), ContextHash: attempt.ContextHash, Context: inspectContext(attempt), StartedAt: formatTime(attempt.StartedAt), UpdatedAt: formatTime(attempt.UpdatedAt)}
+					mapped.Attempt = &AttemptView{Number: attempt.Number, Phase: string(attempt.Phase), Conclusion: string(attempt.Conclusion), Reason: string(attempt.Reason), Driver: runAttemptDriver(attempt), Target: runAttemptTarget(attempt), ContextHash: attempt.ContextHash, Context: inspectContext(attempt), MemoryUsage: memoryUsageInspect(attempt), StartedAt: formatTime(attempt.StartedAt), UpdatedAt: formatTime(attempt.UpdatedAt)}
 					if attempt.CompletedAt != nil {
 						mapped.Attempt.CompletedAt = formatTime(*attempt.CompletedAt)
 					}
@@ -747,16 +775,38 @@ func (s *Service) mapRunView(view run.StatusView) RunView {
 
 func inspectContext(attempt run.AttemptSnapshot) *ContextInspect {
 	if attempt.ContextManifestV2 == nil {
-		if attempt.ContextCompilerVersion == "" && attempt.ContextHash == "" { return nil }
+		if attempt.ContextCompilerVersion == "" && attempt.ContextHash == "" {
+			return nil
+		}
 		components := make([]ContextComponentInspect, 0, len(attempt.ContextManifest.Components))
-		for _, component := range attempt.ContextManifest.Components { components = append(components, ContextComponentInspect{ID: component.Name, Kind: component.Name}) }
+		for _, component := range attempt.ContextManifest.Components {
+			components = append(components, ContextComponentInspect{ID: component.Name, Kind: component.Name})
+		}
 		return &ContextInspect{CompilerVersion: attempt.ContextCompilerVersion, Hash: attempt.ContextHash, Components: components, Budget: map[string]int{}, Usage: map[string]int{}}
 	}
 	manifest := attempt.ContextManifestV2
-	components := make([]ContextComponentInspect, 0, len(manifest.Components)); truncated := false
-	for _, component := range manifest.Components { components = append(components, ContextComponentInspect{ID: component.ID, Kind: string(component.Kind), Tier: string(component.Tier), Truncation: string(component.Truncation)}); truncated = truncated || component.Truncation != contextcompiler.TruncationNone }
-	omissions := make([]string, 0, len(manifest.Omissions)); for _, omission := range manifest.Omissions { omissions = append(omissions, omission.ComponentID) }
-	return &ContextInspect{SchemaVersion: manifest.SchemaVersion, CompilerVersion: manifest.CompilerVersion, Hash: manifest.EnvelopeHash, Budget: map[string]int{"totalBytes": manifest.Budget.TotalBytes, "requiredBytes": manifest.Budget.RequiredBytes, "importantBytes": manifest.Budget.ImportantBytes, "optionalBytes": manifest.Budget.OptionalBytes}, Usage: map[string]int{"totalBytes": manifest.Usage.TotalBytes, "requiredBytes": manifest.Usage.RequiredBytes, "importantBytes": manifest.Usage.ImportantBytes, "optionalBytes": manifest.Usage.OptionalBytes}, Components: components, Omissions: omissions, Truncated: truncated}
+	components := make([]ContextComponentInspect, 0, len(manifest.Components))
+	truncated := false
+	for _, component := range manifest.Components {
+		components = append(components, ContextComponentInspect{ID: component.ID, Kind: string(component.Kind), Tier: string(component.Tier), SelectionReason: component.Provenance.Reason, ProvenanceSource: component.Provenance.Source, OriginalBytes: component.OriginalBytes, IncludedBytes: component.IncludedBytes, Truncation: string(component.Truncation)})
+		truncated = truncated || component.Truncation != contextcompiler.TruncationNone
+	}
+	omissions := make([]ContextOmissionInspect, 0, len(manifest.Omissions))
+	for _, omission := range manifest.Omissions {
+		omissions = append(omissions, ContextOmissionInspect{ID: omission.ComponentID, Kind: string(omission.Kind), Reason: string(omission.Reason), OriginalBytes: omission.OriginalBytes})
+	}
+	var memoryUsage *MemoryUsageInspect
+	if attempt.MemoryUsage != nil {
+		memoryUsage = &MemoryUsageInspect{RecordIDs: append([]string(nil), attempt.MemoryUsage.RecordIDs...), Committed: attempt.MemoryUsage.Committed}
+	}
+	return &ContextInspect{SchemaVersion: manifest.SchemaVersion, CompilerVersion: manifest.CompilerVersion, Hash: manifest.EnvelopeHash, Budget: map[string]int{"totalBytes": manifest.Budget.TotalBytes, "requiredBytes": manifest.Budget.RequiredBytes, "importantBytes": manifest.Budget.ImportantBytes, "optionalBytes": manifest.Budget.OptionalBytes}, Usage: map[string]int{"totalBytes": manifest.Usage.TotalBytes, "requiredBytes": manifest.Usage.RequiredBytes, "importantBytes": manifest.Usage.ImportantBytes, "optionalBytes": manifest.Usage.OptionalBytes}, Components: components, Omissions: omissions, Truncated: truncated, MemoryUsage: memoryUsage}
+}
+
+func memoryUsageInspect(attempt run.AttemptSnapshot) *MemoryUsageInspect {
+	if attempt.MemoryUsage == nil {
+		return nil
+	}
+	return &MemoryUsageInspect{RecordIDs: append([]string(nil), attempt.MemoryUsage.RecordIDs...), Committed: attempt.MemoryUsage.Committed}
 }
 
 func summarizeRun(snapshot run.WorkflowSnapshot) RunSummary {

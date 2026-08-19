@@ -1,6 +1,6 @@
 # Fishyume M5: Context Engineering and Memory
 
-> Status: M5.0 contracts, M5.1 source registry, M5.2 project Memory ledger, and M5.3 Attention Budget Compiler completed on 2026-08-17; M5.4 Run integration is next. The accepted M4.5 Developer Preview remains the product baseline.
+> Status: M5.0-M5.4 completed; M5.5 Context Policy and Memory usage closure is the current implementation batch. The accepted M4.5 Developer Preview remains the product baseline.
 
 M5 turns the existing deterministic Context Compiler skeleton into the product layer
 that gives each Agent Attempt the smallest sufficient, auditable context. Fishyume
@@ -64,7 +64,7 @@ Allocate bounded context by required/important/optional tiers, preserve componen
 boundaries, record omissions, and produce a manifest/hash without logging the complete
 prompt. Compilation must be replayable from the same approved inputs. Implemented in
 `internal/contextcompiler` with the stable `BudgetPolicyV1` default and additive
-`CompileContextV2`; production integration remains deferred to M5.4.
+`CompileContextV2`; production integration was completed in M5.4.
 
 ### M5.4: Run integration and product surface
 
@@ -88,6 +88,14 @@ automatically searched or promoted from node results. M5.4 uses the engine-owned
 version, hash, budget/usage, component IDs/kinds, omissions and truncation) while
 redacting all component content and complete prompts. Provider credentials are not needed
 by public CI; Codex single-node and parallel acceptance is a local/controlled gate.
+
+### M5.5: Context Policy and Memory usage closure
+
+M5.5 adds the explicit `fishyume/v2` Context Policy, host-supplied per-node Memory
+bindings, exactly-once Memory consumption receipts, and bounded inspect/TUI
+metadata. v1 workflows and historical Runs remain compatible. Model routing,
+automatic retrieval, embeddings, prompt optimization, plugin ecosystems, and
+result-to-Memory promotion remain outside M5.
 
 ## M5 entry gates
 

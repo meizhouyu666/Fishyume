@@ -10,13 +10,15 @@ export interface ApplicationError {code: ApplicationErrorCode; message: string; 
 
 export interface WorkflowSource {filename: string; content: string}
 export interface WorkflowInput {source?: WorkflowSource; document?: Record<string, unknown>}
+export interface MemoryBinding {id: string; reason: string}
+export interface ContextBindings {memoryByNode?: Record<string, MemoryBinding[]>}
 export interface SystemCapabilitiesRequest {project?: string}
 export interface SystemCapabilitiesResponse {apiVersion: typeof applicationApiVersion; workflowSchemaVersion: string; workflowSchema: Record<string, unknown>; nodeTypes: string[]; actionTypes: ActionType[]; drivers: Array<{driver: string; targets: string[]; ready: boolean; diagnostic?: string; maxConcurrentAgents: number; supportsConcurrentCancel: boolean}>; limits: Record<string, number>; errorCodes: ApplicationErrorCode[]; minimalExample: Record<string, unknown>}
-export interface WorkflowValidateRequest {project?: string; workflow: WorkflowInput; inputs?: Record<string, JsonScalar>; driver?: string; target?: string}
+export interface WorkflowValidateRequest {project?: string; workflow: WorkflowInput; inputs?: Record<string, JsonScalar>; driver?: string; target?: string; contextBindings?: ContextBindings}
 export interface ValidationIssue {kind: string; path: string; code: string; message: string}
 export interface WorkflowValidateResponse {apiVersion: typeof applicationApiVersion; workflowSchemaVersion: string; valid: boolean; issues: ValidationIssue[]; capabilityGaps: ValidationIssue[]; warnings: string[]}
-export interface WorkflowExplainResponse {apiVersion: typeof applicationApiVersion; workflowSchemaVersion: string; name: string; topologicalOrder: string[]; parallelLayers: string[][]; nodes: Array<{id: string; type: string; dependsOn: string[]; parallelLayer: number; approvalPrompt?: string; condition?: Record<string, unknown>; contextSources: string[]; agent?: {driver: string; target: string}}>; capabilityGaps: ValidationIssue[]; warnings: string[]}
-export interface RunStartRequest {project: string; workflow: WorkflowInput; inputs?: Record<string, JsonScalar>; driver?: string; target?: string; clientRequestId: string}
+export interface WorkflowExplainResponse {apiVersion: typeof applicationApiVersion; workflowSchemaVersion: string; name: string; topologicalOrder: string[]; parallelLayers: string[][]; nodes: Array<{id: string; type: string; dependsOn: string[]; parallelLayer: number; approvalPrompt?: string; condition?: Record<string, unknown>; contextSources: string[]; projectInstructions?: string[]; memoryBindings?: MemoryBinding[]; contextPolicyVersion: string; agent?: {driver: string; target: string}}>; capabilityGaps: ValidationIssue[]; warnings: string[]}
+export interface RunStartRequest {project: string; workflow: WorkflowInput; inputs?: Record<string, JsonScalar>; driver?: string; target?: string; clientRequestId: string; contextBindings?: ContextBindings}
 export interface RunStartResponse {apiVersion: typeof applicationApiVersion; runId: string; stateVersion: number; attach: string}
 export interface RunListRequest {filter?: {project?: string; phase?: string; conclusion?: string}; cursor?: string; limit?: number}
 export interface RunSummary {runId: string; workflowName: string; project: string; driver: string; target: string; phase: RunPhase; conclusion?: Conclusion; stateVersion: number; createdAt: string; updatedAt: string}

@@ -157,18 +157,23 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 			}
 			number, now := node.CurrentAttempt+1, s.now().UTC()
 			ancestorResults := make(map[string]workflow.Result)
-			for ancestorID := range ancestorSet(normalized.Document, node.ID) {
+			for ancestorID := range contextDependencySet(normalized, node.ID) {
 				if result, ok := results[ancestorID]; ok {
 					ancestorResults[ancestorID] = result
 				}
 			}
-			compiled, err := s.compileRunContext(ContextAssembly{Identity: agentIdentity(run.ID, node.ID, number), Project: run.Project, Target: target, NodeID: node.ID, NodeTask: renderedTask, RequiredSkills: definition.RequiredSkills, WorkflowPolicy: workflowPolicy(normalized.Document), DependencyResults: ancestorResults, UserAnswer: node.PendingInputAnswer})
+			policy := workflow.EffectiveContextPolicy(normalized.Document, definition)
+			compiled, err := s.compileRunContext(ContextAssembly{Identity: agentIdentity(run.ID, node.ID, number), Project: run.Project, Target: target, NodeID: node.ID, NodeTask: renderedTask, RequiredSkills: definition.RequiredSkills, WorkflowPolicy: workflowPolicy(normalized.Document), ContextPolicyVersion: normalized.ContextPolicyVersion, ProjectInstructions: policy.ProjectInstructions, DependencyResults: ancestorResults, UserAnswer: node.PendingInputAnswer, MemoryBindings: normalized.ContextBindings.MemoryByNode[node.ID]})
+			if err != nil {
+				return err
+			}
+			memoryUsage, err := s.consumeCompiledMemory(run.Project, agentIdentity(run.ID, node.ID, number), compiled.Compilation)
 			if err != nil {
 				return err
 			}
 			attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: run.ID, NodeID: node.ID, Number: number, Phase: NodePhaseRunning, LaunchState: LaunchPrepared,
 				ResolvedDriver: driver, ResolvedTarget: target, Backend: driver, ContextCompilerVersion: contextcompiler.Version, ContextCompilerVersionV2: compiled.Compilation.Manifest.CompilerVersion,
-				ContextManifest: compiled.LegacyManifest, ContextManifestV2: &compiled.Compilation.Manifest, ContextHash: compiled.Compilation.Hash, StartedAt: now, UpdatedAt: now}
+				ContextManifest: compiled.LegacyManifest, ContextManifestV2: &compiled.Compilation.Manifest, ContextHash: compiled.Compilation.Hash, MemoryUsage: memoryUsage, StartedAt: now, UpdatedAt: now}
 			if err := s.writeAttempt(attempt, true); err != nil {
 				return err
 			}

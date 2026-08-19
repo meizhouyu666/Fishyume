@@ -45,15 +45,16 @@ type StartRequest struct {
 }
 
 type StartWorkflowRequest struct {
-	RunID      string               `json:"-"`
-	Project    string               `json:"project"`
-	Driver     string               `json:"driver,omitempty"`
-	Target     string               `json:"target,omitempty"`
-	Backend    string               `json:"backend,omitempty"`
-	Filename   string               `json:"filename"`
-	Content    string               `json:"content"`
-	Inputs     map[string]any       `json:"inputs,omitempty"`
-	Normalized *workflow.Normalized `json:"normalized,omitempty"`
+	RunID           string                   `json:"-"`
+	Project         string                   `json:"project"`
+	Driver          string                   `json:"driver,omitempty"`
+	Target          string                   `json:"target,omitempty"`
+	Backend         string                   `json:"backend,omitempty"`
+	Filename        string                   `json:"filename"`
+	Content         string                   `json:"content"`
+	Inputs          map[string]any           `json:"inputs,omitempty"`
+	Normalized      *workflow.Normalized     `json:"normalized,omitempty"`
+	ContextBindings workflow.ContextBindings `json:"contextBindings,omitempty"`
 }
 
 type ResumeAction struct {
@@ -381,6 +382,10 @@ func (s *Service) StartWorkflow(ctx context.Context, request StartWorkflowReques
 	if err != nil {
 		return WorkflowSnapshot{}, err
 	}
+	if err := workflow.ValidateContextBindings(normalized.Document, request.ContextBindings); err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	normalized.ContextBindings = cloneContextBindings(request.ContextBindings)
 	workflowDriver, workflowTarget, err := workflow.ResolveAgent(normalized.Document.Defaults, workflow.Node{})
 	if err != nil {
 		return WorkflowSnapshot{}, err
@@ -1458,18 +1463,23 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			}
 			number, now := node.CurrentAttempt+1, s.now().UTC()
 			ancestorResults := make(map[string]workflow.Result)
-			for ancestorID := range ancestorSet(normalized.Document, node.ID) {
+			for ancestorID := range contextDependencySet(normalized, node.ID) {
 				if result, ok := results[ancestorID]; ok {
 					ancestorResults[ancestorID] = result
 				}
 			}
-			compiled, err := s.compileRunContext(ContextAssembly{Identity: agentIdentity(run.ID, node.ID, number), Project: run.Project, Target: target, NodeID: node.ID, NodeTask: renderedTask, RequiredSkills: definition.RequiredSkills, WorkflowPolicy: workflowPolicy(normalized.Document), DependencyResults: ancestorResults, UserAnswer: node.PendingInputAnswer})
+			policy := workflow.EffectiveContextPolicy(normalized.Document, definition)
+			compiled, err := s.compileRunContext(ContextAssembly{Identity: agentIdentity(run.ID, node.ID, number), Project: run.Project, Target: target, NodeID: node.ID, NodeTask: renderedTask, RequiredSkills: definition.RequiredSkills, WorkflowPolicy: workflowPolicy(normalized.Document), ContextPolicyVersion: normalized.ContextPolicyVersion, ProjectInstructions: policy.ProjectInstructions, DependencyResults: ancestorResults, UserAnswer: node.PendingInputAnswer, MemoryBindings: normalized.ContextBindings.MemoryByNode[node.ID]})
+			if err != nil {
+				return err
+			}
+			memoryUsage, err := s.consumeCompiledMemory(run.Project, agentIdentity(run.ID, node.ID, number), compiled.Compilation)
 			if err != nil {
 				return err
 			}
 			attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: run.ID, NodeID: node.ID, Number: number, Phase: NodePhaseRunning, LaunchState: LaunchPrepared,
 				ResolvedDriver: driver, ResolvedTarget: target, Backend: driver,
-				ContextCompilerVersion: contextcompiler.Version, ContextCompilerVersionV2: compiled.Compilation.Manifest.CompilerVersion, ContextManifest: compiled.LegacyManifest, ContextManifestV2: &compiled.Compilation.Manifest, ContextHash: compiled.Compilation.Hash, StartedAt: now, UpdatedAt: now}
+				ContextCompilerVersion: contextcompiler.Version, ContextCompilerVersionV2: compiled.Compilation.Manifest.CompilerVersion, ContextManifest: compiled.LegacyManifest, ContextManifestV2: &compiled.Compilation.Manifest, ContextHash: compiled.Compilation.Hash, MemoryUsage: memoryUsage, StartedAt: now, UpdatedAt: now}
 			if err := s.writeAttempt(attempt, true); err != nil {
 				return err
 			}
@@ -2476,6 +2486,18 @@ func ancestorSet(doc workflow.Document, nodeID string) map[string]bool {
 	}
 	visit(nodeID)
 	return result
+}
+
+func contextDependencySet(normalized workflow.Normalized, nodeID string) map[string]bool {
+	if normalized.ContextPolicyVersion != "context-policy/v1" {
+		return ancestorSet(normalized.Document, nodeID)
+	}
+	policy := workflow.EffectiveContextPolicy(normalized.Document, normalized.Document.Nodes[nodeID])
+	selected := make(map[string]bool, len(policy.Dependencies))
+	for _, dependency := range policy.Dependencies {
+		selected[dependency] = true
+	}
+	return selected
 }
 
 func hasEligibleRejectedBranch(doc workflow.Document, nodes []NodeSnapshot) bool {

@@ -10,15 +10,16 @@ import (
 )
 
 const (
-	APIVersion            = "fishyume/v1"
-	LegacyAPIVersion      = "wf/v1"
-	MaxConcurrency        = 1
-	MaxAllowedConcurrency = 32
-	MaxSummaryBytes       = 16 * 1024
-	MaxPromptBytes        = 128 * 1024
-	MaxResultBytes        = 64 * 1024
-	MaxResultItems        = 256
-	MaxArtifactBytes      = 4096
+	APIVersion              = "fishyume/v1"
+	ContextPolicyAPIVersion = "fishyume/v2"
+	LegacyAPIVersion        = "wf/v1"
+	MaxConcurrency          = 1
+	MaxAllowedConcurrency   = 32
+	MaxSummaryBytes         = 16 * 1024
+	MaxPromptBytes          = 128 * 1024
+	MaxResultBytes          = 64 * 1024
+	MaxResultItems          = 256
+	MaxArtifactBytes        = 4096
 )
 
 var nodeIDPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
@@ -29,7 +30,16 @@ type Document struct {
 	Inputs     map[string]InputDeclaration `json:"inputs,omitempty" yaml:"inputs,omitempty"`
 	Defaults   Defaults                    `json:"defaults,omitempty" yaml:"defaults,omitempty"`
 	Execution  Execution                   `json:"execution" yaml:"execution"`
+	Context    *ContextPolicy              `json:"context,omitempty" yaml:"context,omitempty"`
 	Nodes      map[string]Node             `json:"nodes" yaml:"nodes"`
+}
+
+// ContextPolicy is the declarative, non-secret context allowlist for a Workflow.
+// Runtime Memory IDs intentionally live in run.ContextBindings so a workflow can
+// remain portable across projects and runs.
+type ContextPolicy struct {
+	ProjectInstructions []string `json:"projectInstructions,omitempty" yaml:"projectInstructions,omitempty"`
+	Dependencies        []string `json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
 }
 
 type InputDeclaration struct {
@@ -63,6 +73,7 @@ type Node struct {
 	Tool           string         `json:"tool,omitempty" yaml:"tool,omitempty"`
 	Runtime        string         `json:"runtime,omitempty" yaml:"runtime,omitempty"`
 	RequiredSkills []string       `json:"requiredSkills,omitempty" yaml:"requiredSkills,omitempty"`
+	Context        *ContextPolicy `json:"context,omitempty" yaml:"context,omitempty"`
 }
 
 type Condition struct {
@@ -98,10 +109,34 @@ type Usage struct {
 }
 
 type Normalized struct {
-	Document         Document       `json:"document"`
-	Inputs           map[string]any `json:"inputs,omitempty"`
-	TopologicalOrder []string       `json:"topologicalOrder"`
-	Warnings         []string       `json:"warnings,omitempty"`
+	Document             Document        `json:"document"`
+	Inputs               map[string]any  `json:"inputs,omitempty"`
+	TopologicalOrder     []string        `json:"topologicalOrder"`
+	Warnings             []string        `json:"warnings,omitempty"`
+	ContextPolicyVersion string          `json:"contextPolicyVersion,omitempty"`
+	ContextBindings      ContextBindings `json:"contextBindings,omitempty"`
+}
+
+type MemoryBinding struct {
+	ID     string `json:"id" yaml:"id"`
+	Reason string `json:"reason" yaml:"reason"`
+}
+
+type ContextBindings struct {
+	MemoryByNode map[string][]MemoryBinding `json:"memoryByNode,omitempty" yaml:"memoryByNode,omitempty"`
+}
+
+func EffectiveContextPolicy(document Document, node Node) ContextPolicy {
+	policy := ContextPolicy{}
+	if document.Context != nil {
+		policy = *document.Context
+	}
+	if node.Context != nil {
+		policy = *node.Context
+	}
+	policy.ProjectInstructions = append([]string(nil), policy.ProjectInstructions...)
+	policy.Dependencies = append([]string(nil), policy.Dependencies...)
+	return policy
 }
 
 func ResolveAgent(defaults Defaults, node Node) (string, string, error) {

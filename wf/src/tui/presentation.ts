@@ -195,9 +195,10 @@ function nodeDetail(
     ].filter((value): value is string => Boolean(value)).join(separator));
     if (attempt.context) {
       const context = attempt.context;
-      const components = context.components.map(component => `${component.id}:${component.kind}`).join(',');
-      const omissions = context.omissions?.length ? ` omissions=${context.omissions.join(',')}` : '';
-      lines.push(`context ${context.compilerVersion}${context.hash ? ` hash=${context.hash}` : ''} usage=${context.usage.totalBytes ?? 0}/${context.budget.totalBytes ?? 0} components=${components}${omissions}${context.truncated ? ' truncated' : ''}`);
+      const components = context.components.map(component => `${component.id}:${component.kind} ${component.includedBytes ?? 0}/${component.originalBytes ?? component.includedBytes ?? 0}B`).join(',');
+      const omissions = context.omissions?.length ? ` omissions=${context.omissions.map(omission => typeof omission === 'string' ? omission : `${omission.id}:${omission.reason ?? 'omitted'}`).join(',')}` : '';
+      const memory = context.memoryUsage ? ` memory=${context.memoryUsage.recordIds.join(',')} ${context.memoryUsage.committed ? 'committed' : 'pending'}` : '';
+      lines.push(`context ${context.compilerVersion}${context.hash ? ` hash=${context.hash}` : ''} usage=${context.usage.totalBytes ?? 0}/${context.budget.totalBytes ?? 0} components=${components}${omissions}${memory}${context.truncated ? ' truncated' : ''}`);
     }
   }
   for (const diagnostic of diagnosticsFor(view, node)) {

@@ -2,8 +2,11 @@ package workflow
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 )
+
+const maxContextMemoryBindingsPerNode = 32
 
 var allowedResultFields = map[string]bool{
 	"result.summary": true, "result.artifacts": true, "result.warnings": true,
@@ -12,11 +15,14 @@ var allowedResultFields = map[string]bool{
 }
 
 func Validate(doc Document) ([]string, error) {
-	if doc.APIVersion != APIVersion && doc.APIVersion != LegacyAPIVersion {
+	if doc.APIVersion != APIVersion && doc.APIVersion != ContextPolicyAPIVersion && doc.APIVersion != LegacyAPIVersion {
 		return nil, fmt.Errorf("unsupported apiVersion %q", doc.APIVersion)
 	}
 	if strings.TrimSpace(doc.Name) == "" {
 		return nil, fmt.Errorf("workflow name is required")
+	}
+	if doc.APIVersion != ContextPolicyAPIVersion && doc.Context != nil {
+		return nil, fmt.Errorf("context policy requires apiVersion %q", ContextPolicyAPIVersion)
 	}
 	if doc.Execution.MaxConcurrency < 1 || doc.Execution.MaxConcurrency > MaxAllowedConcurrency {
 		return nil, fmt.Errorf("maxConcurrency must be between 1 and %d", MaxAllowedConcurrency)
@@ -28,6 +34,9 @@ func Validate(doc Document) ([]string, error) {
 		return nil, err
 	}
 	for id, node := range doc.Nodes {
+		if doc.APIVersion != ContextPolicyAPIVersion && node.Context != nil {
+			return nil, fmt.Errorf("node %q context policy requires apiVersion %q", id, ContextPolicyAPIVersion)
+		}
 		if !nodeIDPattern.MatchString(id) {
 			return nil, fmt.Errorf("invalid node id %q", id)
 		}
@@ -43,6 +52,10 @@ func Validate(doc Document) ([]string, error) {
 				return nil, fmt.Errorf("node %q repeats dependency %q", id, dependency)
 			}
 			seenDependencies[dependency] = true
+		}
+		policy := EffectiveContextPolicy(doc, node)
+		if err := validateContextPolicy(doc, id, policy); err != nil {
+			return nil, err
 		}
 		switch node.Type {
 		case "agent":
@@ -91,6 +104,59 @@ func Validate(doc Document) ([]string, error) {
 		}
 	}
 	return order, nil
+}
+
+func validateContextPolicy(doc Document, nodeID string, policy ContextPolicy) error {
+	seenFiles := map[string]bool{}
+	for _, relative := range policy.ProjectInstructions {
+		if strings.TrimSpace(relative) == "" || filepath.IsAbs(relative) || filepath.Clean(relative) != relative || relative == "." || strings.HasPrefix(filepath.ToSlash(relative), "../") || strings.Contains(filepath.ToSlash(relative), "/../") {
+			return fmt.Errorf("node %q context project instruction path %q is not a safe relative path", nodeID, relative)
+		}
+		if seenFiles[relative] {
+			return fmt.Errorf("node %q context repeats project instruction %q", nodeID, relative)
+		}
+		seenFiles[relative] = true
+	}
+	ancestors := ancestors(doc, nodeID)
+	seenDeps := map[string]bool{}
+	for _, dependency := range policy.Dependencies {
+		if !ancestors[dependency] {
+			return fmt.Errorf("node %q context dependency %q is not an ancestor", nodeID, dependency)
+		}
+		if seenDeps[dependency] {
+			return fmt.Errorf("node %q context repeats dependency %q", nodeID, dependency)
+		}
+		seenDeps[dependency] = true
+	}
+	return nil
+}
+
+func ValidateContextBindings(doc Document, bindings ContextBindings) error {
+	if len(bindings.MemoryByNode) > 0 && doc.APIVersion != ContextPolicyAPIVersion {
+		return fmt.Errorf("context bindings require apiVersion %q", ContextPolicyAPIVersion)
+	}
+	for nodeID, selections := range bindings.MemoryByNode {
+		if _, ok := doc.Nodes[nodeID]; !ok {
+			return fmt.Errorf("context binding references missing node %q", nodeID)
+		}
+		seen := map[string]bool{}
+		if len(selections) > maxContextMemoryBindingsPerNode {
+			return fmt.Errorf("context binding for node %q selects more than %d Memory records", nodeID, maxContextMemoryBindingsPerNode)
+		}
+		for _, selection := range selections {
+			if strings.TrimSpace(selection.ID) == "" || selection.ID != strings.TrimSpace(selection.ID) || len(selection.ID) > 128 {
+				return fmt.Errorf("context binding for node %q has an invalid Memory ID", nodeID)
+			}
+			if seen[selection.ID] {
+				return fmt.Errorf("context binding for node %q repeats Memory ID %q", nodeID, selection.ID)
+			}
+			seen[selection.ID] = true
+			if strings.TrimSpace(selection.Reason) == "" || selection.Reason != strings.TrimSpace(selection.Reason) || len([]byte(selection.Reason)) > 1024 {
+				return fmt.Errorf("context binding for node %q has an invalid Memory selection reason", nodeID)
+			}
+		}
+	}
+	return nil
 }
 
 func validateCondition(condition Condition, ancestors map[string]bool) error {

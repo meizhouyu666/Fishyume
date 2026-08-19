@@ -12,8 +12,9 @@ const workflow = z.object({
   source: z.object({filename: z.string(), content: z.string()}).optional(),
   document: z.record(z.string(), z.unknown()).optional(),
 });
+const contextBindings = z.object({memoryByNode: z.record(z.string(), z.array(z.object({id: z.string().min(1).max(128), reason: z.string().min(1).max(1024)}).strict()).max(32)).optional()}).strict();
 const workflowRequest = {
-  project: z.string().optional(), workflow, inputs: z.record(z.string(), scalar).optional(), driver: z.string().optional(), target: z.string().optional(),
+  project: z.string().optional(), workflow, inputs: z.record(z.string(), scalar).optional(), driver: z.string().optional(), target: z.string().optional(), contextBindings: contextBindings.optional(),
 };
 const memoryType = z.enum(['decision', 'constraint', 'fact', 'procedure', 'preference']);
 const memorySensitivity = z.enum(['public', 'project']);
@@ -23,7 +24,7 @@ const tools: Array<{name: ApplicationMethod; description: string; inputSchema: R
   {name: 'system.capabilities', description: 'Inspect Application and Workflow schemas, bounds, actions, and current Driver/target readiness before planning calls.', inputSchema: {project: z.string().optional()}},
   {name: 'workflow.validate', description: 'Validate a Workflow without running it; static issues and current Driver capability gaps are returned separately.', inputSchema: workflowRequest},
   {name: 'workflow.explain', description: 'Resolve a Workflow without running it, including DAG order, parallel layers, context sources, Driver/target choices, and warnings.', inputSchema: workflowRequest},
-  {name: 'run.start', description: 'Create or replay one durable Workflow Run. Reuse the same clientRequestId only with the same request payload.', inputSchema: {project: z.string(), workflow, inputs: z.record(z.string(), scalar).optional(), driver: z.string().optional(), target: z.string().optional(), clientRequestId: z.string()}},
+  {name: 'run.start', description: 'Create or replay one durable Workflow Run. Reuse the same clientRequestId only with the same request payload. For fishyume/v2, provide explicit contextBindings for host-selected Memory IDs.', inputSchema: {project: z.string(), workflow, inputs: z.record(z.string(), scalar).optional(), driver: z.string().optional(), target: z.string().optional(), clientRequestId: z.string(), contextBindings: contextBindings.optional()}},
   {name: 'run.list', description: 'List durable Runs in stable order with optional filters and bounded cursor pagination.', inputSchema: {filter: z.object({project: z.string().optional(), phase: z.string().optional(), conclusion: z.string().optional()}).optional(), cursor: z.string().optional(), limit: z.number().int().optional()}},
   {name: 'run.get', description: 'Read the current durable Run, Node, Attempt, result, and action-precondition state.', inputSchema: {runId: z.string()}},
   {name: 'run.events', description: 'Read durable events after a sequence using bounded pagination and an optional bounded wait.', inputSchema: {runId: z.string(), afterSequence: z.number().int().nonnegative().optional(), limit: z.number().int().optional(), waitMs: z.number().int().nonnegative().optional()}},

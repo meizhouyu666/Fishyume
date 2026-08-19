@@ -413,6 +413,44 @@ func TestMemoryRetentionDoesNotMutateLifecycleOrUseCount(t *testing.T) {
 	}
 }
 
+func TestMemoryConsumeIsExactlyOnceAndHonorsRetention(t *testing.T) {
+	state := New(t.TempDir())
+	project := mkdirProject(t, "consume")
+	request := validCreate(project, "consume-create", "bounded retention")
+	request.MaxUses = 1
+	created, err := state.CreateMemory(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consume := MemoryConsumeInput{Project: project, MutationID: "context-use:run:node:1:hash", RecordIDs: []string{created.RecordID}, Reason: "included in context"}
+	first, err := state.ConsumeMemory(consume)
+	if err != nil || first.Replayed {
+		t.Fatalf("first consume = %+v, err=%v", first, err)
+	}
+	replay, err := state.ConsumeMemory(consume)
+	if err != nil || !replay.Replayed || replay.Revision != first.Revision {
+		t.Fatalf("replay = %+v, err=%v", replay, err)
+	}
+	record, _, err := state.GetMemory(project, created.RecordID)
+	if err != nil || record.UseCount != 1 {
+		t.Fatalf("record after replay = %+v, err=%v", record, err)
+	}
+	assertMemoryError(t, mustConsume(state, MemoryConsumeInput{Project: project, MutationID: "context-use:run:node:1:other", RecordIDs: []string{created.RecordID}, Reason: "included in context"}), MemoryStoreConflict)
+}
+
+func TestEngineCannotCreateMemory(t *testing.T) {
+	state := New(t.TempDir())
+	project := mkdirProject(t, "engine-writer")
+	request := validCreate(project, "engine-create", "must reject")
+	request.Writer = contextcompiler.MemoryWriterEngine
+	assertMemoryError(t, mustCreateMemory(state, request), MemoryStoreInvalid)
+}
+
+func mustConsume(state *Store, input MemoryConsumeInput) error {
+	_, err := state.ConsumeMemory(input)
+	return err
+}
+
 func TestMemoryCatalogConcurrentStoresAndProcessesHaveNoLostUpdates(t *testing.T) {
 	stateRoot := t.TempDir()
 	project := mkdirProject(t, "project")

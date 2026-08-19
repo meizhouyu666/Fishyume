@@ -143,3 +143,49 @@ func TestM54V1AttemptReadAndResumeKeepsV1Metadata(t *testing.T) {
 		t.Fatal("fixture did not contain v1 metadata")
 	}
 }
+
+func TestM55IncludedMemoryIsConsumedOnceAndOmittedMemoryIsNot(t *testing.T) {
+	project := t.TempDir()
+	state := store.New(t.TempDir())
+	included, err := state.CreateMemory(store.MemoryCreateInput{Project: project, MutationID: "memory-included", Type: contextcompiler.MemoryProcedure, Content: "use the existing error handler", Sensitivity: contextcompiler.SensitivityProject, Writer: contextcompiler.MemoryWriterHostAgent, Reason: "known project convention", MaxUses: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	omitted, err := state.CreateMemory(store.MemoryCreateInput{Project: project, MutationID: "memory-omitted", Type: contextcompiler.MemoryFact, Content: strings.Repeat("optional ", 1125), Sensitivity: contextcompiler.SensitivityProject, Writer: contextcompiler.MemoryWriterHostAgent, Reason: "optional background", MaxUses: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backendFixture := &fakeWorkflowBackend{waitResults: []backend.BackendResult{{Status: "succeeded", Summary: "done"}}}
+	service := NewService(backendFixture, state)
+	content := "apiVersion: fishyume/v2\nname: m5-5-memory\nexecution: {maxConcurrency: 1}\nnodes:\n  work: {type: agent, task: do work}\n"
+	started, err := service.StartWorkflow(context.Background(), StartWorkflowRequest{Project: project, Filename: "workflow.yaml", Content: content, ContextBindings: workflow.ContextBindings{MemoryByNode: map[string][]workflow.MemoryBinding{"work": {{ID: included.RecordID, Reason: "known project convention"}, {ID: omitted.RecordID, Reason: "optional background"}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	final := waitForRun(t, service, started.ID, func(snapshot WorkflowSnapshot) bool { return snapshot.Phase == PhaseCompleted })
+	if final.Conclusion != ConclusionSucceeded {
+		t.Fatalf("final=%+v", final)
+	}
+	waitForControllers(t, service)
+	var attempt AttemptSnapshot
+	if err := state.ReadAttempt(started.ID, "work", 1, &attempt); err != nil {
+		t.Fatal(err)
+	}
+	gotIncluded, _, err := state.GetMemory(project, included.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotOmitted, _, err := state.GetMemory(project, omitted.RecordID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	used := map[string]bool{}
+	for _, component := range attempt.ContextManifestV2.Components {
+		if component.Kind == contextcompiler.KindMemory {
+			used[component.ID] = true
+		}
+	}
+	if (gotIncluded.UseCount == 1) != used[included.RecordID] || (gotOmitted.UseCount == 1) != used[omitted.RecordID] {
+		t.Fatalf("Memory usage does not match manifest: included=%d omitted=%d used=%v", gotIncluded.UseCount, gotOmitted.UseCount, used)
+	}
+}

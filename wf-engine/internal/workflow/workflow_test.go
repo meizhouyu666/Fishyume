@@ -77,6 +77,40 @@ func TestFishyumeSchemaIsAccepted(t *testing.T) {
 	}
 }
 
+func TestContextPolicyV2IsExplicitAndBindingsAreBounded(t *testing.T) {
+	doc := `apiVersion: fishyume/v2
+name: context-policy
+context:
+  projectInstructions: [AGENTS.md]
+execution:
+  maxConcurrency: 1
+nodes:
+  plan:
+    type: agent
+    task: plan
+  implement:
+    type: agent
+    dependsOn: [plan]
+    context:
+      dependencies: [plan]
+    task: implement`
+	parsed, err := Parse([]byte(doc), "workflow.yaml", nil)
+	if err != nil || parsed.ContextPolicyVersion != "context-policy/v1" {
+		t.Fatalf("parse v2 = %#v, err=%v", parsed, err)
+	}
+	if got := EffectiveContextPolicy(parsed.Document, parsed.Document.Nodes["implement"]); len(got.Dependencies) != 1 || got.Dependencies[0] != "plan" {
+		t.Fatalf("effective policy = %+v", got)
+	}
+	bindings := ContextBindings{MemoryByNode: map[string][]MemoryBinding{"implement": {{ID: "memory-one", Reason: "known convention"}}}}
+	if err := ValidateContextBindings(parsed.Document, bindings); err != nil {
+		t.Fatal(err)
+	}
+	legacy := strings.Replace(doc, "fishyume/v2", "fishyume/v1", 1)
+	if _, err := Parse([]byte(legacy), "workflow.yaml", nil); err == nil || !strings.Contains(err.Error(), "context policy requires") {
+		t.Fatalf("legacy context policy err=%v", err)
+	}
+}
+
 func TestWorkflowValidationFailures(t *testing.T) {
 	tests := []struct {
 		name    string

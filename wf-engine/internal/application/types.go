@@ -6,11 +6,12 @@ import (
 
 	"wf.local/wf-engine/internal/contextcompiler"
 	"wf.local/wf-engine/internal/store"
+	"wf.local/wf-engine/internal/workflow"
 )
 
 const (
 	APIVersion             = "fishyume.application/v1"
-	WorkflowSchemaVersion  = "fishyume/v1"
+	WorkflowSchemaVersion  = "fishyume/v2"
 	DefaultListLimit       = 50
 	MaxListLimit           = 100
 	DefaultEventLimit      = 50
@@ -85,11 +86,12 @@ type ValidationIssue struct {
 }
 
 type WorkflowValidateRequest struct {
-	Project  string         `json:"project,omitempty"`
-	Workflow WorkflowInput  `json:"workflow"`
-	Inputs   map[string]any `json:"inputs,omitempty"`
-	Driver   string         `json:"driver,omitempty"`
-	Target   string         `json:"target,omitempty"`
+	Project         string                   `json:"project,omitempty"`
+	Workflow        WorkflowInput            `json:"workflow"`
+	Inputs          map[string]any           `json:"inputs,omitempty"`
+	Driver          string                   `json:"driver,omitempty"`
+	Target          string                   `json:"target,omitempty"`
+	ContextBindings workflow.ContextBindings `json:"contextBindings,omitempty"`
 }
 
 type WorkflowValidateResponse struct {
@@ -107,14 +109,17 @@ type ResolvedAgent struct {
 }
 
 type ExplainNode struct {
-	ID             string          `json:"id"`
-	Type           string          `json:"type"`
-	DependsOn      []string        `json:"dependsOn"`
-	ParallelLayer  int             `json:"parallelLayer"`
-	ApprovalPrompt string          `json:"approvalPrompt,omitempty"`
-	Condition      json.RawMessage `json:"condition,omitempty"`
-	ContextSources []string        `json:"contextSources"`
-	Agent          *ResolvedAgent  `json:"agent,omitempty"`
+	ID                   string                   `json:"id"`
+	Type                 string                   `json:"type"`
+	DependsOn            []string                 `json:"dependsOn"`
+	ParallelLayer        int                      `json:"parallelLayer"`
+	ApprovalPrompt       string                   `json:"approvalPrompt,omitempty"`
+	Condition            json.RawMessage          `json:"condition,omitempty"`
+	ContextSources       []string                 `json:"contextSources"`
+	ProjectInstructions  []string                 `json:"projectInstructions,omitempty"`
+	MemoryBindings       []workflow.MemoryBinding `json:"memoryBindings,omitempty"`
+	ContextPolicyVersion string                   `json:"contextPolicyVersion"`
+	Agent                *ResolvedAgent           `json:"agent,omitempty"`
 }
 
 type WorkflowExplainRequest = WorkflowValidateRequest
@@ -131,12 +136,13 @@ type WorkflowExplainResponse struct {
 }
 
 type RunStartRequest struct {
-	Project         string         `json:"project"`
-	Workflow        WorkflowInput  `json:"workflow"`
-	Inputs          map[string]any `json:"inputs,omitempty"`
-	Driver          string         `json:"driver,omitempty"`
-	Target          string         `json:"target,omitempty"`
-	ClientRequestID string         `json:"clientRequestId"`
+	Project         string                   `json:"project"`
+	Workflow        WorkflowInput            `json:"workflow"`
+	Inputs          map[string]any           `json:"inputs,omitempty"`
+	Driver          string                   `json:"driver,omitempty"`
+	Target          string                   `json:"target,omitempty"`
+	ClientRequestID string                   `json:"clientRequestId"`
+	ContextBindings workflow.ContextBindings `json:"contextBindings,omitempty"`
 }
 
 type RunStartResponse struct {
@@ -200,29 +206,50 @@ type Result struct {
 }
 
 type AttemptView struct {
-	Number      int    `json:"number"`
-	Phase       string `json:"phase"`
-	Conclusion  string `json:"conclusion,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	Driver      string `json:"driver"`
-	Target      string `json:"target"`
-	ContextHash string `json:"contextHash,omitempty"`
-	Context     *ContextInspect `json:"context,omitempty"`
-	StartedAt   string `json:"startedAt"`
-	UpdatedAt   string `json:"updatedAt"`
-	CompletedAt string `json:"completedAt,omitempty"`
+	Number      int                 `json:"number"`
+	Phase       string              `json:"phase"`
+	Conclusion  string              `json:"conclusion,omitempty"`
+	Reason      string              `json:"reason,omitempty"`
+	Driver      string              `json:"driver"`
+	Target      string              `json:"target"`
+	ContextHash string              `json:"contextHash,omitempty"`
+	Context     *ContextInspect     `json:"context,omitempty"`
+	MemoryUsage *MemoryUsageInspect `json:"memoryUsage,omitempty"`
+	StartedAt   string              `json:"startedAt"`
+	UpdatedAt   string              `json:"updatedAt"`
+	CompletedAt string              `json:"completedAt,omitempty"`
 }
 
-type ContextComponentInspect struct { ID string `json:"id"`; Kind string `json:"kind"`; Tier string `json:"tier"`; Truncation string `json:"truncation"` }
+type ContextComponentInspect struct {
+	ID               string `json:"id"`
+	Kind             string `json:"kind"`
+	Tier             string `json:"tier"`
+	SelectionReason  string `json:"selectionReason,omitempty"`
+	ProvenanceSource string `json:"source,omitempty"`
+	OriginalBytes    int    `json:"originalBytes,omitempty"`
+	IncludedBytes    int    `json:"includedBytes,omitempty"`
+	Truncation       string `json:"truncation"`
+}
+type ContextOmissionInspect struct {
+	ID            string `json:"id"`
+	Kind          string `json:"kind,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	OriginalBytes int    `json:"originalBytes,omitempty"`
+}
+type MemoryUsageInspect struct {
+	RecordIDs []string `json:"recordIds"`
+	Committed bool     `json:"committed"`
+}
 type ContextInspect struct {
-	SchemaVersion string `json:"schemaVersion"`
-	CompilerVersion string `json:"compilerVersion"`
-	Hash string `json:"hash,omitempty"`
-	Budget map[string]int `json:"budget"`
-	Usage map[string]int `json:"usage"`
-	Components []ContextComponentInspect `json:"components"`
-	Omissions []string `json:"omissions,omitempty"`
-	Truncated bool `json:"truncated"`
+	SchemaVersion   string                    `json:"schemaVersion"`
+	CompilerVersion string                    `json:"compilerVersion"`
+	Hash            string                    `json:"hash,omitempty"`
+	Budget          map[string]int            `json:"budget"`
+	Usage           map[string]int            `json:"usage"`
+	Components      []ContextComponentInspect `json:"components"`
+	Omissions       []ContextOmissionInspect  `json:"omissions,omitempty"`
+	Truncated       bool                      `json:"truncated"`
+	MemoryUsage     *MemoryUsageInspect       `json:"memoryUsage,omitempty"`
 }
 
 type NodeView struct {

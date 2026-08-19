@@ -224,6 +224,7 @@ const (
 	MemoryWriterUser      MemoryWriter = "user"
 	MemoryWriterHostAgent MemoryWriter = "host_agent"
 	MemoryWriterMigration MemoryWriter = "migration"
+	MemoryWriterEngine    MemoryWriter = "engine"
 )
 
 type MemoryProvenanceV1 struct {

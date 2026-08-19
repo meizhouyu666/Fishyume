@@ -35,10 +35,10 @@ export interface AttemptSnapshot {
   conclusion?: Conclusion; reason?: Reason; resolvedDriver?: string; resolvedTarget?: string; backend?: string;
   launchState?: 'prepared' | 'dispatching' | 'handle_persisted' | 'finished_without_handle' | 'session_persisted' | 'finished_without_session';
   execution?: ExecutionHandle; resultConsumed?: boolean;
-  contextCompilerVersion?: string; contextCompilerVersionV2?: string; contextManifest?: {compilerVersion: string; components: Array<{name: string; source: string; version: string}>}; contextHash?: string; context?: ContextInspect; promptHash?: string;
+  contextCompilerVersion?: string; contextCompilerVersionV2?: string; contextManifest?: {compilerVersion: string; components: Array<{name: string; source: string; version: string}>}; contextHash?: string; memoryUsage?: {schemaVersion: string; recordIds: string[]; committed: boolean}; context?: ContextInspect; promptHash?: string;
   startedAt: string; updatedAt: string; completedAt?: string;
 }
-export interface ContextInspect {schemaVersion?: string; compilerVersion: string; hash?: string; budget: Record<string, number>; usage: Record<string, number>; components: Array<{id: string; kind: string; tier?: string; truncation?: string}>; omissions?: string[]; truncated: boolean}
+export interface ContextInspect {schemaVersion?: string; compilerVersion: string; hash?: string; budget: Record<string, number>; usage: Record<string, number>; components: Array<{id: string; kind: string; tier?: string; selectionReason?: string; source?: string; originalBytes?: number; includedBytes?: number; truncation?: string}>; omissions?: Array<string | {id: string; kind?: string; reason?: string; originalBytes?: number}>; truncated: boolean; memoryUsage?: {recordIds: string[]; committed: boolean}}
 export interface LegacySnapshot {protocolVersion: 1; id: string; status: string; nodeStatus: string; project: string; summary?: string; stateDir: string; createdAt: string; updatedAt: string}
 export interface NodeDiagnostic {nodeId: string; reason?: Reason; message?: string}
 export interface RunStatusView {

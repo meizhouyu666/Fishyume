@@ -3,7 +3,10 @@ package run
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/contextcompiler"
@@ -156,12 +159,20 @@ type AttemptSnapshot struct {
 	ContextManifest          contextcompiler.Manifest           `json:"contextManifest"`
 	ContextManifestV2        *contextcompiler.ContextManifestV2 `json:"contextManifestV2,omitempty"`
 	ContextHash              string                             `json:"contextHash"`
+	MemoryUsage              *MemoryUsageReceipt                `json:"memoryUsage,omitempty"`
 	PromptHash               string                             `json:"-"`
 	StartedAt                time.Time                          `json:"startedAt"`
 	UpdatedAt                time.Time                          `json:"updatedAt"`
 	CompletedAt              *time.Time                         `json:"completedAt,omitempty"`
 
 	legacyExecution *legacyExecutionSnapshot
+}
+
+type MemoryUsageReceipt struct {
+	SchemaVersion string   `json:"schemaVersion"`
+	MutationID    string   `json:"mutationId"`
+	RecordIDs     []string `json:"recordIds"`
+	Committed     bool     `json:"committed"`
 }
 
 type WorkflowEvent struct {
@@ -278,6 +289,49 @@ func ValidateAttemptSnapshot(snapshot AttemptSnapshot) error {
 	}
 	if snapshot.LaunchState != "" && snapshot.LaunchState != LaunchPrepared && snapshot.LaunchState != LaunchDispatching && snapshot.LaunchState != LaunchHandlePersisted && snapshot.LaunchState != LaunchFinishedWithoutHandle && snapshot.LaunchState != LaunchSessionPersisted && snapshot.LaunchState != LaunchFinishedWithoutSession {
 		return fmt.Errorf("attempt has invalid launch state %q", snapshot.LaunchState)
+	}
+	if err := validateAttemptMemoryUsage(snapshot); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateAttemptMemoryUsage(snapshot AttemptSnapshot) error {
+	usage := snapshot.MemoryUsage
+	if usage == nil {
+		return nil
+	}
+	if snapshot.ContextManifestV2 == nil || snapshot.ContextCompilerVersionV2 != contextcompiler.CompilerV2Version {
+		return fmt.Errorf("legacy attempt cannot contain Memory usage")
+	}
+	if usage.SchemaVersion != "fishyume.memory-usage/v1" || !usage.Committed {
+		return fmt.Errorf("attempt has invalid Memory usage schema or commit state")
+	}
+	if !utf8.ValidString(usage.MutationID) || strings.TrimSpace(usage.MutationID) == "" || usage.MutationID != strings.TrimSpace(usage.MutationID) || len([]byte(usage.MutationID)) > 256 {
+		return fmt.Errorf("attempt has invalid Memory usage mutation ID")
+	}
+	if len(usage.RecordIDs) < 1 || len(usage.RecordIDs) > contextcompiler.MaxSelectedMemoryRecords || !sort.StringsAreSorted(usage.RecordIDs) {
+		return fmt.Errorf("attempt Memory usage record IDs are missing, unordered, or exceed their bound")
+	}
+	for index, id := range usage.RecordIDs {
+		if !utf8.ValidString(id) || strings.TrimSpace(id) == "" || id != strings.TrimSpace(id) || len([]byte(id)) > 128 || (index > 0 && usage.RecordIDs[index-1] == id) {
+			return fmt.Errorf("attempt Memory usage contains an invalid or duplicate record ID")
+		}
+	}
+	included := make([]string, 0, len(usage.RecordIDs))
+	for _, component := range snapshot.ContextManifestV2.Components {
+		if component.Kind == contextcompiler.KindMemory {
+			included = append(included, component.ID)
+		}
+	}
+	sort.Strings(included)
+	if len(included) != len(usage.RecordIDs) {
+		return fmt.Errorf("attempt Memory usage does not match included Context Memory")
+	}
+	for index := range included {
+		if included[index] != usage.RecordIDs[index] {
+			return fmt.Errorf("attempt Memory usage does not match included Context Memory")
+		}
 	}
 	return nil
 }

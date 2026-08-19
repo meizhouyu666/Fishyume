@@ -38,7 +38,11 @@ func Parse(data []byte, filename string, provided map[string]any) (Normalized, e
 	if err != nil {
 		return Normalized{}, err
 	}
-	return Normalized{Document: doc, Inputs: inputs, TopologicalOrder: order, Warnings: warnings}, nil
+	policyVersion := "context-policy/legacy"
+	if doc.APIVersion == ContextPolicyAPIVersion {
+		policyVersion = "context-policy/v1"
+	}
+	return Normalized{Document: doc, Inputs: inputs, TopologicalOrder: order, Warnings: warnings, ContextPolicyVersion: policyVersion}, nil
 }
 
 func documentJSON(data []byte, filename string) ([]byte, error) {
@@ -151,11 +155,13 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 }
 
 func normalizeDocument(doc *Document) ([]string, error) {
-	if doc.APIVersion != APIVersion && doc.APIVersion != LegacyAPIVersion {
+	if doc.APIVersion != APIVersion && doc.APIVersion != ContextPolicyAPIVersion && doc.APIVersion != LegacyAPIVersion {
 		return nil, fmt.Errorf("unsupported apiVersion %q", doc.APIVersion)
 	}
 	warnings := make([]string, 0, 2)
-	doc.APIVersion = APIVersion
+	if doc.APIVersion == LegacyAPIVersion {
+		doc.APIVersion = APIVersion
+	}
 	if doc.Inputs == nil {
 		doc.Inputs = map[string]InputDeclaration{}
 	}
