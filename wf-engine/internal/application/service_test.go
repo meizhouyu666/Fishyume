@@ -180,6 +180,16 @@ func TestWorkflowAuthoringApplicationAPI(t *testing.T) {
 	if len(capabilities.Drivers) != 1 || capabilities.Drivers[0].Driver != "codex" || !reflect.DeepEqual(capabilities.ActionTypes, []ActionType{ActionApprove, ActionReject, ActionAnswer, ActionRetry, ActionCancel}) {
 		t.Fatalf("unexpected capabilities: %+v", capabilities)
 	}
+	if capabilities.AuthoringGuide.SchemaVersion != AuthoringGuideVersion || capabilities.AuthoringGuide.WorkflowAPIVersion != WorkflowSchemaVersion || len(capabilities.AuthoringGuide.RecommendedFlow) == 0 {
+		t.Fatalf("unexpected authoring guide: %+v", capabilities.AuthoringGuide)
+	}
+	encodedCapabilities, err := json.Marshal(capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encodedCapabilities), "M5_6_DYNAMIC_PROJECT_SECRET") || len(encodedCapabilities) > MaxSchemaResponseBytes {
+		t.Fatalf("capabilities leaked dynamic data or exceeded bound")
+	}
 	request := WorkflowValidateRequest{Project: "project", Workflow: WorkflowInput{Document: validWorkflowDocument()}, Inputs: map[string]any{}}
 	validated, appErr := service.WorkflowValidate(context.Background(), request)
 	if appErr != nil || !validated.Valid || len(validated.Issues) != 0 || len(validated.CapabilityGaps) != 0 {
@@ -225,6 +235,51 @@ func TestDocumentedSmokeWorkflowValidatesThroughApplicationAPI(t *testing.T) {
 		if node.Agent != nil && (node.Agent.Driver != "codex" || node.Agent.Target != "local") {
 			t.Fatalf("documented smoke node %s resolved Agent = %+v", node.ID, node.Agent)
 		}
+	}
+}
+
+func TestDocumentedV2HostWorkflowValidatesAndExplainsExplicitContext(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "docs", "examples", "fishyume-v2-host.yaml")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(newFakeCore(), "codex", store.New(t.TempDir()))
+	request := WorkflowValidateRequest{
+		Project:  "project",
+		Workflow: WorkflowInput{Source: &WorkflowSource{Filename: filepath.Base(path), Content: string(content)}},
+		ContextBindings: workflow.ContextBindings{MemoryByNode: map[string][]workflow.MemoryBinding{
+			"implement": {{ID: "memory-example", Reason: "Selected project constraint"}},
+		}},
+	}
+	validated, appErr := service.WorkflowValidate(context.Background(), request)
+	if appErr != nil || !validated.Valid || len(validated.Issues) != 0 || len(validated.CapabilityGaps) != 0 {
+		t.Fatalf("documented v2 workflow validate = %+v, error = %v", validated, appErr)
+	}
+	explained, appErr := service.WorkflowExplain(context.Background(), request)
+	if appErr != nil {
+		t.Fatal(appErr)
+	}
+	var implement ExplainNode
+	for _, node := range explained.Nodes {
+		if node.ID == "implement" {
+			implement = node
+		}
+	}
+	if !reflect.DeepEqual(implement.ContextSources, []string{"plan"}) || !reflect.DeepEqual(implement.ProjectInstructions, []string{"AGENTS.md"}) || len(implement.MemoryBindings) != 1 || implement.ContextPolicyVersion != "context-policy/v1" {
+		t.Fatalf("documented v2 context explanation = %+v", implement)
+	}
+	requestsPath := filepath.Join("..", "..", "..", "docs", "examples", "fishyume-v2-host-requests.json")
+	requests, err := os.ReadFile(requestsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requestSet map[string]any
+	if err := json.Unmarshal(requests, &requestSet); err != nil {
+		t.Fatalf("canonical Host request set is not JSON: %v", err)
+	}
+	if requestSet["exactIntent"] == nil || requestSet["run.start"] == nil || requestSet["run.result"] == nil {
+		t.Fatalf("canonical Host request set is incomplete: %v", requestSet)
 	}
 }
 

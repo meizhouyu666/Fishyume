@@ -21,6 +21,10 @@ const (
 	MaxSchemaResponseBytes = 256 * 1024
 	MaxErrorDataBytes      = 8 * 1024
 	MaxRequestIDBytes      = 256
+	AuthoringGuideVersion  = "fishyume.authoring-guide/v1"
+	MaxAuthoringFlowSteps  = 16
+	MaxAuthoringRules      = 16
+	MaxAuthoringRuleBytes  = 1024
 )
 
 type JSONScalar any
@@ -66,6 +70,16 @@ type SystemCapabilitiesRequest struct {
 	Project string `json:"project,omitempty"`
 }
 
+// AuthoringGuide is the bounded, Provider-independent discovery contract for Host
+// Agents. It deliberately contains instructions about public API sequencing only;
+// dynamic project content, prompts, credentials, and Memory content never belong here.
+type AuthoringGuide struct {
+	SchemaVersion      string   `json:"schemaVersion"`
+	RecommendedFlow    []string `json:"recommendedFlow"`
+	WorkflowAPIVersion string   `json:"workflowApiVersion"`
+	Rules              []string `json:"rules"`
+}
+
 type SystemCapabilitiesResponse struct {
 	APIVersion            string             `json:"apiVersion"`
 	WorkflowSchemaVersion string             `json:"workflowSchemaVersion"`
@@ -76,6 +90,7 @@ type SystemCapabilitiesResponse struct {
 	Limits                Limits             `json:"limits"`
 	ErrorCodes            []ErrorCode        `json:"errorCodes"`
 	MinimalExample        json.RawMessage    `json:"minimalExample"`
+	AuthoringGuide        AuthoringGuide     `json:"authoringGuide"`
 }
 
 type ValidationIssue struct {

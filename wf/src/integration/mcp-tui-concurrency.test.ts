@@ -13,13 +13,14 @@ import {createMCPServer} from '../mcp/server.js';
 import {LiveConsoleController} from '../tui/live-console.js';
 
 const workflow = {
-  apiVersion: 'fishyume/v1',
+  apiVersion: 'fishyume/v2',
   name: 'mcp-tui-concurrency-acceptance',
   defaults: {agent: {driver: 'codex', target: 'local'}},
+  context: {projectInstructions: ['README.md']},
   execution: {maxConcurrency: 1},
   nodes: {
     approve: {type: 'approval', prompt: 'Start the active Agent?'},
-    execute: {type: 'agent', dependsOn: ['approve'], task: 'scenario:active\nRemain active until explicitly cancelled.'},
+    execute: {type: 'agent', dependsOn: ['approve'], task: 'scenario:active\nRemain active until explicitly cancelled.', context: {dependencies: []}},
   },
 };
 

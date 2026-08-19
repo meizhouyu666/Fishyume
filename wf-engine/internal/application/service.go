@@ -78,7 +78,7 @@ func (s *Service) SystemCapabilities(ctx context.Context, request SystemCapabili
 		drivers = append(drivers, DriverCapability{Driver: report.Driver, Targets: targets, Ready: report.Ready, Diagnostic: report.Diagnostic, MaxConcurrentAgents: report.MaxConcurrentAgents, SupportsConcurrentCancel: report.SupportsConcurrentCancel})
 	}
 	sort.Slice(drivers, func(i, j int) bool { return drivers[i].Driver < drivers[j].Driver })
-	response := SystemCapabilitiesResponse{APIVersion: APIVersion, WorkflowSchemaVersion: WorkflowSchemaVersion, WorkflowSchema: append(json.RawMessage(nil), WorkflowJSONSchema...), NodeTypes: []string{"agent", "approval"}, ActionTypes: []ActionType{ActionApprove, ActionReject, ActionAnswer, ActionRetry, ActionCancel}, Drivers: drivers, Limits: StableLimits(), ErrorCodes: append([]ErrorCode(nil), StableErrorCodes...), MinimalExample: append(json.RawMessage(nil), MinimalWorkflowExample...)}
+	response := SystemCapabilitiesResponse{APIVersion: APIVersion, WorkflowSchemaVersion: WorkflowSchemaVersion, WorkflowSchema: append(json.RawMessage(nil), WorkflowJSONSchema...), NodeTypes: []string{"agent", "approval"}, ActionTypes: []ActionType{ActionApprove, ActionReject, ActionAnswer, ActionRetry, ActionCancel}, Drivers: drivers, Limits: StableLimits(), ErrorCodes: append([]ErrorCode(nil), StableErrorCodes...), MinimalExample: append(json.RawMessage(nil), MinimalWorkflowExample...), AuthoringGuide: StableAuthoringGuide()}
 	if err := ensureResponseBound(response, MaxSchemaResponseBytes); err != nil {
 		return SystemCapabilitiesResponse{}, internalError(err)
 	}

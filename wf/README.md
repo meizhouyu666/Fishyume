@@ -51,7 +51,22 @@ to writer `user`; MCP writes are fixed to `host_agent`. `memory.list` returns bo
 metadata, while `memory.get` returns one full record. See
 [`../docs/fishyume-m5.2-memory-store.md`](../docs/fishyume-m5.2-memory-store.md).
 
-Call `system.capabilities` before authoring automation. `run.start` is idempotent by caller-owned `clientRequestId`; `run.action` requires a unique `actionId` and the observed `stateVersion`. Event reads and responses are bounded. Machine output is one Application response JSON object; MCP returns the same response types.
+Call `system.capabilities` before authoring automation. Its bounded
+`fishyume.authoring-guide/v1` data gives the complete safe Host sequence and advertises
+`fishyume/v2`. For v2, `dependsOn` controls scheduling and
+`context.dependencies` explicitly controls dependency-result injection. A Host may
+select Memory, but must pass the same `workflow`, `inputs`, `driver`, `target`, and
+`contextBindings` to `workflow.validate`, `workflow.explain`, and `run.start`.
+
+`run.start` is idempotent by caller-owned `clientRequestId`; reuse an ID only for the
+identical request. `run.action` requires a unique `actionId` and preconditions from the
+latest `run.get`. Paginate `run.events` with `afterSequence`, read `run.result` only
+after terminal state, and use the returned `attach` command to open the human TUI on
+that same durable Run. The canonical Workflow and exact request set are
+[`../docs/examples/fishyume-v2-host.yaml`](../docs/examples/fishyume-v2-host.yaml) and
+[`../docs/examples/fishyume-v2-host-requests.json`](../docs/examples/fishyume-v2-host-requests.json).
+Machine output is one Application response JSON object; MCP returns the same response
+types.
 
 ## Human console
 
@@ -65,4 +80,4 @@ Deprecated CLI `--backend/--tool/--runtime`, Workflow `defaults.backend/tool/run
 
 Use `--driver/--target` and `defaults.agent.driver/target` for all new automation. See [`../docs/fishyume-m4-migration-guide.md`](../docs/fishyume-m4-migration-guide.md) for exact mappings and conflict behavior.
 
-M4 is technically closed: the product/migration release surface, deterministic and real Codex MCP Host flows, local real-Codex single-node and parallel Driver smokes, rendered Host/PTY stale-action conflict, two-client MCP Host/TUI-controller acceptance, Provider-independent Application crash/restart, independent review, and all public CI jobs passed. M4.5 accepted the zero-argument Dashboard, one-command Codex setup, product Doctor, and installed-package golden path. M5.0-M5.4 are complete; M5.5 closes v2 Context Policy, host-supplied Memory bindings, exactly-once usage receipts, and bounded context inspection. No package publication or GitHub Release was performed, and public CI never requires Provider credentials.
+M4 is technically closed: the product/migration release surface, deterministic and real Codex MCP Host flows, local real-Codex single-node and parallel Driver smokes, rendered Host/PTY stale-action conflict, two-client MCP Host/TUI-controller acceptance, Provider-independent Application crash/restart, independent review, and all public CI jobs passed. M4.5 accepted the zero-argument Dashboard, one-command Codex setup, product Doctor, and installed-package golden path. M5.0-M5.6 are complete: v2 Context Policy, explicit Host Memory bindings, exactly-once usage receipts, bounded context inspection, self-discovering authoring guidance, canonical examples, and the Provider-independent Host/TUI golden path. No package publication or GitHub Release was performed, and public CI never requires Provider credentials.

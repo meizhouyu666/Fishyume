@@ -1,0 +1,30 @@
+apiVersion: fishyume/v2
+name: host-agent-golden-path
+defaults:
+  agent:
+    driver: codex
+    target: local
+execution:
+  maxConcurrency: 1
+nodes:
+  plan:
+    type: agent
+    task: "Create a bounded implementation plan and return it as the node summary."
+    context:
+      projectInstructions: [AGENTS.md]
+      dependencies: []
+  approve:
+    type: approval
+    dependsOn: [plan]
+    prompt: "Approve the implementation plan?"
+  implement:
+    type: agent
+    dependsOn: [approve]
+    when:
+      node: approve
+      field: result.decision
+      equals: approved
+    task: "Implement the approved plan, run focused checks, and summarize the result."
+    context:
+      projectInstructions: [AGENTS.md]
+      dependencies: [plan]

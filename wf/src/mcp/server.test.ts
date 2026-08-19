@@ -15,6 +15,7 @@ const capabilities: SystemCapabilitiesResponse = {
   nodeTypes: ['agent', 'approval'], actionTypes: ['approve', 'reject', 'answer', 'retry', 'cancel'],
   drivers: [{driver: 'codex', targets: ['local'], ready: true, maxConcurrentAgents: 1, supportsConcurrentCancel: true}],
   limits: {maxEventWaitMs: 30000}, errorCodes: ['invalid_argument', 'conflict'], minimalExample: {apiVersion: 'fishyume/v1'},
+  authoringGuide: {schemaVersion: 'fishyume.authoring-guide/v1', recommendedFlow: ['system.capabilities', 'workflow.validate', 'workflow.explain', 'run.start', 'run.events', 'run.get', 'run.action', 'run.result'], workflowApiVersion: 'fishyume/v2', rules: ['Use exact intent.']},
 };
 
 class FakeApplicationClient implements EngineClient {
@@ -100,6 +101,8 @@ test('MCP and Machine CLI expose identical Application response JSON', async () 
     assert.match(listed.tools.find(tool => tool.name === 'run.start')?.description ?? '', /clientRequestId/);
     assert.match(listed.tools.find(tool => tool.name === 'run.action')?.description ?? '', /stateVersion/);
     assert.match(listed.tools.find(tool => tool.name === 'run.events')?.description ?? '', /bounded/);
+    assert.match(listed.tools.find(tool => tool.name === 'workflow.validate')?.description ?? '', /same workflow, inputs, driver, target/);
+    assert.match(listed.tools.find(tool => tool.name === 'workflow.explain')?.description ?? '', /Context Policy/);
     const result = await mcpClient.callTool({name: 'system.capabilities', arguments: {}});
     assert.deepEqual(result.structuredContent, JSON.parse(machineOutput));
     const content = result.content as Array<{type: string; text?: string}>;

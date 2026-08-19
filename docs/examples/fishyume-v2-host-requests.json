@@ -1,0 +1,47 @@
+{
+  "system.capabilities": {
+    "project": "C:\\path\\to\\project"
+  },
+  "memory.list": {
+    "project": "C:\\path\\to\\project",
+    "filter": {"state": "active"},
+    "limit": 50
+  },
+  "exactIntent": {
+    "project": "C:\\path\\to\\project",
+    "workflow": {
+      "source": {
+        "filename": "fishyume-v2-host.yaml",
+        "content": "apiVersion: fishyume/v2\nname: host-agent-golden-path\ndefaults:\n  agent:\n    driver: codex\n    target: local\nexecution:\n  maxConcurrency: 1\nnodes:\n  plan:\n    type: agent\n    task: \"Create a bounded implementation plan and return it as the node summary.\"\n    context:\n      projectInstructions: [AGENTS.md]\n      dependencies: []\n  approve:\n    type: approval\n    dependsOn: [plan]\n    prompt: \"Approve the implementation plan?\"\n  implement:\n    type: agent\n    dependsOn: [approve]\n    when:\n      node: approve\n      field: result.decision\n      equals: approved\n    task: \"Implement the approved plan, run focused checks, and summarize the result.\"\n    context:\n      projectInstructions: [AGENTS.md]\n      dependencies: [plan]\n"
+      }
+    },
+    "inputs": {},
+    "driver": "codex",
+    "target": "local",
+    "contextBindings": {
+      "memoryByNode": {
+        "implement": [
+          {"id": "memory-example", "reason": "Existing project constraint selected by the Host"}
+        ]
+      }
+    }
+  },
+  "workflow.validate": "Send exactIntent unchanged.",
+  "workflow.explain": "Send exactIntent unchanged.",
+  "run.start": "Send exactIntent unchanged plus clientRequestId=host-agent-golden-path-1.",
+  "run.events": {
+    "runId": "<runId>",
+    "afterSequence": 0,
+    "limit": 50,
+    "waitMs": 1000
+  },
+  "run.get": {"runId": "<runId>"},
+  "run.action": {
+    "actionId": "host-approve-1",
+    "runId": "<runId>",
+    "type": "approve",
+    "expectedStateVersion": "<latest run.get stateVersion>",
+    "nodeId": "approve"
+  },
+  "run.result": {"runId": "<runId>"}
+}

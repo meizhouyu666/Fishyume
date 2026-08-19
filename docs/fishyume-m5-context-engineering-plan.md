@@ -1,6 +1,6 @@
 # Fishyume M5: Context Engineering and Memory
 
-> Status: M5.0-M5.5 completed with public Windows/Ubuntu CI success; M5.6 Agent-native Authoring and Acceptance is the final M5 product-closure batch. The accepted M4.5 Developer Preview remains the product baseline.
+> Status: M5.0-M5.6 completed. M5.6 Agent-native Authoring and Acceptance is the accepted M5 product-closure batch: the public contract is self-discovering for external Host Agents through the bounded versioned authoring guide, canonical v2 examples, and a Provider-independent Host/TUI golden path. The accepted M4.5 Developer Preview remains the product baseline.
 
 M5 turns the existing deterministic Context Compiler skeleton into the product layer
 that gives each Agent Attempt the smallest sufficient, auditable context. Fishyume
@@ -105,6 +105,8 @@ canonical v2 examples, and one Provider-independent end-to-end Host/TUI acceptan
 It does not add a new MCP tool, model routing, automatic Memory retrieval, prompt
 optimization, or an embedded harness. The approved preparation and delivery batches are
 defined in [`fishyume-m5.6-agent-native-authoring-acceptance.md`](./fishyume-m5.6-agent-native-authoring-acceptance.md).
+
+Completed in [`fishyume-m5.6-agent-native-authoring-acceptance.md`](./fishyume-m5.6-agent-native-authoring-acceptance.md): the bounded versioned `fishyume.authoring-guide/v1` ships in `system.capabilities`, MCP tool descriptions carry the v2 Context Policy and exact preflight/action/result preconditions, the canonical v2 Workflow and Host request set are copyable, and the Provider-independent MCP Host/TUI acceptance proves identical validate/explain/start Context bindings, exactly-once Memory usage with omitted Memory not consumed, idempotent start, Approval, `needs_input`, stale-`stateVersion` conflict, event pagination, terminal result, attach, and metadata-leak hygiene. No new MCP tool, RPC protocol, Codex approval, or Provider credential was added.
 
 ## M5 entry gates
 

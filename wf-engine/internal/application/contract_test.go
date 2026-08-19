@@ -5,6 +5,7 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"wf.local/wf-engine/internal/contextcompiler"
@@ -53,6 +54,30 @@ func TestStableContractLimitsAndErrors(t *testing.T) {
 	limits := StableLimits()
 	if limits.DefaultListLimit <= 0 || limits.DefaultListLimit > limits.MaxListLimit || limits.DefaultEventLimit <= 0 || limits.DefaultEventLimit > limits.MaxEventLimit || limits.MaxEventWaitMS <= 0 || limits.MaxResponseBytes <= limits.MaxErrorDataBytes || limits.MaxMemoryContentBytes != 16*1024 || limits.MaxProjectMemoryRecords != 2048 || limits.MaxMemorySupersedes != 16 || limits.MaxMemoryReceipts != 4096 || limits.DefaultMemoryListLimit > limits.MaxMemoryListLimit {
 		t.Fatalf("invalid stable limits: %+v", limits)
+	}
+}
+
+func TestAuthoringGuideIsStableBoundedAndContainsNoDynamicContent(t *testing.T) {
+	guide := StableAuthoringGuide()
+	if guide.SchemaVersion != AuthoringGuideVersion || guide.WorkflowAPIVersion != WorkflowSchemaVersion {
+		t.Fatalf("guide versions = %+v", guide)
+	}
+	if len(guide.RecommendedFlow) == 0 || len(guide.RecommendedFlow) > MaxAuthoringFlowSteps || len(guide.Rules) == 0 || len(guide.Rules) > MaxAuthoringRules {
+		t.Fatalf("guide bounds = %+v", guide)
+	}
+	for _, rule := range guide.Rules {
+		if len(rule) == 0 || len(rule) > MaxAuthoringRuleBytes {
+			t.Fatalf("rule exceeds bounds: %q", rule)
+		}
+	}
+	encoded, err := json.Marshal(guide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"M5_6_DYNAMIC_PROJECT_SECRET", "M5_6_PROVIDER_CREDENTIAL", "M5_6_MEMORY_CONTENT"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("guide leaked dynamic content marker %q", forbidden)
+		}
 	}
 }
 

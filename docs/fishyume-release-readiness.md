@@ -6,6 +6,24 @@ M4.5 is an accepted Developer Preview product gate layered on this frozen techni
 
 The 2026-08-14 M4.5 live record now covers global Windows Preview installation and safe idle-service upgrade, canonical Codex MCP transport plus explicit Fishyume tool authorization, a real installed-configuration `system.capabilities` call without interactive approval, and a real Host-created Run selected through the zero-argument Dashboard before PTY approval. The isolated Host/TUI evidence converged terminal with exact stale-action conflict and full temporary cleanup.
 
+## M5 closure (Agent-native Context Engineering)
+
+M5 closes the Agent-native product path: an external Host Agent can discover, author,
+preflight, execute, observe, interact with, and collect a `fishyume/v2` Workflow through
+the public contract, with the human able to attach the TUI to the same durable Run. The
+bounded versioned `fishyume.authoring-guide/v1` ships in `system.capabilities`; MCP tool
+descriptions carry v2 Context Policy and exact preflight/action/result preconditions; the
+canonical v2 Workflow and Host request set are copyable from
+[`docs/examples/fishyume-v2-host.yaml`](./examples/fishyume-v2-host.yaml) and
+[`docs/examples/fishyume-v2-host-requests.json`](./examples/fishyume-v2-host-requests.json).
+The Provider-independent MCP Host/TUI acceptance proves identical validate/explain/start
+Context bindings, exactly-once Memory usage (omitted Memory is not consumed), idempotent
+`clientRequestId` start, Approval, `needs_input`, stale-`stateVersion` conflict, event
+pagination, terminal result, attach, and metadata-leak hygiene. No new MCP tool, RPC
+protocol, Codex approval, or Provider credential was added; v1/history compatibility and
+all M5.5 exactly-once guarantees are unchanged. Acceptance and gates are recorded in
+[`fishyume-m5.6-agent-native-authoring-acceptance.md`](./fishyume-m5.6-agent-native-authoring-acceptance.md).
+
 ## Current release surface
 
 - `fishyume`: Agent-facing MCP and Machine CLI, human CLI/TUI, and the compatible `wf` bin.

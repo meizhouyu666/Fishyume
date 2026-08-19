@@ -8,18 +8,18 @@ import test from 'node:test';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import {EngineBridge, type EngineClient} from '../bridge/engine.js';
-import type {ApplicationRunView, RunActionResponse, RunEventsResponse, RunGetResponse, RunResultResponse, RunStartResponse, SystemCapabilitiesResponse, WorkflowExplainResponse, WorkflowValidateResponse} from '../bridge/application.js';
+import type {ApplicationRunView, MemoryGetResponse, MemoryMutationResponse, RunActionResponse, RunEventsResponse, RunGetResponse, RunResultResponse, RunStartResponse, SystemCapabilitiesResponse, WorkflowExplainResponse, WorkflowValidateResponse} from '../bridge/application.js';
 import {createMCPServer} from '../mcp/server.js';
 
 const workflow = {
-  apiVersion: 'fishyume/v1',
+  apiVersion: 'fishyume/v2',
   name: 'mcp-host-agent-smoke',
   defaults: {agent: {driver: 'codex', target: 'local'}},
   execution: {maxConcurrency: 1},
   nodes: {
-    plan: {type: 'agent', task: 'scenario:terminal-succeeded\nCreate a plan.'},
+    plan: {type: 'agent', task: 'scenario:terminal-succeeded\nCreate a plan.', context: {projectInstructions: ['README.md'], dependencies: []}},
     approve: {type: 'approval', dependsOn: ['plan'], prompt: 'Approve the plan?'},
-    implement: {type: 'agent', dependsOn: ['approve'], task: 'scenario:needs-input-then-succeeded\nImplement the approved plan.'},
+    implement: {type: 'agent', dependsOn: ['approve'], task: 'scenario:needs-input-then-succeeded\nImplement the approved plan.', context: {projectInstructions: ['README.md'], dependencies: ['plan']}},
   },
 };
 
@@ -122,17 +122,41 @@ test('MCP Host Agent completes capabilities, authoring, approval, answer, events
     await Promise.all([server.connect(serverTransport), host.connect(hostTransport)]);
     const capabilities = await callTool<SystemCapabilitiesResponse>(host, 'system.capabilities', {});
     assert.equal(capabilities.apiVersion, 'fishyume.application/v1');
+    assert.equal(capabilities.workflowSchemaVersion, 'fishyume/v2');
+    assert.equal(capabilities.authoringGuide.schemaVersion, 'fishyume.authoring-guide/v1');
+    assert.equal(capabilities.authoringGuide.workflowApiVersion, 'fishyume/v2');
+    assert.deepEqual(capabilities.authoringGuide.recommendedFlow.filter(method => !method.startsWith('memory.')), ['system.capabilities', 'workflow.validate', 'workflow.explain', 'run.start', 'run.events', 'run.get', 'run.action', 'run.result']);
     assert.ok(capabilities.drivers.some(driver => driver.driver === 'codex' && driver.targets.includes('local')));
 
-    const authoring = {project: projectRoot, workflow: {document: workflow}};
-    const validated = await callTool<WorkflowValidateResponse>(host, 'workflow.validate', authoring);
+    const includedMarker = 'M5_6_INCLUDED_MEMORY_CONTENT_MUST_NOT_LEAK';
+    const omittedMarker = 'M5_6_OMITTED_MEMORY_CONTENT_MUST_NOT_LEAK';
+    let includedMemory = await callTool<MemoryMutationResponse>(host, 'memory.create', {project: projectRoot, mutationId: 'm5-6-included-memory-0', type: 'constraint', content: includedMarker, sensitivity: 'project', reason: 'M5.6 selected Memory acceptance'});
+    const omittedMemory = await callTool<MemoryMutationResponse>(host, 'memory.create', {project: projectRoot, mutationId: 'm5-6-omitted-memory', type: 'fact', content: omittedMarker + 'x'.repeat(16 * 1024 - omittedMarker.length), sensitivity: 'project', reason: 'M5.6 budget omission acceptance'});
+    // Optional components are ordered by stable record ID. Select a small record
+    // before the full-budget record so inclusion and budget omission are deterministic.
+    for (let candidate = 1; includedMemory.recordId > omittedMemory.recordId && candidate <= 64; candidate++) {
+      includedMemory = await callTool<MemoryMutationResponse>(host, 'memory.create', {project: projectRoot, mutationId: `m5-6-included-memory-${candidate}`, type: 'constraint', content: includedMarker, sensitivity: 'project', reason: 'M5.6 selected Memory acceptance'});
+    }
+    assert.ok(includedMemory.recordId < omittedMemory.recordId, 'could not establish deterministic optional Memory order');
+    const contextBindings = {memoryByNode: {plan: [
+      {id: includedMemory.recordId, reason: 'Small selected constraint required by this node'},
+      {id: omittedMemory.recordId, reason: 'Oversized optional record must remain omitted'},
+    ]}};
+    const exactIntent = {project: projectRoot, workflow: {document: workflow}, inputs: {}, driver: 'codex', target: 'local', contextBindings};
+    const validated = await callTool<WorkflowValidateResponse>(host, 'workflow.validate', exactIntent);
     assert.equal(validated.valid, true);
     assert.deepEqual(validated.issues, []);
-    const explained = await callTool<WorkflowExplainResponse>(host, 'workflow.explain', authoring);
+    const explained = await callTool<WorkflowExplainResponse>(host, 'workflow.explain', exactIntent);
     assert.deepEqual(explained.topologicalOrder, ['plan', 'approve', 'implement']);
     assert.deepEqual(explained.parallelLayers, [['plan'], ['approve'], ['implement']]);
+    const explainedImplement = explained.nodes.find(node => node.id === 'implement');
+    assert.deepEqual(explainedImplement?.contextSources, ['plan']);
+    assert.deepEqual(explainedImplement?.projectInstructions, ['README.md']);
+    assert.equal(explainedImplement?.contextPolicyVersion, 'context-policy/v1');
+    const explainedPlan = explained.nodes.find(node => node.id === 'plan');
+    assert.deepEqual(explainedPlan?.memoryBindings, contextBindings.memoryByNode.plan);
 
-    const startRequest = {project: projectRoot, workflow: {document: workflow}, clientRequestId: 'mcp-host-smoke-1'};
+    const startRequest = {...exactIntent, clientRequestId: 'mcp-host-smoke-1'};
     const started = await callTool<RunStartResponse>(host, 'run.start', startRequest);
     const replayed = await callTool<RunStartResponse>(host, 'run.start', startRequest);
     assert.deepEqual(replayed, started, 'same clientRequestId must replay the committed start response');
@@ -141,6 +165,10 @@ test('MCP Host Agent completes capabilities, authoring, approval, answer, events
     assert.ok(approvalNode);
     const approved = await callTool<RunActionResponse>(host, 'run.action', {actionId: 'mcp-host-approve-1', runId: started.runId, type: 'approve', expectedStateVersion: approval.stateVersion, nodeId: 'approve'});
     assert.equal(approved.type, 'approve');
+
+    const stale = await host.callTool({name: 'run.action', arguments: {actionId: 'mcp-host-stale-1', runId: started.runId, type: 'approve', expectedStateVersion: approval.stateVersion, nodeId: 'approve'}});
+    assert.equal(stale.isError, true);
+    assert.equal((JSON.parse(textContent(stale)) as {error?: {code?: string}}).error?.code, 'conflict');
 
     const needsInput = await waitForRun(host, started.runId, run => run.nodes.some(node => node.nodeId === 'implement' && node.reason === 'agent_waiting_input'), 'needs_input');
     const implement = needsInput.nodes.find(node => node.nodeId === 'implement');
@@ -157,11 +185,27 @@ test('MCP Host Agent completes capabilities, authoring, approval, answer, events
     })(), 'run.result');
     assert.equal(result.conclusion, 'succeeded');
     assert.equal(result.results.length, 3);
+    const firstPage = await callTool<RunEventsResponse>(host, 'run.events', {runId: started.runId, afterSequence: 0, limit: 1});
+    assert.equal(firstPage.events.length, 1);
+    const secondPage = await callTool<RunEventsResponse>(host, 'run.events', {runId: started.runId, afterSequence: firstPage.nextAfterSequence, limit: 1});
+    assert.ok(secondPage.events[0]!.sequence > firstPage.events[0]!.sequence);
     const events = await callTool<RunEventsResponse>(host, 'run.events', {runId: started.runId, limit: 100});
     assert.ok(events.events.some(event => event.type === 'run.created'));
     assert.ok(events.events.some(event => event.type === 'node.approval_required'));
     assert.ok(events.events.some(event => event.reason === 'agent_waiting_input' || event.type.includes('waiting_input')));
     assert.ok(events.events.every((event, index) => index === 0 || event.sequence > events.events[index - 1]!.sequence));
+    const terminal = await callTool<RunGetResponse>(host, 'run.get', {runId: started.runId});
+    assert.equal(started.attach, `fishyume attach ${started.runId}`);
+    const terminalPlan = terminal.run.nodes.find(node => node.nodeId === 'plan');
+    assert.deepEqual(terminalPlan?.attempt?.context?.memoryUsage?.recordIds, [includedMemory.recordId]);
+    assert.equal(terminalPlan?.attempt?.context?.memoryUsage?.committed, true);
+    const includedAfter = await callTool<MemoryGetResponse>(host, 'memory.get', {project: projectRoot, recordId: includedMemory.recordId});
+    const omittedAfter = await callTool<MemoryGetResponse>(host, 'memory.get', {project: projectRoot, recordId: omittedMemory.recordId});
+    assert.equal(includedAfter.record.useCount, 1, 'included Memory must be consumed exactly once');
+    assert.equal(omittedAfter.record.useCount, 0, 'budget-omitted Memory must not be consumed');
+    const publicEvidence = JSON.stringify({capabilities, validated, explained, started, approval, needsInput, result, events, terminal});
+    assert.equal(publicEvidence.includes(includedMarker), false, 'included Memory content leaked through public metadata');
+    assert.equal(publicEvidence.includes(omittedMarker), false, 'omitted Memory content leaked through public metadata');
   } finally {
     await host.close().catch(() => undefined);
     await server.close().catch(() => undefined);

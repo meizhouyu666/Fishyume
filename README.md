@@ -158,6 +158,16 @@ fishyume machine run.get --params '{"runId":"<run-id>"}'
 fishyume mcp
 ```
 
+Host Agent 应先调用 `system.capabilities`，读取其中有界且版本化的
+`fishyume.authoring-guide/v1`，再按公开顺序完成
+`validate → explain → start → events/get → action → result`。对于
+`fishyume/v2`，`dependsOn` 只决定调度，`context.dependencies` 才决定节点结果
+注入；Host 选择的 Memory 必须通过同一份 `contextBindings` 原样传给 validate、
+explain 和 start。标准 Workflow 与精确请求集合见
+[`docs/examples/fishyume-v2-host.yaml`](./docs/examples/fishyume-v2-host.yaml) 和
+[`docs/examples/fishyume-v2-host-requests.json`](./docs/examples/fishyume-v2-host-requests.json)。
+`run.start` 返回的 `attach` 命令会让人类 TUI 观察同一个持久化 Run。
+
 Host Agent MCP smoke（不需要 Provider 登录）可重复验证 capabilities、Workflow 校验/解释、幂等 start、Approval、`needs_input`、events 和最终 result：
 
 ```powershell

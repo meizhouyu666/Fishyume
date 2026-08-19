@@ -13,7 +13,8 @@ export interface WorkflowInput {source?: WorkflowSource; document?: Record<strin
 export interface MemoryBinding {id: string; reason: string}
 export interface ContextBindings {memoryByNode?: Record<string, MemoryBinding[]>}
 export interface SystemCapabilitiesRequest {project?: string}
-export interface SystemCapabilitiesResponse {apiVersion: typeof applicationApiVersion; workflowSchemaVersion: string; workflowSchema: Record<string, unknown>; nodeTypes: string[]; actionTypes: ActionType[]; drivers: Array<{driver: string; targets: string[]; ready: boolean; diagnostic?: string; maxConcurrentAgents: number; supportsConcurrentCancel: boolean}>; limits: Record<string, number>; errorCodes: ApplicationErrorCode[]; minimalExample: Record<string, unknown>}
+export interface AuthoringGuide {schemaVersion: 'fishyume.authoring-guide/v1'; recommendedFlow: ApplicationMethod[]; workflowApiVersion: 'fishyume/v2'; rules: string[]}
+export interface SystemCapabilitiesResponse {apiVersion: typeof applicationApiVersion; workflowSchemaVersion: string; workflowSchema: Record<string, unknown>; nodeTypes: string[]; actionTypes: ActionType[]; drivers: Array<{driver: string; targets: string[]; ready: boolean; diagnostic?: string; maxConcurrentAgents: number; supportsConcurrentCancel: boolean}>; limits: Record<string, number>; errorCodes: ApplicationErrorCode[]; minimalExample: Record<string, unknown>; authoringGuide: AuthoringGuide}
 export interface WorkflowValidateRequest {project?: string; workflow: WorkflowInput; inputs?: Record<string, JsonScalar>; driver?: string; target?: string; contextBindings?: ContextBindings}
 export interface ValidationIssue {kind: string; path: string; code: string; message: string}
 export interface WorkflowValidateResponse {apiVersion: typeof applicationApiVersion; workflowSchemaVersion: string; valid: boolean; issues: ValidationIssue[]; capabilityGaps: ValidationIssue[]; warnings: string[]}
