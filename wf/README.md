@@ -70,7 +70,7 @@ types.
 
 ## Human console
 
-The TUI presents one Run, compact Workflow rows, safe bounded activity for headless Node Agents, one selected-node detail view, and only currently valid actions. `a` approves or answers, `r` rejects, `R` retries, and `c` cancels after confirmation. `d`, `q`, and `Ctrl+C` disconnect observation without pausing or cancelling the Run. Non-TTY/CI output remains line-oriented; `status --watch` requires an interactive terminal, and `status --json` emits one object.
+The TUI presents one Run as a topology-first stage graph, with dependency IDs, parallel-stage markers, safe bounded activity for headless Node Agents, one selected-node detail view, and only currently valid actions. At 120+ columns it uses a topology/detail split; at 80 columns it stays vertical and width-bounded. `a` approves or answers, `r` rejects, `R` retries, and `c` cancels after confirmation. `d`, `q`, and `Ctrl+C` disconnect observation without pausing or cancelling the Run. Non-TTY/CI output remains line-oriented; `status --watch` requires an interactive terminal, and `status --json` emits one object.
 
 The console supports 80/120/160 columns, CJK display width, TrueColor through monochrome, `NO_COLOR`, and ASCII fallback through `TERM=dumb` or `FISHYUME_ASCII=1`.
 

@@ -7,6 +7,7 @@ import (
 
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/store"
+	"wf.local/wf-engine/internal/workflow"
 )
 
 // ApplicationJournal exposes the durable state repository only to the
@@ -89,4 +90,15 @@ func (s *Service) ReadAttemptOutput(runID, nodeID string, number int) (string, e
 		return "", fmt.Errorf("workflow state directory is unavailable")
 	}
 	return s.store.ReadNodeOutput(runID, nodeID, number, 32*1024)
+}
+
+func (s *Service) ReadWorkflow(runID string) (workflow.Normalized, error) {
+	if s.store == nil {
+		return workflow.Normalized{}, fmt.Errorf("workflow state directory is unavailable")
+	}
+	var normalized workflow.Normalized
+	if err := s.store.ReadWorkflow(runID, &normalized); err != nil {
+		return workflow.Normalized{}, err
+	}
+	return normalized, nil
 }

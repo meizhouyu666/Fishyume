@@ -31,11 +31,13 @@ export interface StyledTextSegment {text: string; role?: ColorRole; bold?: boole
 export interface HeaderLinePresentation {text: string; segments: StyledTextSegment[]}
 export interface DetailPresentation {title: string; role: ColorRole; lines: string[]}
 export interface AttentionPresentation {role: ColorRole; lines: string[]}
+export interface TopologyLinePresentation {text: string; role?: ColorRole; bold?: boolean}
 export interface RunTextPresentation {
   size: TerminalSize;
   header: HeaderLinePresentation[];
   divider: string;
   attention?: AttentionPresentation;
+  topology: TopologyLinePresentation[];
   workflow: WorkflowRowPresentation[];
   detail?: DetailPresentation;
   statusStrip: string;
@@ -65,6 +67,40 @@ function attemptMap(view: RunStatusView): Map<string, AttemptSnapshot> {
 
 function nodeSnapshotMap(view: RunStatusView): Map<string, NodeSnapshot> {
   return new Map((view.nodes ?? []).map(node => [node.id, node]));
+}
+
+function topologyLayers(view: RunStatusView, nodes: NodeSummary[]): NodeSummary[][] {
+  const run = view.run;
+  if (run?.parallelLayers?.length) {
+    const byID = new Map(nodes.map(node => [node.id, node]));
+    return run.parallelLayers.map(layer => layer.map(nodeID => byID.get(nodeID)).filter((node): node is NodeSummary => Boolean(node))).filter(layer => layer.length > 0);
+  }
+  const grouped = new Map<number, NodeSummary[]>();
+  if (nodes.some(node => node.parallelLayer !== undefined)) {
+    for (const node of nodes) {
+      const layer = node.parallelLayer ?? 0;
+      const current = grouped.get(layer) ?? [];
+      current.push(node); grouped.set(layer, current);
+    }
+    return [...grouped.keys()].sort((left, right) => left - right).map(layer => grouped.get(layer)!);
+  }
+  return nodes.map(node => [node]);
+}
+
+function buildTopologyLines(view: RunStatusView, nodes: NodeSummary[], attempts: Map<string, AttemptSnapshot>, width: number, selectedNodeId: string | undefined, symbolMode: SymbolMode): TopologyLinePresentation[] {
+  const layers = topologyLayers(view, nodes); const lines: TopologyLinePresentation[] = [];
+  layers.forEach((layer, layerIndex) => {
+    const label = layer.length > 1 ? `阶段 ${layerIndex + 1} · 并行 ${layer.length}` : `阶段 ${layerIndex + 1}`;
+    lines.push({text: fitText(label, width), role: 'muted', bold: true});
+    layer.forEach((node, nodeIndex) => {
+      const row = formatWorkflowRow(node, attempts.get(node.id), Math.max(20, width - 6), node.id === selectedNodeId, symbolMode);
+      const connector = layer.length > 1 ? (nodeIndex === layer.length - 1 ? '└─' : '├─') : '└─';
+      const dependencyText = node.dependsOn?.length ? ` · 依赖 ${node.dependsOn.join(', ')}` : '';
+      lines.push({text: fitText(`  ${connector} ${row.text}${dependencyText}`, width), role: row.selected ? 'brand' : row.role, bold: row.selected});
+    });
+    if (layerIndex < layers.length - 1) lines.push({text: fitText('  │', width), role: 'muted'});
+  });
+  return lines;
 }
 
 function diagnosticsFor(view: RunStatusView, node: NodeSummary): NodeDiagnostic[] {
@@ -314,6 +350,8 @@ export function buildRunTextPresentation(view: RunStatusView, width: number, ela
   const selectedNodeId = options.selectedNodeId && run.nodes[options.selectedNodeId] ? options.selectedNodeId : nodes[0]?.id;
   const selectedNode = selectedNodeId ? run.nodes[selectedNodeId] : undefined; const attempts = attemptMap(view);
   const workflow = nodes.map(node => formatWorkflowRow(node, attempts.get(node.id), width, node.id === selectedNodeId, symbolMode));
+  const topologyWidth = width >= 120 ? Math.max(48, Math.floor(width * 0.58)) : width;
+  const topology = buildTopologyLines(view, nodes, attempts, topologyWidth, selectedNodeId, symbolMode);
   let detail: DetailPresentation | undefined;
   const actionState = options.action?.interaction;
   if (options.action && (options.action.pending || actionState?.mode !== 'idle' || options.action.message)) detail = actionDetail(view, options.action, width, symbolMode);
@@ -324,6 +362,7 @@ export function buildRunTextPresentation(view: RunStatusView, width: number, ela
     header: headerLines(run, width, elapsedMs, symbolMode),
     divider: dividerLine(width, symbolMode),
     attention: attentionFor(view, options.action?.actionable ?? [], width, selectedNodeId),
+    topology,
     workflow,
     detail,
     statusStrip: fitText(statusStripText(run, symbolMode), width),
@@ -331,11 +370,20 @@ export function buildRunTextPresentation(view: RunStatusView, width: number, ela
   };
 }
 
+function wideContentLines(presentation: RunTextPresentation, width: number, symbolMode: SymbolMode): string[] {
+  if (width < 120 || !presentation.detail) return presentation.topology.map(line => line.text);
+  const leftWidth = Math.max(48, Math.floor(width * 0.58));
+  const rightWidth = Math.max(24, width - leftWidth - 3);
+  const right = [dividerLine(rightWidth, symbolMode, presentation.detail.title), ...presentation.detail.lines.map(line => fitText(line, rightWidth))];
+  const count = Math.max(presentation.topology.length, right.length);
+  return Array.from({length: count}, (_, index) => joinColumns(fitText(presentation.topology[index]?.text ?? '', leftWidth), right[index] ?? '', width));
+}
+
 export function renderRunText(view: RunStatusView, width: number, elapsedMs: number, options: RunPresentationOptions = {}): string {
   const presentation = buildRunTextPresentation(view, width, elapsedMs, options); const lines = [...presentation.header.map(line => line.text), presentation.divider];
   if (presentation.attention) lines.push(...presentation.attention.lines, presentation.divider);
-  lines.push(...presentation.workflow.map(row => row.text));
-  if (presentation.detail) lines.push(dividerLine(width, options.symbolMode ?? 'unicode', presentation.detail.title), ...presentation.detail.lines, presentation.divider);
+  lines.push(...wideContentLines(presentation, width, options.symbolMode ?? 'unicode'));
+  if (presentation.detail && width < 120) lines.push(dividerLine(width, options.symbolMode ?? 'unicode', presentation.detail.title), ...presentation.detail.lines, presentation.divider);
   if (presentation.statusStrip) lines.push(presentation.statusStrip);
   lines.push(...presentation.footer);
   return lines.join('\n');

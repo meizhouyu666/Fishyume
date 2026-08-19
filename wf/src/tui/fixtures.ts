@@ -133,3 +133,19 @@ export function canonicalFixture(id: CanonicalVisualFixture['id']): CanonicalVis
   if (!fixture) throw new Error(`unknown canonical fixture ${id}`);
   return fixture;
 }
+
+// Keep the concurrent gallery tied to an explicit dependency graph so topology
+// rendering exercises real fan-out/fan-in semantics instead of list order.
+const concurrentNodeIDs = Object.keys(concurrentNodes);
+const [planID, firstParallelID, secondParallelID, reviewID, publishID] = concurrentNodeIDs;
+concurrentNodes[planID!]!.dependsOn = [];
+concurrentNodes[planID!]!.parallelLayer = 0;
+concurrentNodes[firstParallelID!]!.dependsOn = [planID!];
+concurrentNodes[firstParallelID!]!.parallelLayer = 1;
+concurrentNodes[secondParallelID!]!.dependsOn = [planID!];
+concurrentNodes[secondParallelID!]!.parallelLayer = 1;
+concurrentNodes[reviewID!]!.dependsOn = [firstParallelID!, secondParallelID!];
+concurrentNodes[reviewID!]!.parallelLayer = 2;
+concurrentNodes[publishID!]!.dependsOn = [reviewID!];
+concurrentNodes[publishID!]!.parallelLayer = 3;
+concurrentRun.parallelLayers = [[planID!], [firstParallelID!, secondParallelID!], [reviewID!], [publishID!]];

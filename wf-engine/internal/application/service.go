@@ -751,13 +751,26 @@ func orderedContextSources(normalized workflow.Normalized, nodeID string, policy
 
 func (s *Service) mapRunView(view run.StatusView) RunView {
 	snapshot := *view.Run
-	result := RunView{RunSummary: summarizeRun(snapshot), Summary: snapshot.Summary, CancelRequested: snapshot.CancelRequested, EffectiveConcurrency: snapshot.EffectiveConcurrency, TopologicalOrder: append([]string(nil), snapshot.TopologicalOrder...), Nodes: make([]NodeView, 0, len(view.Nodes)), DeprecationWarnings: append([]string(nil), snapshot.DeprecationWarnings...)}
+	var topology map[string]topologyNodeView
+	var parallelLayers [][]string
+	if reader, ok := s.core.(interface {
+		ReadWorkflow(string) (workflow.Normalized, error)
+	}); ok {
+		if normalized, err := reader.ReadWorkflow(snapshot.ID); err == nil {
+			topology, parallelLayers = topologyProjection(normalized, snapshot.TopologicalOrder)
+		}
+	}
+	result := RunView{RunSummary: summarizeRun(snapshot), Summary: snapshot.Summary, CancelRequested: snapshot.CancelRequested, EffectiveConcurrency: snapshot.EffectiveConcurrency, TopologicalOrder: append([]string(nil), snapshot.TopologicalOrder...), ParallelLayers: parallelLayers, Nodes: make([]NodeView, 0, len(view.Nodes)), DeprecationWarnings: append([]string(nil), snapshot.DeprecationWarnings...)}
 	for _, nodeID := range snapshot.TopologicalOrder {
 		for _, node := range view.Nodes {
 			if node.ID != nodeID {
 				continue
 			}
-			mapped := NodeView{NodeID: node.ID, Type: node.Type, Phase: string(node.Phase), Conclusion: string(node.Conclusion), Reason: string(node.Reason), Diagnostic: node.Diagnostic, CurrentAttempt: node.CurrentAttempt, Result: mapResult(node.Result)}
+			mapped := NodeView{NodeID: node.ID, Type: node.Type, DependsOn: []string{}, Phase: string(node.Phase), Conclusion: string(node.Conclusion), Reason: string(node.Reason), Diagnostic: node.Diagnostic, CurrentAttempt: node.CurrentAttempt, Result: mapResult(node.Result)}
+			if projected, ok := topology[node.ID]; ok {
+				mapped.DependsOn = append([]string(nil), projected.DependsOn...)
+				mapped.ParallelLayer = projected.ParallelLayer
+			}
 			if node.CurrentAttempt > 0 {
 				if attempt, err := s.core.ReadAttempt(snapshot.ID, node.ID, node.CurrentAttempt); err == nil {
 					mapped.Attempt = &AttemptView{Number: attempt.Number, Phase: string(attempt.Phase), Conclusion: string(attempt.Conclusion), Reason: string(attempt.Reason), Driver: runAttemptDriver(attempt), Target: runAttemptTarget(attempt), ContextHash: attempt.ContextHash, Context: inspectContext(attempt), MemoryUsage: memoryUsageInspect(attempt), StartedAt: formatTime(attempt.StartedAt), UpdatedAt: formatTime(attempt.UpdatedAt)}
@@ -778,6 +791,36 @@ func (s *Service) mapRunView(view run.StatusView) RunView {
 		}
 	}
 	return result
+}
+
+type topologyNodeView struct {
+	DependsOn     []string
+	ParallelLayer int
+}
+
+func topologyProjection(normalized workflow.Normalized, order []string) (map[string]topologyNodeView, [][]string) {
+	levels := make(map[string]int, len(order))
+	projected := make(map[string]topologyNodeView, len(order))
+	layers := make([][]string, 0)
+	for _, nodeID := range order {
+		definition, ok := normalized.Document.Nodes[nodeID]
+		if !ok {
+			continue
+		}
+		level := 0
+		for _, dependency := range definition.DependsOn {
+			if candidate := levels[dependency] + 1; candidate > level {
+				level = candidate
+			}
+		}
+		levels[nodeID] = level
+		for len(layers) <= level {
+			layers = append(layers, []string{})
+		}
+		layers[level] = append(layers[level], nodeID)
+		projected[nodeID] = topologyNodeView{DependsOn: append([]string(nil), definition.DependsOn...), ParallelLayer: level}
+	}
+	return projected, layers
 }
 
 func inspectContext(attempt run.AttemptSnapshot) *ContextInspect {

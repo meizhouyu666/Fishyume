@@ -122,6 +122,15 @@ Run state or become a high-frequency permanent event stream. The exact safety an
 product boundary is recorded in
 [`fishyume-m5.7-agent-activity-observability.md`](./fishyume-m5.7-agent-activity-observability.md).
 
+### M5.8: Topology-first Operator Console
+
+M5.8 adds durable dependency and parallel-layer metadata to the Application
+projection and renders Runs as a bounded stage graph. Wide terminals use a
+topology/detail split; narrow terminals use a vertical dependency view. This is
+presentation-only: Node processes remain headless external Agents, and no new
+Harness, prompt injection, or MCP action is introduced. See
+[`fishyume-m5.8-topology-first-operator-console.md`](./fishyume-m5.8-topology-first-operator-console.md).
+
 ## M5 entry gates
 
 - [x] M4 final independent review has no P0/P1/P2 findings.

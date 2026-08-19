@@ -26,8 +26,8 @@ export interface RunSummary {runId: string; workflowName: string; project: strin
 export interface RunListResponse {apiVersion: typeof applicationApiVersion; items: RunSummary[]; nextCursor?: string}
 export interface ApplicationResult {summary?: string; artifacts: string[]; warnings: string[]; checks: string[]; questions: Array<{id: string; prompt: string; choices: string[]; required: boolean}>; decision?: string; reason?: string; usage?: Record<string, number>}
 export interface AttemptActivity {schemaVersion: 'fishyume.attempt-activity/v1'; summary?: string; items: Array<{kind: string; status: string; message: string}>; truncated: boolean}
-export interface ApplicationNodeView {nodeId: string; type: 'agent' | 'approval'; phase: NodePhase; conclusion?: Conclusion; reason?: Reason; diagnostic?: string; currentAttempt?: number; attempt?: {number: number; phase: string; conclusion?: string; reason?: string; driver: string; target: string; contextHash?: string; context?: ContextInspect; activity?: AttemptActivity; startedAt: string; updatedAt: string; completedAt?: string}; result?: ApplicationResult}
-export interface ApplicationRunView extends RunSummary {summary?: string; cancelRequested: boolean; effectiveConcurrency: number; topologicalOrder: string[]; nodes: ApplicationNodeView[]; deprecationWarnings: string[]}
+export interface ApplicationNodeView {nodeId: string; type: 'agent' | 'approval'; phase: NodePhase; dependsOn?: string[]; parallelLayer?: number; conclusion?: Conclusion; reason?: Reason; diagnostic?: string; currentAttempt?: number; attempt?: {number: number; phase: string; conclusion?: string; reason?: string; driver: string; target: string; contextHash?: string; context?: ContextInspect; activity?: AttemptActivity; startedAt: string; updatedAt: string; completedAt?: string}; result?: ApplicationResult}
+export interface ApplicationRunView extends RunSummary {summary?: string; cancelRequested: boolean; effectiveConcurrency: number; topologicalOrder: string[]; parallelLayers?: string[][]; nodes: ApplicationNodeView[]; deprecationWarnings: string[]}
 export interface RunGetRequest {runId: string}
 export interface RunGetResponse {apiVersion: typeof applicationApiVersion; run: ApplicationRunView}
 export interface RunEventsRequest {runId: string; afterSequence?: number; limit?: number; waitMs?: number}
@@ -92,15 +92,15 @@ export function newActionId(): string {return `action-${randomUUID()}`}
 
 export function applicationRunToStatus(response: RunGetResponse): RunStatusView {
   const source = response.run;
-  const nodes = Object.fromEntries(source.nodes.map(node => [node.nodeId, {id: node.nodeId, type: node.type, phase: node.phase, conclusion: node.conclusion, reason: node.reason, diagnostic: node.diagnostic, currentAttempt: node.currentAttempt}]));
+  const nodes = Object.fromEntries(source.nodes.map(node => [node.nodeId, {id: node.nodeId, type: node.type, phase: node.phase, dependsOn: node.dependsOn ?? [], parallelLayer: node.parallelLayer ?? 0, conclusion: node.conclusion, reason: node.reason, diagnostic: node.diagnostic, currentAttempt: node.currentAttempt}]));
   const run: WorkflowSnapshot = {
     protocolVersion: 2, stateVersion: source.stateVersion, id: source.runId, workflowName: source.workflowName, project: source.project,
     resolvedDriver: source.driver, resolvedTarget: source.target, phase: source.phase, conclusion: source.conclusion, summary: source.summary,
-    effectiveConcurrency: source.effectiveConcurrency, topologicalOrder: source.topologicalOrder, nodes, cancelRequested: source.cancelRequested,
+    effectiveConcurrency: source.effectiveConcurrency, topologicalOrder: source.topologicalOrder, parallelLayers: source.parallelLayers, nodes, cancelRequested: source.cancelRequested,
     deprecationWarnings: source.deprecationWarnings, stateDir: '', createdAt: source.createdAt, updatedAt: source.updatedAt,
   };
   const snapshots: NodeSnapshot[] = source.nodes.map(node => ({
-    protocolVersion: 2, runId: source.runId, id: node.nodeId, type: node.type, phase: node.phase, conclusion: node.conclusion, reason: node.reason,
+    protocolVersion: 2, runId: source.runId, id: node.nodeId, type: node.type, phase: node.phase, dependsOn: node.dependsOn ?? [], parallelLayer: node.parallelLayer ?? 0, conclusion: node.conclusion, reason: node.reason,
     diagnostic: node.diagnostic, currentAttempt: node.currentAttempt, result: node.result ? applicationResultToNodeResult(node.result) : undefined,
     createdAt: source.createdAt, updatedAt: source.updatedAt,
   }));

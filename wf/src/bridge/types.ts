@@ -16,12 +16,12 @@ export type NodePhase = 'pending' | 'ready' | 'running' | 'waiting' | 'completed
 export type Conclusion = 'succeeded' | 'failed' | 'cancelled' | 'rejected' | 'indeterminate';
 export type Reason = 'approval_required' | 'agent_waiting_input' | 'completion_missing' | 'invalid_result' | 'cancel_failed' | 'condition_false' | 'upstream_failed' | 'failure_policy' | 'workflow_cancelled' | 'controller_detached' | 'user_requested';
 
-export interface NodeSummary {id: string; type: 'agent' | 'approval'; phase: NodePhase; conclusion?: Conclusion; reason?: Reason; diagnostic?: string; currentAttempt?: number}
+export interface NodeSummary {id: string; type: 'agent' | 'approval'; phase: NodePhase; conclusion?: Conclusion; reason?: Reason; diagnostic?: string; currentAttempt?: number; dependsOn?: string[]; parallelLayer?: number}
 export interface WorkflowSnapshot {
   protocolVersion: 2; stateSchemaVersion?: number; stateVersion?: number; id: string; workflowName: string; project: string;
   resolvedDriver?: string; resolvedTarget?: string; deprecationWarnings?: string[]; backend?: string;
   phase: RunPhase; conclusion?: Conclusion; reason?: Reason; summary?: string; effectiveConcurrency?: number;
-  inputs?: Record<string, JsonScalar>; topologicalOrder: string[]; nodes: Record<string, NodeSummary>;
+  inputs?: Record<string, JsonScalar>; topologicalOrder: string[]; parallelLayers?: string[][]; nodes: Record<string, NodeSummary>;
   activeNodeId?: string; cancelRequested: boolean; stateDir: string; createdAt: string; updatedAt: string;
 }
 export type RunSnapshot = WorkflowSnapshot;

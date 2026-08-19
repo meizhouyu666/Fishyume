@@ -25,6 +25,7 @@ type fakeCore struct {
 	events                   map[string][]run.WorkflowEvent
 	attempts                 map[string]run.AttemptSnapshot
 	outputs                  map[string]string
+	workflows                map[string]workflow.Normalized
 	sinks                    map[int]run.EventSink
 	nextSink                 int
 	started                  run.StartWorkflowRequest
@@ -133,6 +134,12 @@ func (f *fakeCore) ReadAttempt(runID, nodeID string, number int) (run.AttemptSna
 }
 func (f *fakeCore) ReadAttemptOutput(runID, nodeID string, number int) (string, error) {
 	return f.outputs[runID+"/"+nodeID], nil
+}
+func (f *fakeCore) ReadWorkflow(runID string) (workflow.Normalized, error) {
+	if normalized, ok := f.workflows[runID]; ok {
+		return normalized, nil
+	}
+	return workflow.Normalized{}, os.ErrNotExist
 }
 func (f *fakeCore) Detach(id string) (run.WorkflowSnapshot, error) {
 	view, err := f.Status(id)
@@ -324,6 +331,62 @@ func TestRunApplicationQueriesActionsAndResult(t *testing.T) {
 	result, appErr := service.RunResult(context.Background(), RunResultRequest{RunID: "run-complete"})
 	if appErr != nil || result.Conclusion != "succeeded" || len(result.Results) != 1 || result.Results[0].Result == nil || result.Results[0].Result.Summary != "done" {
 		t.Fatalf("result = %+v, error = %v", result, appErr)
+	}
+}
+
+func TestRunGetProjectsTopologyMetadata(t *testing.T) {
+	core := newFakeCore()
+	core.workflows = map[string]workflow.Normalized{}
+	core.workflows["run-waiting"] = workflow.Normalized{
+		Document: workflow.Document{Nodes: map[string]workflow.Node{
+			"plan":      {Type: "agent"},
+			"summarize": {Type: "agent", DependsOn: []string{"plan"}},
+			"risks":     {Type: "agent", DependsOn: []string{"plan"}},
+			"approve":   {Type: "approval", DependsOn: []string{"summarize", "risks"}},
+		}},
+		TopologicalOrder: []string{"plan", "summarize", "risks", "approve"},
+	}
+	view := core.views["run-waiting"]
+	snapshot := *view.Run
+	snapshot.TopologicalOrder = []string{"plan", "summarize", "risks", "approve"}
+	snapshot.Nodes = map[string]run.NodeSummary{
+		"plan":      {ID: "plan", Type: "agent", Phase: run.NodePhaseCompleted, Conclusion: run.ConclusionSucceeded},
+		"summarize": {ID: "summarize", Type: "agent", Phase: run.NodePhasePending},
+		"risks":     {ID: "risks", Type: "agent", Phase: run.NodePhasePending},
+		"approve":   {ID: "approve", Type: "approval", Phase: run.NodePhasePending},
+	}
+	view.Run = &snapshot
+	view.Nodes = []run.NodeSnapshot{{ID: "plan", Type: "agent", Phase: run.NodePhaseCompleted, Conclusion: run.ConclusionSucceeded}}
+	for _, node := range []run.NodeSnapshot{{ID: "summarize", Type: "agent", Phase: run.NodePhasePending}, {ID: "risks", Type: "agent", Phase: run.NodePhasePending}, {ID: "approve", Type: "approval", Phase: run.NodePhasePending}} {
+		view.Nodes = append(view.Nodes, node)
+	}
+	core.views["run-waiting"] = view
+	service := NewService(core, "codex", store.New(t.TempDir()))
+	got, appErr := service.RunGet(context.Background(), RunGetRequest{RunID: "run-waiting"})
+	if appErr != nil {
+		t.Fatal(appErr)
+	}
+	if !reflect.DeepEqual(got.Run.ParallelLayers, [][]string{{"plan"}, {"summarize", "risks"}, {"approve"}}) {
+		t.Fatalf("parallel layers=%+v", got.Run.ParallelLayers)
+	}
+	if len(got.Run.Nodes) != 4 {
+		t.Fatalf("topology nodes=%+v", got.Run.Nodes)
+	}
+	byID := make(map[string]NodeView, len(got.Run.Nodes))
+	for _, node := range got.Run.Nodes {
+		byID[node.NodeID] = node
+	}
+	if len(byID["plan"].DependsOn) != 0 || byID["plan"].ParallelLayer != 0 {
+		t.Fatalf("root topology=%+v", byID["plan"])
+	}
+	if !reflect.DeepEqual(byID["summarize"].DependsOn, []string{"plan"}) || byID["summarize"].ParallelLayer != 1 {
+		t.Fatalf("summarize topology=%+v", byID["summarize"])
+	}
+	if !reflect.DeepEqual(byID["risks"].DependsOn, []string{"plan"}) || byID["risks"].ParallelLayer != 1 {
+		t.Fatalf("risks topology=%+v", byID["risks"])
+	}
+	if !reflect.DeepEqual(byID["approve"].DependsOn, []string{"summarize", "risks"}) || byID["approve"].ParallelLayer != 2 {
+		t.Fatalf("approve topology=%+v", byID["approve"])
 	}
 }
 

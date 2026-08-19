@@ -290,6 +290,8 @@ type ContextInspect struct {
 type NodeView struct {
 	NodeID         string       `json:"nodeId"`
 	Type           string       `json:"type"`
+	DependsOn      []string     `json:"dependsOn"`
+	ParallelLayer  int          `json:"parallelLayer"`
 	Phase          string       `json:"phase"`
 	Conclusion     string       `json:"conclusion,omitempty"`
 	Reason         string       `json:"reason,omitempty"`
@@ -305,6 +307,7 @@ type RunView struct {
 	CancelRequested      bool       `json:"cancelRequested"`
 	EffectiveConcurrency int        `json:"effectiveConcurrency"`
 	TopologicalOrder     []string   `json:"topologicalOrder"`
+	ParallelLayers       [][]string `json:"parallelLayers,omitempty"`
 	Nodes                []NodeView `json:"nodes"`
 	DeprecationWarnings  []string   `json:"deprecationWarnings"`
 }

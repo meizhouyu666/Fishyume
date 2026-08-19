@@ -67,20 +67,42 @@ test('canonical scenes expose their defining operator evidence', () => {
   assert.match(concurrent, /第2次.*direct/); assert.match(concurrent, /第1次.*ccpanes/); assert.match(concurrent, /2 个运行中/);
 
   const approval = renderRunText(canonicalFixture('approval').view, 120, 138_000, optionsFor(canonicalFixture('approval')));
-  assert.match(approval, /需要人工审批/); assert.match(approval, /Approve production deployment/); assert.match(approval, /A\/Y 批准/); assert.match(approval, /X\/N 拒绝/); assert.doesNotMatch(approval, /T 重试/);
+  assert.match(approval, /需要人工审批/); assert.match(approval, /Approve production deploy/); assert.match(approval, /A\/Y 批准/); assert.match(approval, /X\/N 拒绝/); assert.doesNotMatch(approval, /T 重试/);
 
   const retryable = renderRunText(canonicalFixture('retryable').view, 120, 138_000, optionsFor(canonicalFixture('retryable')));
   assert.match(retryable, /Expected junit\.xml/); assert.match(retryable, /T 重试/); assert.match(retryable, /产物/);
 
   const indeterminate = renderRunText(canonicalFixture('indeterminate').view, 120, 138_000, optionsFor(canonicalFixture('indeterminate')));
-  assert.match(indeterminate, /操作确认 \/ publish-artifact.*重复副作用风险/); assert.match(indeterminate, /外部副作用/); assert.match(indeterminate, /Enter 确认.*Esc 放弃/);
+  assert.match(indeterminate, /操作确认 \/ publish-artifact/); assert.match(indeterminate, /重试可能再次产生外部副作用/); assert.match(indeterminate, /外部副作用/); assert.match(indeterminate, /Enter 确认.*Esc 放弃/);
 
   const cancelling = renderRunText(canonicalFixture('cancelling').view, 120, 138_000, optionsFor(canonicalFixture('cancelling')));
-  assert.match(cancelling, /正在取消/); assert.match(cancelling, /session:remote-9/); assert.doesNotMatch(cancelling, /C 取消任务/); assert.doesNotMatch(cancelling, /已取消/);
+  assert.match(cancelling, /正在取消/); assert.match(cancelling, /ccpanes/); assert.match(cancelling, /Remote session still repo/); assert.doesNotMatch(cancelling, /C 取消任务/); assert.doesNotMatch(cancelling, /已取消/);
 
   const terminal = renderRunText(canonicalFixture('terminal').view, 120, 138_000, optionsFor(canonicalFixture('terminal')));
   for (const label of ['已完成', '已失败', '已取消', '已拒绝']) assert.match(terminal, new RegExp(label));
   assert.match(terminal, /任务总结.*Release stopped/); assert.match(terminal, /再次查看.*fishyume status/); assert.match(terminal, /Q 退出/); assert.doesNotMatch(terminal, /C 取消任务|A\/Y 批准|T 重试/);
+});
+
+test('topology-first console makes fan-out and fan-in visible', () => {
+  const fixture = canonicalFixture('concurrent');
+  const options = optionsFor(fixture);
+  const presentation = buildRunTextPresentation(fixture.view, 120, 138_000, options);
+  assert.deepEqual(fixture.view.run?.parallelLayers, [
+    ['plan'],
+    ['实现-operator-console', 'windows-pty-check'],
+    ['review'],
+    ['publish'],
+  ]);
+  assert.equal(presentation.topology.filter(line => line.text.includes('阶段')).length, 4);
+  assert.ok(presentation.topology.some(line => line.text.includes('并行 2')));
+  const renderedWide = renderRunText(fixture.view, 120, 138_000, options);
+  assert.ok(renderedWide.includes('\u251c\u2500') || renderedWide.includes('\u2514\u2500'));
+  assert.ok(renderedWide.includes('实现-operator-console'));
+  assert.ok(renderedWide.includes('节点：实现-operator-console'));
+  assert.ok(renderedWide.includes('依赖 plan'));
+  const renderedNarrow = renderRunText(fixture.view, 80, 138_000, options);
+  assert.equal(assertWidth(renderedNarrow.split('\n'), 80), true);
+  assert.ok(renderedNarrow.includes('并行 2'));
 });
 
 test('waiting Agent detail exposes structured needs_input questions and choices', () => {

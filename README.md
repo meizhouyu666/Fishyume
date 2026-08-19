@@ -198,6 +198,8 @@ Console 以 `J`/`K` 或上下方向键遍历全部 Workflow 节点，`Enter` 折
 - Linux：`$XDG_STATE_HOME/fishyume` 或 `~/.local/state/fishyume`
 - macOS：`~/Library/Application Support/fishyume`
 
+M5.8 将 TUI 收敛为 topology-first operator console：120 列以上显示拓扑/详情双栏，80 列显示垂直阶段图，并在节点行标出依赖与并行阶段。具体边界与验收见 [`docs/fishyume-m5.8-topology-first-operator-console.md`](./docs/fishyume-m5.8-topology-first-operator-console.md)。
+
 ## 当前边界
 
 当前仍不支持通用 Shell/HTTP/容器节点、模型回退或动态节点。M4.4 不包含 Web/Desktop、Memory、模型路由、Prompt Library、Native Harness、Claude Driver 或第三方 Driver SDK；动态发现和运行时热加载也不在本阶段范围。真实 Provider 调用只作为显式本地 gate，不进入公共 CI。
