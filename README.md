@@ -205,6 +205,6 @@ M4.0-M4.4 已完成合同冻结、Codex Driver、Context Compiler、CC-Panes 新
 - MCP、Machine CLI、`fishyume attach` 与 TUI 共享同一 Application Service。
 
 正式架构见 [`docs/fishyume-m4-agent-native-control-plane.md`](./docs/fishyume-m4-agent-native-control-plane.md)，分批实施与门禁见 [`docs/fishyume-m4-implementation-plan.md`](./docs/fishyume-m4-implementation-plan.md)。
-最终自动化、live、审查与 CI 证据见 [`docs/fishyume-release-readiness.md`](./docs/fishyume-release-readiness.md)。M5.0 已冻结 Context Envelope v2、Memory Record v1、稳定限制/错误、golden fixtures 与六类评测基线；M5.1 已实现 Context Source Registry；M5.2 已完成项目级 Memory ledger；M5.3 已完成 Attention Budget Compiler；M5.4 已接入生产 Run；当前 M5.5 正在收口 `fishyume/v2` Context Policy、host-agent Memory bindings 与 exactly-once usage receipt。总体计划见 [`docs/fishyume-m5-context-engineering-plan.md`](./docs/fishyume-m5-context-engineering-plan.md)，M5.5 合同见 [`docs/fishyume-m5.5-context-policy-memory-closure.md`](./docs/fishyume-m5.5-context-policy-memory-closure.md)。
+最终自动化、live、审查与 CI 证据见 [`docs/fishyume-release-readiness.md`](./docs/fishyume-release-readiness.md)。M5.0-M5.5 已完成 Context contracts、Source Registry、Memory ledger、Attention Budget Compiler、生产 Run 集成、`fishyume/v2` Context Policy 与 exactly-once Memory usage，并通过 Windows/Ubuntu 公共 CI。当前 M5.6 是 M5 最后的产品收口：让外部 Host Agent 能从公开能力自发现完整 authoring golden path。总体计划见 [`docs/fishyume-m5-context-engineering-plan.md`](./docs/fishyume-m5-context-engineering-plan.md)，M5.6 设计与任务顺序见 [`docs/fishyume-m5.6-agent-native-authoring-acceptance.md`](./docs/fishyume-m5.6-agent-native-authoring-acceptance.md)。
 
 更完整的需求、架构和里程碑说明见 [`docs/`](./docs/)。

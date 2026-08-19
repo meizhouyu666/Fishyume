@@ -1,6 +1,6 @@
 # Fishyume M5: Context Engineering and Memory
 
-> Status: M5.0-M5.4 completed; M5.5 Context Policy and Memory usage closure is the current implementation batch. The accepted M4.5 Developer Preview remains the product baseline.
+> Status: M5.0-M5.5 completed with public Windows/Ubuntu CI success; M5.6 Agent-native Authoring and Acceptance is the final M5 product-closure batch. The accepted M4.5 Developer Preview remains the product baseline.
 
 M5 turns the existing deterministic Context Compiler skeleton into the product layer
 that gives each Agent Attempt the smallest sufficient, auditable context. Fishyume
@@ -96,6 +96,15 @@ bindings, exactly-once Memory consumption receipts, and bounded inspect/TUI
 metadata. v1 workflows and historical Runs remain compatible. Model routing,
 automatic retrieval, embeddings, prompt optimization, plugin ecosystems, and
 result-to-Memory promotion remain outside M5.
+
+### M5.6: Agent-native Authoring and Acceptance
+
+M5.6 makes the existing public contract self-describing for Codex, Claude, and other
+Host Agents. It adds a bounded versioned authoring guide to `system.capabilities`,
+canonical v2 examples, and one Provider-independent end-to-end Host/TUI acceptance path.
+It does not add a new MCP tool, model routing, automatic Memory retrieval, prompt
+optimization, or an embedded harness. The approved preparation and delivery batches are
+defined in [`fishyume-m5.6-agent-native-authoring-acceptance.md`](./fishyume-m5.6-agent-native-authoring-acceptance.md).
 
 ## M5 entry gates
 
