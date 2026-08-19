@@ -108,6 +108,12 @@ defined in [`fishyume-m5.6-agent-native-authoring-acceptance.md`](./fishyume-m5.
 
 Completed in [`fishyume-m5.6-agent-native-authoring-acceptance.md`](./fishyume-m5.6-agent-native-authoring-acceptance.md): the bounded versioned `fishyume.authoring-guide/v1` ships in `system.capabilities`, MCP tool descriptions carry the v2 Context Policy and exact preflight/action/result preconditions, the canonical v2 Workflow and Host request set are copyable, and the Provider-independent MCP Host/TUI acceptance proves identical validate/explain/start Context bindings, exactly-once Memory usage with omitted Memory not consumed, idempotent start, Approval, `needs_input`, stale-`stateVersion` conflict, event pagination, terminal result, attach, and metadata-leak hygiene. No new MCP tool, RPC protocol, Codex approval, or Provider credential was added.
 
+Local preflight (`go test ./...`, `go vet ./...`, `go build ./cmd/wf-engine`,
+`npm --prefix wf run verify`, `git diff --check`) passed, and public Windows/Ubuntu CI
+run [32243762097](https://github.com/meizhouyu666/Fishyume/actions/runs/32243762097)
+passed all six jobs (Windows/Ubuntu verify, Windows/Ubuntu platform-install, artifacts,
+and deterministic stress). No package or GitHub Release was published.
+
 ## M5 entry gates
 
 - [x] M4 final independent review has no P0/P1/P2 findings.

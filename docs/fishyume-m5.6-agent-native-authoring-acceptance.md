@@ -1,7 +1,7 @@
 # Fishyume M5.6: Agent-native Authoring and Acceptance
 
-> Status: approved preparation boundary. M5.5 CI run
-> [32219717906](https://github.com/meizhouyu666/Fishyume/actions/runs/32219717906)
+> Status: accepted. M5.6 CI run
+> [32243762097](https://github.com/meizhouyu666/Fishyume/actions/runs/32243762097)
 > passed all Windows, Ubuntu, install, artifact, and deterministic stress jobs.
 
 M5.6 turns the completed M5 execution and Context Engineering capabilities into one

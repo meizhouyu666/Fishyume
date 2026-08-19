@@ -23,6 +23,11 @@ pagination, terminal result, attach, and metadata-leak hygiene. No new MCP tool,
 protocol, Codex approval, or Provider credential was added; v1/history compatibility and
 all M5.5 exactly-once guarantees are unchanged. Acceptance and gates are recorded in
 [`fishyume-m5.6-agent-native-authoring-acceptance.md`](./fishyume-m5.6-agent-native-authoring-acceptance.md).
+Local preflight (`go test ./...`, `go vet ./...`, `go build ./cmd/wf-engine`,
+`npm --prefix wf run verify`, `git diff --check`) passed, and public Windows/Ubuntu CI
+run [32243762097](https://github.com/meizhouyu666/Fishyume/actions/runs/32243762097)
+passed all six jobs (Windows/Ubuntu verify, Windows/Ubuntu platform-install, artifacts,
+and deterministic stress). No package or GitHub Release was published.
 
 ## Current release surface
 
