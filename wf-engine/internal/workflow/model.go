@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"wf.local/wf-engine/internal/routing"
 )
 
 const (
@@ -55,8 +57,9 @@ type Defaults struct {
 }
 
 type AgentSelection struct {
-	Driver string `json:"driver,omitempty" yaml:"driver,omitempty"`
-	Target string `json:"target,omitempty" yaml:"target,omitempty"`
+	Driver  string                        `json:"driver,omitempty" yaml:"driver,omitempty"`
+	Target  string                        `json:"target,omitempty" yaml:"target,omitempty"`
+	Routing *routing.RoutingRequirementV1 `json:"routing,omitempty" yaml:"routing,omitempty"`
 }
 
 type Execution struct {
@@ -137,6 +140,26 @@ func EffectiveContextPolicy(document Document, node Node) ContextPolicy {
 	policy.ProjectInstructions = append([]string(nil), policy.ProjectInstructions...)
 	policy.Dependencies = append([]string(nil), policy.Dependencies...)
 	return policy
+}
+
+// EffectiveRoutingRequirement returns a copy so callers cannot mutate the
+// Workflow document through a projected routing view.
+func EffectiveRoutingRequirement(document Document, node Node) routing.RoutingRequirementV1 {
+	requirement := routing.DefaultRequirementV1()
+	if document.Defaults.Agent.Routing != nil {
+		requirement = cloneRoutingRequirement(*document.Defaults.Agent.Routing)
+	}
+	if node.Agent.Routing != nil {
+		requirement = cloneRoutingRequirement(*node.Agent.Routing)
+	}
+	return requirement
+}
+
+func cloneRoutingRequirement(source routing.RoutingRequirementV1) routing.RoutingRequirementV1 {
+	result := source
+	result.Capabilities = append([]routing.Capability(nil), source.Capabilities...)
+	result.Candidates = append([]string(nil), source.Candidates...)
+	return result
 }
 
 func ResolveAgent(defaults Defaults, node Node) (string, string, error) {

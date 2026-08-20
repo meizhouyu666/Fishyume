@@ -5,7 +5,8 @@ Fishyume remains an orchestration engine: it does not become a conversational
 harness, embed a model loop, or replace the Driver that launches a headless
 Agent process.
 
-> Status: M6.0 contract freeze and M6.1 trusted capability catalog are complete.
+> Status: M6.0 contract freeze, M6.1 trusted capability catalog, and M6.2
+> declarative Node routing requirements are complete.
 
 ## M6.0 Contract Freeze
 
@@ -43,8 +44,15 @@ not alter `AttemptEnvelope`, Driver startup, Run persistence, MCP, or TUI.
    `dynamicAvailability: false`; Driver readiness remains a separate runtime
    report. No project file, environment variable, credential, Provider API, or
    model selection participates in catalog construction.
-3. **M6.2 Node Routing Requirements**: add additive Workflow/Node fields with
-   compatibility defaults (`standard`, `balanced`, bounded budgets).
+3. **M6.2 Node Routing Requirements**: complete. Additive Workflow/Node fields
+   declare capabilities, complexity, quality, latency, candidate preference,
+   prompt profile, fallback intent, and bounded budgets. `workflow.validate`
+   returns every Agent Node's effective requirement in topological order and
+   `workflow.explain` projects the same requirement on Agent Nodes. Approval
+   Nodes cannot declare routing. Omitted routing uses a conservative,
+   compatibility default and never enables automatic fallback. M6.2 does not
+   select a model, query a Provider, start a different Driver, or persist a
+   routing decision.
 4. **M6.3 Deterministic Resolver**: match capabilities and limits using pure
    rules. No LLM classifier and no network price lookup.
 5. **M6.4 Driver/Attempt Propagation**: include the resolved target and routing
@@ -60,6 +68,13 @@ not alter `AttemptEnvelope`, Driver startup, Run persistence, MCP, or TUI.
 Complexity is supplied by the Host Agent or declared in the Workflow. M6 does
 not use an opaque LLM classifier as a control-plane dependency. An unknown
 complexity is conservatively treated as `standard` by a future resolver.
+
+For M6.2, the Host may declare a complete `agent.routing` object or omit it.
+The declaration is a requirement and preference, not a decision: candidate
+order is preserved, capabilities must use canonical order, and all budget
+fields are validated before a Workflow can start. The effective requirement is
+only a validation/explain projection until the deterministic resolver lands in
+M6.3.
 
 Prompt Profiles are IDs and component selections. The M5 Context Compiler
 continues to perform deterministic assembly, budgeting, truncation, manifest,

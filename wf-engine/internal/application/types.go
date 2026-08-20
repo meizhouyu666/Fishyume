@@ -147,12 +147,18 @@ type WorkflowValidateRequest struct {
 }
 
 type WorkflowValidateResponse struct {
-	APIVersion            string            `json:"apiVersion"`
-	WorkflowSchemaVersion string            `json:"workflowSchemaVersion"`
-	Valid                 bool              `json:"valid"`
-	Issues                []ValidationIssue `json:"issues"`
-	CapabilityGaps        []ValidationIssue `json:"capabilityGaps"`
-	Warnings              []string          `json:"warnings"`
+	APIVersion            string                   `json:"apiVersion"`
+	WorkflowSchemaVersion string                   `json:"workflowSchemaVersion"`
+	Valid                 bool                     `json:"valid"`
+	Issues                []ValidationIssue        `json:"issues"`
+	CapabilityGaps        []ValidationIssue        `json:"capabilityGaps"`
+	Warnings              []string                 `json:"warnings"`
+	RoutingRequirements   []RoutingRequirementView `json:"routingRequirements"`
+}
+
+type RoutingRequirementView struct {
+	NodeID      string                       `json:"nodeId"`
+	Requirement routing.RoutingRequirementV1 `json:"requirement"`
 }
 
 type ResolvedAgent struct {
@@ -161,17 +167,18 @@ type ResolvedAgent struct {
 }
 
 type ExplainNode struct {
-	ID                   string                   `json:"id"`
-	Type                 string                   `json:"type"`
-	DependsOn            []string                 `json:"dependsOn"`
-	ParallelLayer        int                      `json:"parallelLayer"`
-	ApprovalPrompt       string                   `json:"approvalPrompt,omitempty"`
-	Condition            json.RawMessage          `json:"condition,omitempty"`
-	ContextSources       []string                 `json:"contextSources"`
-	ProjectInstructions  []string                 `json:"projectInstructions,omitempty"`
-	MemoryBindings       []workflow.MemoryBinding `json:"memoryBindings,omitempty"`
-	ContextPolicyVersion string                   `json:"contextPolicyVersion"`
-	Agent                *ResolvedAgent           `json:"agent,omitempty"`
+	ID                   string                        `json:"id"`
+	Type                 string                        `json:"type"`
+	DependsOn            []string                      `json:"dependsOn"`
+	ParallelLayer        int                           `json:"parallelLayer"`
+	ApprovalPrompt       string                        `json:"approvalPrompt,omitempty"`
+	Condition            json.RawMessage               `json:"condition,omitempty"`
+	ContextSources       []string                      `json:"contextSources"`
+	ProjectInstructions  []string                      `json:"projectInstructions,omitempty"`
+	MemoryBindings       []workflow.MemoryBinding      `json:"memoryBindings,omitempty"`
+	ContextPolicyVersion string                        `json:"contextPolicyVersion"`
+	Routing              *routing.RoutingRequirementV1 `json:"routing,omitempty"`
+	Agent                *ResolvedAgent                `json:"agent,omitempty"`
 }
 
 type WorkflowExplainRequest = WorkflowValidateRequest

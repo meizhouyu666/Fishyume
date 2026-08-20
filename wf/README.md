@@ -62,6 +62,12 @@ Provider availability. The guide also advertises
 select Memory, but must pass the same `workflow`, `inputs`, `driver`, `target`, and
 `contextBindings` to `workflow.validate`, `workflow.explain`, and `run.start`.
 
+Agent Nodes may optionally declare `agent.routing` using
+`fishyume.routing-requirement/v1`. The requirement is validated and projected by
+`workflow.validate`/`workflow.explain`; it is not a model-selection decision.
+Legacy Workflows receive the bounded standard/balanced default, with fallback
+disabled. M6.2 does not query Providers or change Driver startup.
+
 `run.start` is idempotent by caller-owned `clientRequestId`; reuse an ID only for the
 identical request. `run.action` requires a unique `actionId` and preconditions from the
 latest `run.get`. Paginate `run.events` with `afterSequence`, read `run.result` only

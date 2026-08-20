@@ -118,7 +118,7 @@ func stableRoutingCatalogResponse() (RoutingCatalogResponse, error) {
 }
 
 func (s *Service) WorkflowValidate(ctx context.Context, request WorkflowValidateRequest) (WorkflowValidateResponse, *Error) {
-	response := WorkflowValidateResponse{APIVersion: APIVersion, WorkflowSchemaVersion: WorkflowSchemaVersion, Issues: []ValidationIssue{}, CapabilityGaps: []ValidationIssue{}, Warnings: []string{}}
+	response := WorkflowValidateResponse{APIVersion: APIVersion, WorkflowSchemaVersion: WorkflowSchemaVersion, Issues: []ValidationIssue{}, CapabilityGaps: []ValidationIssue{}, Warnings: []string{}, RoutingRequirements: []RoutingRequirementView{}}
 	normalized, issues := parseWorkflow(request.Workflow, request.Inputs)
 	if len(issues) > 0 {
 		response.Issues = issues
@@ -129,6 +129,7 @@ func (s *Service) WorkflowValidate(ctx context.Context, request WorkflowValidate
 		return response, nil
 	}
 	response.Warnings = append(response.Warnings, normalized.Warnings...)
+	response.RoutingRequirements = effectiveRoutingRequirements(normalized)
 	response.CapabilityGaps = s.capabilityGaps(ctx, strings.TrimSpace(request.Project), normalized, request.Driver, request.Target)
 	response.Valid = len(response.Issues) == 0
 	if err := ensureResponseBound(response, MaxSchemaResponseBytes); err != nil {
@@ -167,6 +168,8 @@ func (s *Service) WorkflowExplain(ctx context.Context, request WorkflowExplainRe
 		if definition.Type == "approval" {
 			node.ApprovalPrompt = definition.Prompt
 		} else {
+			requirement := workflow.EffectiveRoutingRequirement(normalized.Document, definition)
+			node.Routing = &requirement
 			driver, target, err := resolvedSelection(normalized, definition, request.Driver, request.Target, s.defaultDriver)
 			if err != nil {
 				return WorkflowExplainResponse{}, NewError(CodeInvalidWorkflow, "workflow agent selection is invalid", map[string]any{"path": "$.nodes." + nodeID + ".agent", "detail": err.Error()})
@@ -187,6 +190,18 @@ func (s *Service) WorkflowExplain(ctx context.Context, request WorkflowExplainRe
 		return WorkflowExplainResponse{}, internalError(err)
 	}
 	return response, nil
+}
+
+func effectiveRoutingRequirements(normalized workflow.Normalized) []RoutingRequirementView {
+	views := make([]RoutingRequirementView, 0, len(normalized.TopologicalOrder))
+	for _, nodeID := range normalized.TopologicalOrder {
+		node := normalized.Document.Nodes[nodeID]
+		if node.Type != "agent" {
+			continue
+		}
+		views = append(views, RoutingRequirementView{NodeID: nodeID, Requirement: workflow.EffectiveRoutingRequirement(normalized.Document, node)})
+	}
+	return views
 }
 
 func (s *Service) RunStart(ctx context.Context, request RunStartRequest) (RunStartResponse, *Error) {

@@ -169,6 +169,13 @@ explain 和 start。标准 Workflow 与精确请求集合见
 [`docs/examples/fishyume-v2-host-requests.json`](./docs/examples/fishyume-v2-host-requests.json)。
 `run.start` 返回的 `attach` 命令会让人类 TUI 观察同一个持久化 Run。
 
+Agent Node 可选声明 `agent.routing`（`fishyume.routing-requirement/v1`），
+用于表达所需能力、复杂度/质量/延迟偏好、候选模型顺序、Prompt Profile ID
+以及有界的成本/上下文/输出预算。旧 Workflow 省略该字段时使用保守的
+`standard`/`balanced` 默认值，并始终关闭自动 fallback。M6.2 的
+`workflow.validate` 与 `workflow.explain` 只校验并投影 effective requirement，
+不会选择模型、查询 Provider 或改变 Driver 启动。
+
 Host Agent MCP smoke（不需要 Provider 登录）可重复验证 capabilities、Workflow 校验/解释、幂等 start、Approval、`needs_input`、events 和最终 result：
 
 ```powershell

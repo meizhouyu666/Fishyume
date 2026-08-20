@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"wf.local/wf-engine/internal/routing"
 )
 
 const maxContextMemoryBindingsPerNode = 32
@@ -32,6 +34,11 @@ func Validate(doc Document) ([]string, error) {
 	}
 	if _, _, err := ResolveAgent(doc.Defaults, Node{}); err != nil {
 		return nil, err
+	}
+	if doc.Defaults.Agent.Routing != nil {
+		if err := routing.ValidateRequirement(*doc.Defaults.Agent.Routing); err != nil {
+			return nil, fmt.Errorf("workflow default routing: %w", err)
+		}
 	}
 	for id, node := range doc.Nodes {
 		if doc.APIVersion != ContextPolicyAPIVersion && node.Context != nil {
@@ -68,12 +75,17 @@ func Validate(doc Document) ([]string, error) {
 			if _, _, err := ResolveAgent(doc.Defaults, node); err != nil {
 				return nil, err
 			}
+			if node.Agent.Routing != nil {
+				if err := routing.ValidateRequirement(*node.Agent.Routing); err != nil {
+					return nil, fmt.Errorf("node %q routing: %w", id, err)
+				}
+			}
 		case "approval":
 			if strings.TrimSpace(node.Prompt) == "" {
 				return nil, fmt.Errorf("approval node %q requires prompt", id)
 			}
-			if node.Task != "" || node.Agent.Driver != "" || node.Agent.Target != "" || node.Tool != "" || node.Runtime != "" || len(node.RequiredSkills) > 0 {
-				return nil, fmt.Errorf("approval node %q contains agent-only fields", id)
+			if node.Task != "" || node.Agent.Driver != "" || node.Agent.Target != "" || node.Agent.Routing != nil || node.Tool != "" || node.Runtime != "" || len(node.RequiredSkills) > 0 {
+				return nil, fmt.Errorf("approval node %q contains agent-only fields (routing is only valid on agent nodes)", id)
 			}
 		default:
 			return nil, fmt.Errorf("node %q has unknown type %q", id, node.Type)

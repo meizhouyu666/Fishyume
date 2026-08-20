@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"wf.local/wf-engine/internal/routing"
 	"wf.local/wf-engine/internal/run"
 	"wf.local/wf-engine/internal/store"
 	"wf.local/wf-engine/internal/workflow"
@@ -218,12 +219,24 @@ func TestWorkflowAuthoringApplicationAPI(t *testing.T) {
 	if appErr != nil || !validated.Valid || len(validated.Issues) != 0 || len(validated.CapabilityGaps) != 0 {
 		t.Fatalf("validate = %+v, error = %v", validated, appErr)
 	}
+	if len(validated.RoutingRequirements) != 1 || validated.RoutingRequirements[0].NodeID != "plan" || !reflect.DeepEqual(validated.RoutingRequirements[0].Requirement, routing.DefaultRequirementV1()) {
+		t.Fatalf("validate routing projection = %+v", validated.RoutingRequirements)
+	}
 	explained, appErr := service.WorkflowExplain(context.Background(), request)
 	if appErr != nil {
 		t.Fatal(appErr)
 	}
 	if !reflect.DeepEqual(explained.TopologicalOrder, []string{"plan", "approve"}) || !reflect.DeepEqual(explained.ParallelLayers, [][]string{{"plan"}, {"approve"}}) || explained.Nodes[0].Agent == nil || explained.Nodes[0].Agent.Driver != "codex" {
 		t.Fatalf("unexpected explanation: %+v", explained)
+	}
+	if explained.Nodes[0].Routing == nil || !reflect.DeepEqual(*explained.Nodes[0].Routing, routing.DefaultRequirementV1()) || explained.Nodes[1].Routing != nil {
+		t.Fatalf("explain routing projection = %+v", explained.Nodes)
+	}
+	explicit := request
+	explicit.Workflow = WorkflowInput{Document: json.RawMessage(`{"apiVersion":"fishyume/v2","name":"explicit-routing","defaults":{"agent":{"driver":"codex","target":"local"}},"execution":{"maxConcurrency":1},"nodes":{"plan":{"type":"agent","task":"Plan","agent":{"routing":{"schemaVersion":"fishyume.routing-requirement/v1","capabilities":["repo_edit","repo_read","structured_output","tool_use"],"complexity":"complex","quality":"premium","latency":"slow","maxCostUnits":42,"maxContextBytes":262144,"maxOutputBytes":65536,"allowModelFallback":false}}}}}`)}
+	explicitValidated, appErr := service.WorkflowValidate(context.Background(), explicit)
+	if appErr != nil || !explicitValidated.Valid || len(explicitValidated.RoutingRequirements) != 1 || explicitValidated.RoutingRequirements[0].Requirement.Complexity != routing.ComplexityComplex || explicitValidated.RoutingRequirements[0].Requirement.MaxCostUnits != 42 {
+		t.Fatalf("explicit routing validate = %+v, error = %v", explicitValidated, appErr)
 	}
 	invalid := request
 	invalid.Workflow = WorkflowInput{Document: json.RawMessage(`{"apiVersion":"fishyume/v1"}`)}

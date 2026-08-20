@@ -150,6 +150,9 @@ test('MCP Host Agent completes capabilities, authoring, approval, answer, events
     const validated = await callTool<WorkflowValidateResponse>(host, 'workflow.validate', exactIntent);
     assert.equal(validated.valid, true);
     assert.deepEqual(validated.issues, []);
+    assert.deepEqual(validated.routingRequirements.map(view => view.nodeId), ['plan', 'implement']);
+    assert.equal(validated.routingRequirements[0]?.requirement.complexity, 'standard');
+    assert.equal(validated.routingRequirements[0]?.requirement.allowModelFallback, false);
     const explained = await callTool<WorkflowExplainResponse>(host, 'workflow.explain', exactIntent);
     assert.deepEqual(explained.topologicalOrder, ['plan', 'approve', 'implement']);
     assert.deepEqual(explained.parallelLayers, [['plan'], ['approve'], ['implement']]);
@@ -159,6 +162,8 @@ test('MCP Host Agent completes capabilities, authoring, approval, answer, events
     assert.equal(explainedImplement?.contextPolicyVersion, 'context-policy/v1');
     const explainedPlan = explained.nodes.find(node => node.id === 'plan');
     assert.deepEqual(explainedPlan?.memoryBindings, contextBindings.memoryByNode.plan);
+    assert.equal(explainedPlan?.routing?.maxContextBytes, 131072);
+    assert.equal(explained.nodes.find(node => node.id === 'approve')?.routing, undefined);
 
     const startRequest = {...exactIntent, clientRequestId: 'mcp-host-smoke-1'};
     const started = await callTool<RunStartResponse>(host, 'run.start', startRequest);
