@@ -5,6 +5,8 @@ Fishyume remains an orchestration engine: it does not become a conversational
 harness, embed a model loop, or replace the Driver that launches a headless
 Agent process.
 
+> Status: M6.0 contract freeze and M6.1 trusted capability catalog are complete.
+
 ## M6.0 Contract Freeze
 
 The first M6 batch freezes the provider-neutral values in
@@ -34,8 +36,13 @@ not alter `AttemptEnvelope`, Driver startup, Run persistence, MCP, or TUI.
 
 1. **M6.0 Contract Freeze**: complete in this batch with golden fixtures and
    negative validation tests.
-2. **M6.1 Capability Catalog**: add a trusted catalog source and inspection
-   surface without selecting a model.
+2. **M6.1 Capability Catalog**: complete. The Engine-owned immutable catalog is
+   summarized by `system.capabilities` and exposed in full through the read-only
+   `routing.catalog` Application/MCP/Machine API. The response includes the
+   exact catalog hash, contract limits, stable routing errors, and
+   `dynamicAvailability: false`; Driver readiness remains a separate runtime
+   report. No project file, environment variable, credential, Provider API, or
+   model selection participates in catalog construction.
 3. **M6.2 Node Routing Requirements**: add additive Workflow/Node fields with
    compatibility defaults (`standard`, `balanced`, bounded budgets).
 4. **M6.3 Deterministic Resolver**: match capabilities and limits using pure
@@ -65,4 +72,3 @@ and hash generation. Fishyume never persists a complete rendered prompt.
 - AutoGen-style embedded sub-agents or a Fishyume chat harness;
 - unbounded or side-effect-unsafe automatic fallback;
 - black-box prompt rewriting or automatic Memory retrieval.
-

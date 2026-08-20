@@ -8,7 +8,7 @@ import test from 'node:test';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import {EngineBridge, type EngineClient} from '../bridge/engine.js';
-import type {ApplicationRunView, MemoryGetResponse, MemoryMutationResponse, RunActionResponse, RunEventsResponse, RunGetResponse, RunResultResponse, RunStartResponse, SystemCapabilitiesResponse, WorkflowExplainResponse, WorkflowValidateResponse} from '../bridge/application.js';
+import type {ApplicationRunView, MemoryGetResponse, MemoryMutationResponse, RoutingCatalogResponse, RunActionResponse, RunEventsResponse, RunGetResponse, RunResultResponse, RunStartResponse, SystemCapabilitiesResponse, WorkflowExplainResponse, WorkflowValidateResponse} from '../bridge/application.js';
 import {createMCPServer} from '../mcp/server.js';
 
 const workflow = {
@@ -125,8 +125,12 @@ test('MCP Host Agent completes capabilities, authoring, approval, answer, events
     assert.equal(capabilities.workflowSchemaVersion, 'fishyume/v2');
     assert.equal(capabilities.authoringGuide.schemaVersion, 'fishyume.authoring-guide/v1');
     assert.equal(capabilities.authoringGuide.workflowApiVersion, 'fishyume/v2');
-    assert.deepEqual(capabilities.authoringGuide.recommendedFlow.filter(method => !method.startsWith('memory.')), ['system.capabilities', 'workflow.validate', 'workflow.explain', 'run.start', 'run.events', 'run.get', 'run.action', 'run.result']);
+    assert.deepEqual(capabilities.authoringGuide.recommendedFlow.filter(method => !method.startsWith('memory.')), ['system.capabilities', 'routing.catalog', 'workflow.validate', 'workflow.explain', 'run.start', 'run.events', 'run.get', 'run.action', 'run.result']);
     assert.ok(capabilities.drivers.some(driver => driver.driver === 'codex' && driver.targets.includes('local')));
+    const catalog = await callTool<RoutingCatalogResponse>(host, 'routing.catalog', {});
+    assert.equal(catalog.catalogHash, capabilities.routingCatalog.catalogHash);
+    assert.equal(catalog.catalog.models.length, capabilities.routingCatalog.modelCount);
+    assert.equal(catalog.dynamicAvailability, false);
 
     const includedMarker = 'M5_6_INCLUDED_MEMORY_CONTENT_MUST_NOT_LEAK';
     const omittedMarker = 'M5_6_OMITTED_MEMORY_CONTENT_MUST_NOT_LEAK';
@@ -203,7 +207,7 @@ test('MCP Host Agent completes capabilities, authoring, approval, answer, events
     const omittedAfter = await callTool<MemoryGetResponse>(host, 'memory.get', {project: projectRoot, recordId: omittedMemory.recordId});
     assert.equal(includedAfter.record.useCount, 1, 'included Memory must be consumed exactly once');
     assert.equal(omittedAfter.record.useCount, 0, 'budget-omitted Memory must not be consumed');
-    const publicEvidence = JSON.stringify({capabilities, validated, explained, started, approval, needsInput, result, events, terminal});
+    const publicEvidence = JSON.stringify({capabilities, catalog, validated, explained, started, approval, needsInput, result, events, terminal});
     assert.equal(publicEvidence.includes(includedMarker), false, 'included Memory content leaked through public metadata');
     assert.equal(publicEvidence.includes(omittedMarker), false, 'omitted Memory content leaked through public metadata');
   } finally {

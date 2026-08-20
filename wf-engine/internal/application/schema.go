@@ -10,12 +10,13 @@ func StableAuthoringGuide() AuthoringGuide {
 	return AuthoringGuide{
 		SchemaVersion: AuthoringGuideVersion,
 		RecommendedFlow: []string{
-			"system.capabilities", "memory.list", "memory.get", "workflow.validate",
+			"system.capabilities", "routing.catalog", "memory.list", "memory.get", "workflow.validate",
 			"workflow.explain", "run.start", "run.events", "run.get", "run.action", "run.result",
 		},
 		WorkflowAPIVersion: WorkflowSchemaVersion,
 		Rules: []string{
 			"Author fishyume/v2; dependsOn controls scheduling while context.dependencies controls dependency-result injection.",
+			"Inspect routing.catalog for the trusted static model capability catalog; it does not report live Provider availability or select a model.",
 			"Memory selection is explicit: pass identical contextBindings to workflow.validate, workflow.explain, and run.start.",
 			"Pass identical workflow, inputs, driver, and target to workflow.validate, workflow.explain, and run.start.",
 			"Reuse a clientRequestId only for an identical run.start request; a changed payload is a conflict.",

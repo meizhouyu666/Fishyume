@@ -5,6 +5,7 @@ import {dirname, join} from 'node:path';
 
 export const fishyumeMcpTools = [
   'system.capabilities',
+  'routing.catalog',
   'workflow.validate',
   'workflow.explain',
   'run.start',

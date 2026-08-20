@@ -4,7 +4,7 @@ import type {AttemptSnapshot, Conclusion, ContextInspect, NodePhase, NodeResult,
 
 export const applicationApiVersion = 'fishyume.application/v1' as const;
 export type JsonScalar = string | number | boolean;
-export type ApplicationMethod = 'system.capabilities' | 'workflow.validate' | 'workflow.explain' | 'run.start' | 'run.list' | 'run.get' | 'run.events' | 'run.action' | 'run.result' | 'memory.create' | 'memory.get' | 'memory.list' | 'memory.supersede' | 'memory.delete';
+export type ApplicationMethod = 'system.capabilities' | 'routing.catalog' | 'workflow.validate' | 'workflow.explain' | 'run.start' | 'run.list' | 'run.get' | 'run.events' | 'run.action' | 'run.result' | 'memory.create' | 'memory.get' | 'memory.list' | 'memory.supersede' | 'memory.delete';
 export type ApplicationErrorCode = 'invalid_argument' | 'invalid_workflow' | 'not_found' | 'conflict' | 'capability_unavailable' | 'not_ready' | 'protocol_mismatch' | 'internal';
 export interface ApplicationError {code: ApplicationErrorCode; message: string; data?: Record<string, unknown>}
 
@@ -14,7 +14,13 @@ export interface MemoryBinding {id: string; reason: string}
 export interface ContextBindings {memoryByNode?: Record<string, MemoryBinding[]>}
 export interface SystemCapabilitiesRequest {project?: string}
 export interface AuthoringGuide {schemaVersion: 'fishyume.authoring-guide/v1'; recommendedFlow: ApplicationMethod[]; workflowApiVersion: 'fishyume/v2'; rules: string[]}
-export interface SystemCapabilitiesResponse {apiVersion: typeof applicationApiVersion; workflowSchemaVersion: string; workflowSchema: Record<string, unknown>; nodeTypes: string[]; actionTypes: ActionType[]; drivers: Array<{driver: string; targets: string[]; ready: boolean; diagnostic?: string; maxConcurrentAgents: number; supportsConcurrentCancel: boolean}>; limits: Record<string, number>; errorCodes: ApplicationErrorCode[]; minimalExample: Record<string, unknown>; authoringGuide: AuthoringGuide}
+export type ModelCapability = 'repo_read' | 'repo_edit' | 'tool_use' | 'structured_output' | 'streaming' | 'needs_input';
+export interface ModelTarget {driver: string; provider: string; model: string}
+export interface ModelCapabilityDescriptor {id: string; target: ModelTarget; capabilities: ModelCapability[]; contextLimitBytes: number; maxOutputBytes: number; quality: 'economy' | 'balanced' | 'premium'; cost: 'low' | 'medium' | 'high'; latency: 'fast' | 'balanced' | 'slow'; supportsCancellation: boolean}
+export interface RoutingCatalog {schemaVersion: 'fishyume.capability-catalog/v1'; policyVersion: 'fishyume.routing-policy/v1'; models: ModelCapabilityDescriptor[]}
+export interface RoutingCatalogSummary {schemaVersion: RoutingCatalog['schemaVersion']; policyVersion: RoutingCatalog['policyVersion']; source: string; catalogHash: string; modelCount: number; inspectMethod: 'routing.catalog'}
+export interface RoutingCatalogResponse {apiVersion: typeof applicationApiVersion; source: string; catalogHash: string; catalog: RoutingCatalog; limits: {maxCatalogModels: number; maxCandidates: number; maxFallbacks: number; maxRoutingBudgetBytes: number; maxCostUnits: number}; errorCodes: string[]; dynamicAvailability: false}
+export interface SystemCapabilitiesResponse {apiVersion: typeof applicationApiVersion; workflowSchemaVersion: string; workflowSchema: Record<string, unknown>; nodeTypes: string[]; actionTypes: ActionType[]; drivers: Array<{driver: string; targets: string[]; ready: boolean; diagnostic?: string; maxConcurrentAgents: number; supportsConcurrentCancel: boolean}>; limits: Record<string, number>; errorCodes: ApplicationErrorCode[]; minimalExample: Record<string, unknown>; authoringGuide: AuthoringGuide; routingCatalog: RoutingCatalogSummary}
 export interface WorkflowValidateRequest {project?: string; workflow: WorkflowInput; inputs?: Record<string, JsonScalar>; driver?: string; target?: string; contextBindings?: ContextBindings}
 export interface ValidationIssue {kind: string; path: string; code: string; message: string}
 export interface WorkflowValidateResponse {apiVersion: typeof applicationApiVersion; workflowSchemaVersion: string; valid: boolean; issues: ValidationIssue[]; capabilityGaps: ValidationIssue[]; warnings: string[]}
@@ -56,7 +62,7 @@ export interface MemoryGetResponse {apiVersion: typeof applicationApiVersion; re
 export interface MemoryListResponse {apiVersion: typeof applicationApiVersion; revision: number; items: MemoryRecordMetadata[]; nextCursor?: string}
 
 export interface ApplicationResponses {
-  'system.capabilities': SystemCapabilitiesResponse; 'workflow.validate': WorkflowValidateResponse; 'workflow.explain': WorkflowExplainResponse;
+  'system.capabilities': SystemCapabilitiesResponse; 'routing.catalog': RoutingCatalogResponse; 'workflow.validate': WorkflowValidateResponse; 'workflow.explain': WorkflowExplainResponse;
   'run.start': RunStartResponse; 'run.list': RunListResponse; 'run.get': RunGetResponse; 'run.events': RunEventsResponse; 'run.action': RunActionResponse; 'run.result': RunResultResponse;
   'memory.create': MemoryMutationResponse; 'memory.get': MemoryGetResponse; 'memory.list': MemoryListResponse; 'memory.supersede': MemoryMutationResponse; 'memory.delete': MemoryMutationResponse;
 }

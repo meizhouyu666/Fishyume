@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"wf.local/wf-engine/internal/contextcompiler"
+	"wf.local/wf-engine/internal/routing"
 	"wf.local/wf-engine/internal/store"
 	"wf.local/wf-engine/internal/workflow"
 )
@@ -76,6 +77,35 @@ type SystemCapabilitiesRequest struct {
 	Project string `json:"project,omitempty"`
 }
 
+type RoutingCatalogSummary struct {
+	SchemaVersion string `json:"schemaVersion"`
+	PolicyVersion string `json:"policyVersion"`
+	Source        string `json:"source"`
+	CatalogHash   string `json:"catalogHash"`
+	ModelCount    int    `json:"modelCount"`
+	InspectMethod string `json:"inspectMethod"`
+}
+
+type RoutingCatalogRequest struct{}
+
+type RoutingCatalogLimits struct {
+	MaxCatalogModels      int `json:"maxCatalogModels"`
+	MaxCandidates         int `json:"maxCandidates"`
+	MaxFallbacks          int `json:"maxFallbacks"`
+	MaxRoutingBudgetBytes int `json:"maxRoutingBudgetBytes"`
+	MaxCostUnits          int `json:"maxCostUnits"`
+}
+
+type RoutingCatalogResponse struct {
+	APIVersion          string                      `json:"apiVersion"`
+	Source              string                      `json:"source"`
+	CatalogHash         string                      `json:"catalogHash"`
+	Catalog             routing.CapabilityCatalogV1 `json:"catalog"`
+	Limits              RoutingCatalogLimits        `json:"limits"`
+	ErrorCodes          []routing.ErrorCode         `json:"errorCodes"`
+	DynamicAvailability bool                        `json:"dynamicAvailability"`
+}
+
 // AuthoringGuide is the bounded, Provider-independent discovery contract for Host
 // Agents. It deliberately contains instructions about public API sequencing only;
 // dynamic project content, prompts, credentials, and Memory content never belong here.
@@ -87,16 +117,17 @@ type AuthoringGuide struct {
 }
 
 type SystemCapabilitiesResponse struct {
-	APIVersion            string             `json:"apiVersion"`
-	WorkflowSchemaVersion string             `json:"workflowSchemaVersion"`
-	WorkflowSchema        json.RawMessage    `json:"workflowSchema"`
-	NodeTypes             []string           `json:"nodeTypes"`
-	ActionTypes           []ActionType       `json:"actionTypes"`
-	Drivers               []DriverCapability `json:"drivers"`
-	Limits                Limits             `json:"limits"`
-	ErrorCodes            []ErrorCode        `json:"errorCodes"`
-	MinimalExample        json.RawMessage    `json:"minimalExample"`
-	AuthoringGuide        AuthoringGuide     `json:"authoringGuide"`
+	APIVersion            string                `json:"apiVersion"`
+	WorkflowSchemaVersion string                `json:"workflowSchemaVersion"`
+	WorkflowSchema        json.RawMessage       `json:"workflowSchema"`
+	NodeTypes             []string              `json:"nodeTypes"`
+	ActionTypes           []ActionType          `json:"actionTypes"`
+	Drivers               []DriverCapability    `json:"drivers"`
+	Limits                Limits                `json:"limits"`
+	ErrorCodes            []ErrorCode           `json:"errorCodes"`
+	MinimalExample        json.RawMessage       `json:"minimalExample"`
+	AuthoringGuide        AuthoringGuide        `json:"authoringGuide"`
+	RoutingCatalog        RoutingCatalogSummary `json:"routingCatalog"`
 }
 
 type ValidationIssue struct {

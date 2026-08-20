@@ -76,6 +76,12 @@ func TestFormalApplicationRPCAndConnectionConcurrency(t *testing.T) {
 	if capabilities.ID != 1 || capabilities.Error != nil {
 		t.Fatalf("capabilities response=%+v", capabilities)
 	}
+	writeRPCRequest(t, clientConnection, 20, "routing.catalog", map[string]any{})
+	var routingCatalog application.RoutingCatalogResponse
+	decodeRPCResult(t, readRPCResponse(t, clientConnection, clientReader), &routingCatalog)
+	if routingCatalog.CatalogHash == "" || len(routingCatalog.Catalog.Models) == 0 || routingCatalog.DynamicAvailability {
+		t.Fatalf("routing.catalog response=%+v", routingCatalog)
+	}
 	writeRPCRequest(t, clientConnection, 2, "workflow.validate", map[string]any{"workflow": map[string]any{"document": workflowDocument}})
 	if response := readRPCResponse(t, clientConnection, clientReader); response.ID != 2 || response.Error != nil {
 		t.Fatalf("validate response=%+v", response)

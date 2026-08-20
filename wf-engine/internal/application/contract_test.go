@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"wf.local/wf-engine/internal/contextcompiler"
+	"wf.local/wf-engine/internal/routing"
 )
 
 func TestApplicationContractFixture(t *testing.T) {
@@ -20,7 +21,7 @@ func TestApplicationContractFixture(t *testing.T) {
 	if err := json.Unmarshal(data, &fixture); err != nil {
 		t.Fatal(err)
 	}
-	wanted := []string{"error", "memory.create.request", "memory.delete.request", "memory.get.response", "memory.list.response", "memory.mutation.response", "memory.supersede.request", "run.action.request", "run.action.response", "run.events.response", "run.get.response", "run.list.response", "run.result.response", "run.start.request", "run.start.response", "system.capabilities.response", "workflow.explain.response", "workflow.validate.response"}
+	wanted := []string{"error", "memory.create.request", "memory.delete.request", "memory.get.response", "memory.list.response", "memory.mutation.response", "memory.supersede.request", "routing.catalog.response", "run.action.request", "run.action.response", "run.events.response", "run.get.response", "run.list.response", "run.result.response", "run.start.request", "run.start.response", "system.capabilities.response", "workflow.explain.response", "workflow.validate.response"}
 	got := make([]string, 0, len(fixture))
 	for key, raw := range fixture {
 		got = append(got, key)
@@ -40,6 +41,17 @@ func TestApplicationContractFixture(t *testing.T) {
 	}
 	if err := contextcompiler.ValidateMemoryRecordV1(memoryGet.Record); err != nil {
 		t.Fatalf("memory.get fixture record: %v", err)
+	}
+	var catalog RoutingCatalogResponse
+	if err := json.Unmarshal(fixture["routing.catalog.response"], &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if err := routing.ValidateCatalog(catalog.Catalog); err != nil {
+		t.Fatalf("routing.catalog fixture: %v", err)
+	}
+	hash, err := routing.CatalogHash(catalog.Catalog)
+	if err != nil || hash != catalog.CatalogHash {
+		t.Fatalf("routing.catalog hash = %q, error = %v", hash, err)
 	}
 }
 

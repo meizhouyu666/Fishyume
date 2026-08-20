@@ -22,7 +22,7 @@ const (
 	MaxMessageSize = 1 << 20
 )
 
-var supportedMethods = []string{"engine.hello", "run.start", "run.startWorkflow", "run.status", "run.resume", "run.cancel", "run.detach", "system.capabilities", "workflow.validate", "workflow.explain", "run.list", "run.get", "run.events", "run.action", "run.result", "memory.create", "memory.get", "memory.list", "memory.supersede", "memory.delete"}
+var supportedMethods = []string{"engine.hello", "run.start", "run.startWorkflow", "run.status", "run.resume", "run.cancel", "run.detach", "system.capabilities", "routing.catalog", "workflow.validate", "workflow.explain", "run.list", "run.get", "run.events", "run.action", "run.result", "memory.create", "memory.get", "memory.list", "memory.supersede", "memory.delete"}
 
 type Server struct {
 	reader               *bufio.Reader
@@ -153,6 +153,8 @@ func (s *Server) handle(ctx context.Context, request Request) {
 	switch request.Method {
 	case "system.capabilities":
 		invokeApplication(ctx, s, id, request.Params, application.SystemCapabilitiesRequest{}, s.application.SystemCapabilities)
+	case "routing.catalog":
+		invokeApplication(ctx, s, id, request.Params, application.RoutingCatalogRequest{}, s.application.RoutingCatalog)
 	case "workflow.validate":
 		invokeApplication(ctx, s, id, request.Params, application.WorkflowValidateRequest{}, s.application.WorkflowValidate)
 	case "workflow.explain":

@@ -37,10 +37,11 @@ defaults:
 
 ## Agent interfaces
 
-The MCP server and Machine CLI expose the current Application API: `system.capabilities`, `workflow.validate`, `workflow.explain`, `run.start`, `run.list`, `run.get`, `run.events`, `run.action`, `run.result`, and project-scoped `memory.create/get/list/supersede/delete`.
+The MCP server and Machine CLI expose the current Application API: `system.capabilities`, read-only `routing.catalog`, `workflow.validate`, `workflow.explain`, `run.start`, `run.list`, `run.get`, `run.events`, `run.action`, `run.result`, and project-scoped `memory.create/get/list/supersede/delete`.
 
 ```powershell
 fishyume machine system.capabilities --params '{}'
+fishyume machine routing.catalog --params '{}'
 fishyume machine run.get --params '{"runId":"<run-id>"}'
 fishyume mcp
 ```
@@ -53,6 +54,9 @@ metadata, while `memory.get` returns one full record. See
 
 Call `system.capabilities` before authoring automation. Its bounded
 `fishyume.authoring-guide/v1` data gives the complete safe Host sequence and advertises
+the trusted immutable routing catalog summary. Call `routing.catalog` to inspect the
+exact static model capabilities and hash; it does not select a model or report live
+Provider availability. The guide also advertises
 `fishyume/v2`. For v2, `dependsOn` controls scheduling and
 `context.dependencies` explicitly controls dependency-result injection. A Host may
 select Memory, but must pass the same `workflow`, `inputs`, `driver`, `target`, and

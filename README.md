@@ -152,6 +152,7 @@ fishyume attach <run-id>
 
 # Machine API：每次只输出一个 Application response JSON
 fishyume machine system.capabilities --params '{}'
+fishyume machine routing.catalog --params '{}'
 fishyume machine run.get --params '{"runId":"<run-id>"}'
 
 # MCP：通过 stdio 提供同一组 Application tools
@@ -159,7 +160,7 @@ fishyume mcp
 ```
 
 Host Agent 应先调用 `system.capabilities`，读取其中有界且版本化的
-`fishyume.authoring-guide/v1`，再按公开顺序完成
+`fishyume.authoring-guide/v1`，再调用只读 `routing.catalog` 检查内置模型能力目录，最后按公开顺序完成
 `validate → explain → start → events/get → action → result`。对于
 `fishyume/v2`，`dependsOn` 只决定调度，`context.dependencies` 才决定节点结果
 注入；Host 选择的 Memory 必须通过同一份 `contextBindings` 原样传给 validate、

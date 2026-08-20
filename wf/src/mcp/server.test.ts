@@ -4,7 +4,7 @@ import {PassThrough} from 'node:stream';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import {StdioServerTransport} from '@modelcontextprotocol/sdk/server/stdio.js';
-import type {SystemCapabilitiesResponse} from '../bridge/application.js';
+import type {RoutingCatalogResponse, SystemCapabilitiesResponse} from '../bridge/application.js';
 import type {EngineClient, EventListener} from '../bridge/engine.js';
 import type {EngineHello} from '../bridge/types.js';
 import {runMachine} from '../commands/machine.js';
@@ -15,7 +15,14 @@ const capabilities: SystemCapabilitiesResponse = {
   nodeTypes: ['agent', 'approval'], actionTypes: ['approve', 'reject', 'answer', 'retry', 'cancel'],
   drivers: [{driver: 'codex', targets: ['local'], ready: true, maxConcurrentAgents: 1, supportsConcurrentCancel: true}],
   limits: {maxEventWaitMs: 30000}, errorCodes: ['invalid_argument', 'conflict'], minimalExample: {apiVersion: 'fishyume/v1'},
-  authoringGuide: {schemaVersion: 'fishyume.authoring-guide/v1', recommendedFlow: ['system.capabilities', 'workflow.validate', 'workflow.explain', 'run.start', 'run.events', 'run.get', 'run.action', 'run.result'], workflowApiVersion: 'fishyume/v2', rules: ['Use exact intent.']},
+  authoringGuide: {schemaVersion: 'fishyume.authoring-guide/v1', recommendedFlow: ['system.capabilities', 'routing.catalog', 'workflow.validate', 'workflow.explain', 'run.start', 'run.events', 'run.get', 'run.action', 'run.result'], workflowApiVersion: 'fishyume/v2', rules: ['Use exact intent.']},
+  routingCatalog: {schemaVersion: 'fishyume.capability-catalog/v1', policyVersion: 'fishyume.routing-policy/v1', source: 'fishyume.builtin', catalogHash: 'a'.repeat(64), modelCount: 1, inspectMethod: 'routing.catalog'},
+};
+
+const routingCatalog: RoutingCatalogResponse = {
+  apiVersion: 'fishyume.application/v1', source: 'fishyume.builtin', catalogHash: 'a'.repeat(64), dynamicAvailability: false,
+  catalog: {schemaVersion: 'fishyume.capability-catalog/v1', policyVersion: 'fishyume.routing-policy/v1', models: [{id: 'codex/local/model', target: {driver: 'codex', provider: 'local', model: 'model'}, capabilities: ['repo_read'], contextLimitBytes: 131072, maxOutputBytes: 32768, quality: 'balanced', cost: 'low', latency: 'fast', supportsCancellation: true}]},
+  limits: {maxCatalogModels: 256, maxCandidates: 32, maxFallbacks: 8, maxRoutingBudgetBytes: 16777216, maxCostUnits: 1000000}, errorCodes: ['routing_invalid_contract'],
 };
 
 class FakeApplicationClient implements EngineClient {
@@ -23,8 +30,9 @@ class FakeApplicationClient implements EngineClient {
 	closeCount = 0;
   async hello(): Promise<EngineHello> {throw new Error('not used')}
   async call<T>(method: string): Promise<T> {
-    if (method !== 'system.capabilities') throw new Error(`unexpected ${method}`);
-    return capabilities as T;
+    if (method === 'system.capabilities') return capabilities as T;
+    if (method === 'routing.catalog') return routingCatalog as T;
+    throw new Error(`unexpected ${method}`);
   }
   onRunEvent(_listener: EventListener): () => void {return () => undefined}
   onDiagnostic(): () => void {return () => undefined}
@@ -82,16 +90,13 @@ test('production StdioServerTransport path settles cleanly on stdin EOF', async 
 });
 
 test('MCP and Machine CLI expose identical Application response JSON', async () => {
-  const machineClient = new FakeApplicationClient(); let machineOutput = '';
-  assert.equal(await runMachine(machineClient, 'system.capabilities', '{}', {write(text) {machineOutput += text}}), 0);
-
   const mcpServer = createMCPServer(new FakeApplicationClient());
   const mcpClient = new Client({name: 'fake-host-agent', version: '1.0.0'});
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([mcpServer.connect(serverTransport), mcpClient.connect(clientTransport)]);
   try {
     const listed = await mcpClient.listTools();
-    assert.deepEqual(listed.tools.map(tool => tool.name), ['system.capabilities', 'workflow.validate', 'workflow.explain', 'run.start', 'run.list', 'run.get', 'run.events', 'run.action', 'run.result', 'memory.create', 'memory.get', 'memory.list', 'memory.supersede', 'memory.delete']);
+    assert.deepEqual(listed.tools.map(tool => tool.name), ['system.capabilities', 'routing.catalog', 'workflow.validate', 'workflow.explain', 'run.start', 'run.list', 'run.get', 'run.events', 'run.action', 'run.result', 'memory.create', 'memory.get', 'memory.list', 'memory.supersede', 'memory.delete']);
     for (const tool of listed.tools) {
       const schema = JSON.stringify(tool.inputSchema);
       for (const legacy of ['"backend"', '"tool"', '"runtime"']) assert.equal(schema.includes(legacy), false, `${tool.name} exposed ${legacy}`);
@@ -103,11 +108,15 @@ test('MCP and Machine CLI expose identical Application response JSON', async () 
     assert.match(listed.tools.find(tool => tool.name === 'run.events')?.description ?? '', /bounded/);
     assert.match(listed.tools.find(tool => tool.name === 'workflow.validate')?.description ?? '', /same workflow, inputs, driver, target/);
     assert.match(listed.tools.find(tool => tool.name === 'workflow.explain')?.description ?? '', /Context Policy/);
-    const result = await mcpClient.callTool({name: 'system.capabilities', arguments: {}});
-    assert.deepEqual(result.structuredContent, JSON.parse(machineOutput));
-    const content = result.content as Array<{type: string; text?: string}>;
-    assert.equal(content[0]?.type, 'text');
-    assert.deepEqual(JSON.parse(content[0]?.text ?? ''), JSON.parse(machineOutput));
+    for (const method of ['system.capabilities', 'routing.catalog'] as const) {
+      const machineClient = new FakeApplicationClient(); let machineOutput = '';
+      assert.equal(await runMachine(machineClient, method, '{}', {write(text) {machineOutput += text}}), 0);
+      const result = await mcpClient.callTool({name: method, arguments: {}});
+      assert.deepEqual(result.structuredContent, JSON.parse(machineOutput));
+      const content = result.content as Array<{type: string; text?: string}>;
+      assert.equal(content[0]?.type, 'text');
+      assert.deepEqual(JSON.parse(content[0]?.text ?? ''), JSON.parse(machineOutput));
+    }
   } finally {
     await mcpClient.close();
     await mcpServer.close();

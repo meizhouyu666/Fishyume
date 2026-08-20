@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"wf.local/wf-engine/internal/contextcompiler"
+	"wf.local/wf-engine/internal/routing"
 	"wf.local/wf-engine/internal/run"
 	"wf.local/wf-engine/internal/store"
 	"wf.local/wf-engine/internal/workflow"
@@ -78,11 +79,42 @@ func (s *Service) SystemCapabilities(ctx context.Context, request SystemCapabili
 		drivers = append(drivers, DriverCapability{Driver: report.Driver, Targets: targets, Ready: report.Ready, Diagnostic: report.Diagnostic, MaxConcurrentAgents: report.MaxConcurrentAgents, SupportsConcurrentCancel: report.SupportsConcurrentCancel})
 	}
 	sort.Slice(drivers, func(i, j int) bool { return drivers[i].Driver < drivers[j].Driver })
-	response := SystemCapabilitiesResponse{APIVersion: APIVersion, WorkflowSchemaVersion: WorkflowSchemaVersion, WorkflowSchema: append(json.RawMessage(nil), WorkflowJSONSchema...), NodeTypes: []string{"agent", "approval"}, ActionTypes: []ActionType{ActionApprove, ActionReject, ActionAnswer, ActionRetry, ActionCancel}, Drivers: drivers, Limits: StableLimits(), ErrorCodes: append([]ErrorCode(nil), StableErrorCodes...), MinimalExample: append(json.RawMessage(nil), MinimalWorkflowExample...), AuthoringGuide: StableAuthoringGuide()}
+	catalog, catalogErr := stableRoutingCatalogResponse()
+	if catalogErr != nil {
+		return SystemCapabilitiesResponse{}, internalError(catalogErr)
+	}
+	response := SystemCapabilitiesResponse{APIVersion: APIVersion, WorkflowSchemaVersion: WorkflowSchemaVersion, WorkflowSchema: append(json.RawMessage(nil), WorkflowJSONSchema...), NodeTypes: []string{"agent", "approval"}, ActionTypes: []ActionType{ActionApprove, ActionReject, ActionAnswer, ActionRetry, ActionCancel}, Drivers: drivers, Limits: StableLimits(), ErrorCodes: append([]ErrorCode(nil), StableErrorCodes...), MinimalExample: append(json.RawMessage(nil), MinimalWorkflowExample...), AuthoringGuide: StableAuthoringGuide(), RoutingCatalog: RoutingCatalogSummary{SchemaVersion: catalog.Catalog.SchemaVersion, PolicyVersion: catalog.Catalog.PolicyVersion, Source: catalog.Source, CatalogHash: catalog.CatalogHash, ModelCount: len(catalog.Catalog.Models), InspectMethod: "routing.catalog"}}
 	if err := ensureResponseBound(response, MaxSchemaResponseBytes); err != nil {
 		return SystemCapabilitiesResponse{}, internalError(err)
 	}
 	return response, nil
+}
+
+func (s *Service) RoutingCatalog(_ context.Context, _ RoutingCatalogRequest) (RoutingCatalogResponse, *Error) {
+	response, err := stableRoutingCatalogResponse()
+	if err != nil {
+		return RoutingCatalogResponse{}, internalError(err)
+	}
+	if err := ensureResponseBound(response, MaxSchemaResponseBytes); err != nil {
+		return RoutingCatalogResponse{}, internalError(err)
+	}
+	return response, nil
+}
+
+func stableRoutingCatalogResponse() (RoutingCatalogResponse, error) {
+	catalog := routing.BuiltinCatalogV1()
+	if err := routing.ValidateCatalog(catalog); err != nil {
+		return RoutingCatalogResponse{}, fmt.Errorf("validate built-in routing catalog: %w", err)
+	}
+	hash, err := routing.CatalogHash(catalog)
+	if err != nil {
+		return RoutingCatalogResponse{}, fmt.Errorf("hash built-in routing catalog: %w", err)
+	}
+	return RoutingCatalogResponse{
+		APIVersion: APIVersion, Source: routing.BuiltinCatalogSourceV1, CatalogHash: hash, Catalog: catalog,
+		Limits:     RoutingCatalogLimits{MaxCatalogModels: routing.MaxCatalogModels, MaxCandidates: routing.MaxCandidates, MaxFallbacks: routing.MaxFallbacks, MaxRoutingBudgetBytes: routing.MaxRoutingBudgetBytes, MaxCostUnits: routing.MaxCostUnits},
+		ErrorCodes: append([]routing.ErrorCode(nil), routing.StableErrorCodes...), DynamicAvailability: false,
+	}, nil
 }
 
 func (s *Service) WorkflowValidate(ctx context.Context, request WorkflowValidateRequest) (WorkflowValidateResponse, *Error) {

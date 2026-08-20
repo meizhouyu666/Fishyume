@@ -194,6 +194,18 @@ func TestWorkflowAuthoringApplicationAPI(t *testing.T) {
 	if capabilities.AuthoringGuide.SchemaVersion != AuthoringGuideVersion || capabilities.AuthoringGuide.WorkflowAPIVersion != WorkflowSchemaVersion || len(capabilities.AuthoringGuide.RecommendedFlow) == 0 {
 		t.Fatalf("unexpected authoring guide: %+v", capabilities.AuthoringGuide)
 	}
+	if capabilities.RoutingCatalog.InspectMethod != "routing.catalog" || capabilities.RoutingCatalog.ModelCount != 2 || capabilities.RoutingCatalog.CatalogHash == "" {
+		t.Fatalf("unexpected routing catalog summary: %+v", capabilities.RoutingCatalog)
+	}
+	catalog, appErr := service.RoutingCatalog(context.Background(), RoutingCatalogRequest{})
+	if appErr != nil || catalog.CatalogHash != capabilities.RoutingCatalog.CatalogHash || len(catalog.Catalog.Models) != 2 || catalog.DynamicAvailability {
+		t.Fatalf("routing catalog = %+v, error = %v", catalog, appErr)
+	}
+	catalog.Catalog.Models[0].ID = "mutated"
+	reloaded, appErr := service.RoutingCatalog(context.Background(), RoutingCatalogRequest{})
+	if appErr != nil || reloaded.Catalog.Models[0].ID == "mutated" {
+		t.Fatalf("routing catalog mutation escaped response isolation: %+v, error = %v", reloaded, appErr)
+	}
 	encodedCapabilities, err := json.Marshal(capabilities)
 	if err != nil {
 		t.Fatal(err)
