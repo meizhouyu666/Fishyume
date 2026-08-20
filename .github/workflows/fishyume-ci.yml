@@ -45,10 +45,10 @@ jobs:
             echo 'Initial Linux race run failed; retrying once with a fresh process state.' >&2
             go test -race ./... -count=1 -timeout 15m
           fi
+      - name: Node dependencies
+        run: npm --prefix wf ci
       - name: TypeScript checks
-        run: |
-          npm --prefix wf ci
-          node wf/scripts/preflight.mjs --step typescript
+        run: node wf/scripts/preflight.mjs --step typescript
       - name: Diff check
         run: node wf/scripts/preflight.mjs --step diff-check
       - name: Reliability script tests
