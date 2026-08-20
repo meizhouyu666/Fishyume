@@ -1,0 +1,32 @@
+apiVersion: fishyume/v2
+name: topology-demo
+defaults:
+  agent:
+    driver: codex
+    target: local
+execution:
+  maxConcurrency: 2
+nodes:
+  plan:
+    type: agent
+    task: "分析当前仓库并返回一个简短的实施计划。只输出结构化总结，不修改文件。"
+  tests:
+    type: agent
+    dependsOn: [plan]
+    task: "检查当前仓库的测试结构并返回简短摘要。只读，不修改文件。"
+  review:
+    type: agent
+    dependsOn: [plan]
+    task: "检查当前仓库的 CI 配置并返回简短摘要。只读，不修改文件。"
+  approve:
+    type: approval
+    dependsOn: [tests, review]
+    prompt: "是否继续执行最终阶段？"
+  finish:
+    type: agent
+    dependsOn: [approve]
+    when:
+      node: approve
+      field: result.decision
+      equals: approved
+    task: "返回已批准并准备继续的简短总结。不要修改文件。"

@@ -10,11 +10,18 @@ FISHYUME / release-workflow / 并行验证
 ⚠ 需要人工审批：review
 请用 ↑/↓ 选择审批节点，然后按 A/Y 批准，或按 X/N 拒绝。
 ────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   plan · 第1次
-› ● 运行中   实现-operator-console · 第2次 · direct
-  ● 运行中   windows-pty-check · 第1次 · ccpanes
-  ◆ 待审批   review · 需要人工审批 · Approve the releas…
-  ○ 未开始   publish
+阶段 1
+└─ ✓ 已完成 plan · 第1次
+│
+阶段 2 · 并行 2
+├─ › ● 运行中 实现-operator-console · 第2次 · direct · 依赖 plan
+└─ ● 运行中 windows-pty-check · 第1次 · ccpanes · 依赖 plan
+│
+阶段 3
+└─ ◆ 待审批 review · 需要人工审批 · Approve the … · 依赖 实现-operator-console,…
+│
+阶段 4
+└─ ○ 未开始 publish · 依赖 review
 ── 节点：实现-operator-console / 第 2 次 ───────────────────────────────────────
 智能体 · 运行中
 第 2 次尝试 · direct · 执行句柄已保存 · 执行标识 pid:4821
@@ -29,15 +36,18 @@ FISHYUME / release-workflow / 并行验证                                      
 ⚠ 需要人工审批：review
 请用 ↑/↓ 选择审批节点，然后按 A/Y 批准，或按 X/N 拒绝。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   plan · 智能体 · 第1次
-› ● 运行中   实现-operator-console · 智能体 · 第2次 · direct · 执行句柄已保存 · 执行 pid:4821
-  ● 运行中   windows-pty-check · 智能体 · 第1次 · ccpanes · 执行句柄已保存 · 执行 session:pty-77
-  ◆ 待审批   review · 人工审批 · 需要人工审批 · Approve the release evidence.
-  ○ 未开始   publish · 智能体
-── 节点：实现-operator-console / 第 2 次 ───────────────────────────────────────────────────────────────────────────────
-智能体 · 运行中
-第 2 次尝试 · direct · 执行句柄已保存 · 执行标识 pid:4821
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+阶段 1                                                                  ── 节点：实现-operator-console / 第 2 次 ───────
+└─ ✓ 已完成 plan · 第1次                                                                                 智能体 · 运行中
+│                                                                        第 2 次尝试 · direct · 执行句柄已保存 · 执行标…
+阶段 2 · 并行 2
+├─ › ● 运行中 实现-operator-console · 第2次 · direct · 依赖 plan
+└─ ● 运行中 windows-pty-check · 第1次 · ccpanes · 依赖 plan
+│
+阶段 3
+└─ ◆ 待审批 review · 需要人工审批 · A… · 依赖 实现-operator-console,…
+│
+阶段 4
+└─ ○ 未开始 publish · 依赖 review
 2 个运行中 · 1 个等待处理 · 并发上限 3
 ↑↓/J/K 选择节点  Enter 收起详情  C 取消任务  ? 操作帮助  Q 退出观察
 
@@ -49,15 +59,18 @@ FISHYUME / release-workflow / 并行验证                                      
 ⚠ 需要人工审批：review
 请用 ↑/↓ 选择审批节点，然后按 A/Y 批准，或按 X/N 拒绝。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   plan · 智能体 · 第1次
-› ● 运行中   实现-operator-console · 智能体 · 第2次 · direct · 执行句柄已保存 · 执行 pid:4821
-  ● 运行中   windows-pty-check · 智能体 · 第1次 · ccpanes · 执行句柄已保存 · 执行 session:pty-77
-  ◆ 待审批   review · 人工审批 · 需要人工审批 · Approve the release evidence.
-  ○ 未开始   publish · 智能体
-── 节点：实现-operator-console / 第 2 次 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-智能体 · 运行中
-第 2 次尝试 · direct · 执行句柄已保存 · 执行标识 pid:4821
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+阶段 1                                                                                         ── 节点：实现-operator-console / 第 2 次 ────────────────────────
+└─ ✓ 已完成 plan · 第1次                                                                                                                         智能体 · 运行中
+│                                                                                                      第 2 次尝试 · direct · 执行句柄已保存 · 执行标识 pid:4821
+阶段 2 · 并行 2
+├─ › ● 运行中 实现-operator-console · 第2次 · direct · 依赖 plan
+└─ ● 运行中 windows-pty-check · 第1次 · ccpanes · 依赖 plan
+│
+阶段 3
+└─ ◆ 待审批 review · 需要人工审批 · Approve the release evid… · 依赖 实现-operator-console,…
+│
+阶段 4
+└─ ○ 未开始 publish · 依赖 review
 2 个运行中 · 1 个等待处理 · 并发上限 3
 ↑↓/J/K 选择节点  Enter 收起详情  C 取消任务  ? 操作帮助  Q 退出观察
 
@@ -69,9 +82,14 @@ FISHYUME / production-release
 ⚠ 需要人工审批：security-review
 请先阅读下方审批说明，然后按 A/Y 批准，或按 X/N 拒绝。
 ────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   plan · 第1次
-› ◆ 待审批   security-review · 需要人工审批 · Approve production…
-  ○ 未开始   deploy
+阶段 1
+└─ ✓ 已完成 plan · 第1次
+│
+阶段 2
+└─ › ◆ 待审批 security-review · 需要人工审批 · Approve prod…
+│
+阶段 3
+└─ ○ 未开始 deploy
 ── 节点：security-review ───────────────────────────────────────────────────────
 人工审批 · 等待处理 · 需要人工审批
 提示 · 需要人工审批 · Approve production deployment after reviewing duplicate-r…
@@ -88,14 +106,14 @@ FISHYUME / production-release                                                   
 ⚠ 需要人工审批：security-review
 请先阅读下方审批说明，然后按 A/Y 批准，或按 X/N 拒绝。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   plan · 智能体 · 第1次
-› ◆ 待审批   security-review · 人工审批 · 需要人工审批 · Approve production deployment after reviewing dup…
-  ○ 未开始   deploy · 智能体
-── 节点：security-review ───────────────────────────────────────────────────────────────────────────────────────────────
-人工审批 · 等待处理 · 需要人工审批
-提示 · 需要人工审批 · Approve production deployment after reviewing duplicate-risk controls.
-结果摘要 · Deployment awaits a human decision.
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+阶段 1                                                                  ── 节点：security-review ───────────────────────
+└─ ✓ 已完成 plan · 第1次                                                              人工审批 · 等待处理 · 需要人工审批
+│                                                                       提示 · 需要人工审批 · Approve production deploy…
+阶段 2                                                                    结果摘要 · Deployment awaits a human decision.
+└─ › ◆ 待审批 security-review · 需要人工审批 · A…
+│
+阶段 3
+└─ ○ 未开始 deploy
 1 个等待处理 · 并发上限 3
 ↑↓/J/K 选择节点  Enter 收起详情  A/Y 批准  X/N 拒绝  C 取消任务  ? 操作帮助  Q 退出观察
 
@@ -107,14 +125,14 @@ FISHYUME / production-release                                                   
 ⚠ 需要人工审批：security-review
 请先阅读下方审批说明，然后按 A/Y 批准，或按 X/N 拒绝。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   plan · 智能体 · 第1次
-› ◆ 待审批   security-review · 人工审批 · 需要人工审批 · Approve production deployment after reviewing duplicate-risk controls.
-  ○ 未开始   deploy · 智能体
-── 节点：security-review ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-人工审批 · 等待处理 · 需要人工审批
-提示 · 需要人工审批 · Approve production deployment after reviewing duplicate-risk controls.
-结果摘要 · Deployment awaits a human decision.
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+阶段 1                                                                                         ── 节点：security-review ────────────────────────────────────────
+└─ ✓ 已完成 plan · 第1次                                                                                                      人工审批 · 等待处理 · 需要人工审批
+│                                                                                              提示 · 需要人工审批 · Approve production deployment after review…
+阶段 2                                                                                                            结果摘要 · Deployment awaits a human decision.
+└─ › ◆ 待审批 security-review · 需要人工审批 · Approve production deplo…
+│
+阶段 3
+└─ ○ 未开始 deploy
 1 个等待处理 · 并发上限 3
 ↑↓/J/K 选择节点  Enter 收起详情  A/Y 批准  X/N 拒绝  C 取消任务  ? 操作帮助  Q 退出观察
 
@@ -126,9 +144,14 @@ FISHYUME / release-validation
 ⚠ 有节点需要决定是否重试：integration-tests
 选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   build · 第1次
-› ! 已失败   integration-tests · 第2次 · 结果格式无效 · Expected j…
-  ○ 未开始   package
+阶段 1
+└─ ✓ 已完成 build · 第1次
+│
+阶段 2
+└─ › ! 已失败 integration-tests · 第2次 · 结果格式无效 · Expe…
+│
+阶段 3
+└─ ○ 未开始 package
 ── 节点：integration-tests ─────────────────────────────────────────────────────
 智能体 · 已结束 · 失败 · 结果格式无效
 提示 · 结果格式无效 · Expected junit.xml was not produced.
@@ -147,17 +170,14 @@ FISHYUME / release-validation                                                   
 ⚠ 有节点需要决定是否重试：integration-tests
 选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   build · 智能体 · 第1次
-› ! 已失败   integration-tests · 智能体 · 第2次 · 结果格式无效 · Expected junit.xml was not produced.
-  ○ 未开始   package · 智能体
-── 节点：integration-tests ─────────────────────────────────────────────────────────────────────────────────────────────
-智能体 · 已结束 · 失败 · 结果格式无效
-提示 · 结果格式无效 · Expected junit.xml was not produced.
-结果摘要 · Test runner exited before publishing results.
-警告 · Retry will create attempt 3.
-检查项 · typecheck passed · integration result missing
-产物 · E:/团队/logs/integration-attempt-2.txt
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+阶段 1                                                                  ── 节点：integration-tests ─────────────────────
+└─ ✓ 已完成 build · 第1次                                                          智能体 · 已结束 · 失败 · 结果格式无效
+│                                                                       提示 · 结果格式无效 · Expected junit.xml was no…
+阶段 2                                                                  结果摘要 · Test runner exited before publishing…
+└─ › ! 已失败 integration-tests · 第2次 · 结果格式…                                  警告 · Retry will create attempt 3.
+│                                                                       检查项 · typecheck passed · integration result …
+阶段 3                                                                     产物 · E:/团队/logs/integration-attempt-2.txt
+└─ ○ 未开始 package
 1 个失败 · 并发上限 3
 ↑↓/J/K 选择节点  Enter 收起详情  T 重试  C 取消任务  ? 操作帮助  Q 退出观察
 
@@ -169,17 +189,14 @@ FISHYUME / release-validation                                                   
 ⚠ 有节点需要决定是否重试：integration-tests
 选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   build · 智能体 · 第1次
-› ! 已失败   integration-tests · 智能体 · 第2次 · 结果格式无效 · Expected junit.xml was not produced.
-  ○ 未开始   package · 智能体
-── 节点：integration-tests ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-智能体 · 已结束 · 失败 · 结果格式无效
-提示 · 结果格式无效 · Expected junit.xml was not produced.
-结果摘要 · Test runner exited before publishing results.
-警告 · Retry will create attempt 3.
-检查项 · typecheck passed · integration result missing
-产物 · E:/团队/logs/integration-attempt-2.txt
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+阶段 1                                                                                         ── 节点：integration-tests ──────────────────────────────────────
+└─ ✓ 已完成 build · 第1次                                                                                                  智能体 · 已结束 · 失败 · 结果格式无效
+│                                                                                                     提示 · 结果格式无效 · Expected junit.xml was not produced.
+阶段 2                                                                                                  结果摘要 · Test runner exited before publishing results.
+└─ › ! 已失败 integration-tests · 第2次 · 结果格式无效 · Expected junit.x…                                                   警告 · Retry will create attempt 3.
+│                                                                                                         检查项 · typecheck passed · integration result missing
+阶段 3                                                                                                             产物 · E:/团队/logs/integration-attempt-2.txt
+└─ ○ 未开始 package
 1 个失败 · 并发上限 3
 ↑↓/J/K 选择节点  Enter 收起详情  T 重试  C 取消任务  ? 操作帮助  Q 退出观察
 
@@ -191,9 +208,14 @@ FISHYUME / artifact-release
 ⚠ 有节点需要决定是否重试：publish-artifact
 选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   prepare · 第1次
-› ? 待确认   publish-artifact · 第3次 · 未确认执行完成 · Backend …
-  ○ 未开始   notify
+阶段 1
+└─ ✓ 已完成 prepare · 第1次
+│
+阶段 2
+└─ › ? 待确认 publish-artifact · 第3次 · 未确认执行完成 · Ba…
+│
+阶段 3
+└─ ○ 未开始 notify
 ── 操作确认 / publish-artifact · 重试节点 · 存在重复副作用风险 ─────────────────
 重试可能再次产生外部副作用。确认你已了解重复执行风险后再继续。
 ────────────────────────────────────────────────────────────────────────────────
@@ -207,12 +229,14 @@ FISHYUME / artifact-release                                                     
 ⚠ 有节点需要决定是否重试：publish-artifact
 选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   prepare · 智能体 · 第1次
-› ? 待确认   publish-artifact · 智能体 · 第3次 · 未确认执行完成 · Backend completion was not observed; exte…
-  ○ 未开始   notify · 智能体
-── 操作确认 / publish-artifact · 重试节点 · 存在重复副作用风险 ─────────────────────────────────────────────────────────
-重试可能再次产生外部副作用。确认你已了解重复执行风险后再继续。
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+阶段 1                                                                  ── 操作确认 / publish-artifact · 重试节点 · … ──
+└─ ✓ 已完成 prepare · 第1次                                              重试可能再次产生外部副作用。确认你已了解重复执…
+│
+阶段 2
+└─ › ? 待确认 publish-artifact · 第3次 · 未确认执…
+│
+阶段 3
+└─ ○ 未开始 notify
 1 个失败 · 并发上限 3
 Enter 确认  Esc 放弃
 
@@ -224,12 +248,14 @@ FISHYUME / artifact-release                                                     
 ⚠ 有节点需要决定是否重试：publish-artifact
 选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   prepare · 智能体 · 第1次
-› ? 待确认   publish-artifact · 智能体 · 第3次 · 未确认执行完成 · Backend completion was not observed; external publish may already have happ…
-  ○ 未开始   notify · 智能体
-── 操作确认 / publish-artifact · 重试节点 · 存在重复副作用风险 ─────────────────────────────────────────────────────────────────────────────────────────────────
-重试可能再次产生外部副作用。确认你已了解重复执行风险后再继续。
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+阶段 1                                                                                         ── 操作确认 / publish-artifact · 重试节点 · 存在重复副作用风险 ──
+└─ ✓ 已完成 prepare · 第1次                                                                       重试可能再次产生外部副作用。确认你已了解重复执行风险后再继续。
+│
+阶段 2
+└─ › ? 待确认 publish-artifact · 第3次 · 未确认执行完成 · Backend comple…
+│
+阶段 3
+└─ ○ 未开始 notify
 1 个失败 · 并发上限 3
 Enter 确认  Esc 放弃
 
@@ -238,10 +264,17 @@ FISHYUME / cancel-workflow
 正在取消 · 2m18s · 已结束 1/4 · 并发上限 3
 任务 run-stopping-e15f · direct
 ────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   prepare · 第1次
-  ● 运行中   stop-local-worker · 第2次 · direct · Cancellation req…
-› ● 运行中   stop-remote-worker · 第1次 · ccpanes · Remote session …
-  ○ 未开始   finalize
+阶段 1
+└─ ✓ 已完成 prepare · 第1次
+│
+阶段 2
+└─ ● 运行中 stop-local-worker · 第2次 · direct · Cancellati…
+│
+阶段 3
+└─ › ● 运行中 stop-remote-worker · 第1次 · ccpanes · Remote se…
+│
+阶段 4
+└─ ○ 未开始 finalize
 ── 节点：stop-remote-worker / 第 1 次 ──────────────────────────────────────────
 智能体 · 运行中
 第 1 次尝试 · ccpanes · 会话已保存 · 执行标识 session:remote-9
@@ -254,15 +287,17 @@ FISHYUME / cancel-workflow
 FISHYUME / cancel-workflow                                                                                正在取消 2m18s
 任务 run-stopping-e15f · direct · 并发上限 3                                                                  已结束 1/4
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   prepare · 智能体 · 第1次
-  ● 运行中   stop-local-worker · 智能体 · 第2次 · direct · 执行句柄已保存 · 执行 pid:5100 · Cancellation req…
-› ● 运行中   stop-remote-worker · 智能体 · 第1次 · ccpanes · 会话已保存 · 执行 session:remote-9 · Remote sess…
-  ○ 未开始   finalize · 智能体
-── 节点：stop-remote-worker / 第 1 次 ──────────────────────────────────────────────────────────────────────────────────
-智能体 · 运行中
-第 1 次尝试 · ccpanes · 会话已保存 · 执行标识 session:remote-9
-提示 · 取消尚未确认 · Remote session still reports active.
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+阶段 1                                                                  ── 节点：stop-remote-worker / 第 1 次 ──────────
+└─ ✓ 已完成 prepare · 第1次                                                                              智能体 · 运行中
+│                                                                       第 1 次尝试 · ccpanes · 会话已保存 · 执行标识 s…
+阶段 2                                                                  提示 · 取消尚未确认 · Remote session still repo…
+└─ ● 运行中 stop-local-worker · 第2次 · direct ·…
+│
+阶段 3
+└─ › ● 运行中 stop-remote-worker · 第1次 · ccpanes …
+│
+阶段 4
+└─ ○ 未开始 finalize
 2 个运行中 · 并发上限 3
 ↑↓/J/K 选择节点  Enter 收起详情  ? 操作帮助  Q 退出观察
 
@@ -271,15 +306,17 @@ FISHYUME / cancel-workflow                                                      
 任务 run-stopping-e15f · direct · 并发上限 3                                                                                                          已结束 1/4
 状态目录 E:/团队/.fishyume/runs/run-stopping-e15f/state-with-a-long-reviewable-path
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   prepare · 智能体 · 第1次
-  ● 运行中   stop-local-worker · 智能体 · 第2次 · direct · 执行句柄已保存 · 执行 pid:5100 · Cancellation requested; execution confirmation pen…
-› ● 运行中   stop-remote-worker · 智能体 · 第1次 · ccpanes · 会话已保存 · 执行 session:remote-9 · Remote session still reports active.
-  ○ 未开始   finalize · 智能体
-── 节点：stop-remote-worker / 第 1 次 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-智能体 · 运行中
-第 1 次尝试 · ccpanes · 会话已保存 · 执行标识 session:remote-9
-提示 · 取消尚未确认 · Remote session still reports active.
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+阶段 1                                                                                         ── 节点：stop-remote-worker / 第 1 次 ───────────────────────────
+└─ ✓ 已完成 prepare · 第1次                                                                                                                      智能体 · 运行中
+│                                                                                                 第 1 次尝试 · ccpanes · 会话已保存 · 执行标识 session:remote-9
+阶段 2                                                                                                提示 · 取消尚未确认 · Remote session still reports active.
+└─ ● 运行中 stop-local-worker · 第2次 · direct · Cancellation requested…
+│
+阶段 3
+└─ › ● 运行中 stop-remote-worker · 第1次 · ccpanes · Remote session still …
+│
+阶段 4
+└─ ○ 未开始 finalize
 2 个运行中 · 并发上限 3
 ↑↓/J/K 选择节点  Enter 收起详情  ? 操作帮助  Q 退出观察
 
@@ -291,10 +328,17 @@ FISHYUME / release-workflow
 ⚠ 有节点需要决定是否重试：verify
 选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   plan · 第1次
-› ! 已失败   verify · 第2次 · Two checks failed.
-  × 已取消   cleanup · 第1次
-  × 已拒绝   approval · 用户操作
+阶段 1
+└─ ✓ 已完成 plan · 第1次
+│
+阶段 2
+└─ › ! 已失败 verify · 第2次 · Two checks failed.
+│
+阶段 3
+└─ × 已取消 cleanup · 第1次
+│
+阶段 4
+└─ × 已拒绝 approval · 用户操作
 ── 节点：verify ────────────────────────────────────────────────────────────────
 智能体 · 已结束 · 失败
 提示 · 结果格式无效 · Two checks failed.
@@ -317,20 +361,17 @@ FISHYUME / release-workflow                                                     
 ⚠ 有节点需要决定是否重试：verify
 选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   plan · 智能体 · 第1次
-› ! 已失败   verify · 智能体 · 第2次 · Two checks failed.
-  × 已取消   cleanup · 智能体 · 第1次
-  × 已拒绝   approval · 人工审批 · 用户操作
-── 节点：verify ────────────────────────────────────────────────────────────────────────────────────────────────────────
-智能体 · 已结束 · 失败
-提示 · 结果格式无效 · Two checks failed.
-结果摘要 · Verification failed.
-警告 · Do not publish this build.
-检查项 · typecheck passed · unit tests failed
-任务总结 · Release stopped: verification failed and approval was rejected.
-再次查看 · fishyume status run-terminal-f260
-状态目录 · E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+阶段 1                                                                  ── 节点：verify ────────────────────────────────
+└─ ✓ 已完成 plan · 第1次                                                                          智能体 · 已结束 · 失败
+│                                                                               提示 · 结果格式无效 · Two checks failed.
+阶段 2                                                                                   结果摘要 · Verification failed.
+└─ › ! 已失败 verify · 第2次 · Two chec…                                               警告 · Do not publish this build.
+│                                                                          检查项 · typecheck passed · unit tests failed
+阶段 3                                                                  任务总结 · Release stopped: verification failed…
+└─ × 已取消 cleanup · 第1次                                                 再次查看 · fishyume status run-terminal-f260
+│                                                                       状态目录 · E:/团队/.fishyume/runs/run-terminal-…
+阶段 4
+└─ × 已拒绝 approval · 用户操作
 1 个失败 · 并发上限 3
 再次查看 fishyume status run-terminal-f260
 状态目录 E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path  Q 退出
@@ -343,19 +384,16 @@ FISHYUME / release-workflow                                                     
 ⚠ 有节点需要决定是否重试：verify
 选择节点后按 T；存在外部副作用风险时会再次确认。
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  ✓ 已完成   plan · 智能体 · 第1次
-› ! 已失败   verify · 智能体 · 第2次 · Two checks failed.
-  × 已取消   cleanup · 智能体 · 第1次
-  × 已拒绝   approval · 人工审批 · 用户操作
-── 节点：verify ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-智能体 · 已结束 · 失败
-提示 · 结果格式无效 · Two checks failed.
-结果摘要 · Verification failed.
-警告 · Do not publish this build.
-检查项 · typecheck passed · unit tests failed
-任务总结 · Release stopped: verification failed and approval was rejected.
-再次查看 · fishyume status run-terminal-f260
-状态目录 · E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+阶段 1                                                                                         ── 节点：verify ─────────────────────────────────────────────────
+└─ ✓ 已完成 plan · 第1次                                                                                                                  智能体 · 已结束 · 失败
+│                                                                                                                       提示 · 结果格式无效 · Two checks failed.
+阶段 2                                                                                                                           结果摘要 · Verification failed.
+└─ › ! 已失败 verify · 第2次 · Two checks failed.                                                                              警告 · Do not publish this build.
+│                                                                                                                  检查项 · typecheck passed · unit tests failed
+阶段 3                                                                                         任务总结 · Release stopped: verification failed and approval was…
+└─ × 已取消 cleanup · 第1次                                                                                         再次查看 · fishyume status run-terminal-f260
+│                                                                                              状态目录 · E:/团队/.fishyume/runs/run-terminal-f260/state-with-a…
+阶段 4
+└─ × 已拒绝 approval · 用户操作
 1 个失败 · 并发上限 3
 再次查看 fishyume status run-terminal-f260  状态目录 E:/团队/.fishyume/runs/run-terminal-f260/state-with-a-long-reviewable-path  Q 退出
