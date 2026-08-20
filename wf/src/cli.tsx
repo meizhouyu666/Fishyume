@@ -9,14 +9,16 @@ import {AttachCommand} from './commands/attach.js';
 import {MachineCommand} from './commands/machine.js';
 import {MCPCommand} from './commands/mcp.js';
 import {DashboardCommand} from './commands/dashboard.js';
-import {SetupCodexCommand} from './commands/setup.js';
+import {SetupProductCommand} from './commands/setup-product.js';
+import {DemoCommand} from './commands/demo.js';
 import {MemoryCreateCommand, MemoryDeleteCommand, MemoryGetCommand, MemoryListCommand, MemorySupersedeCommand} from './commands/memory.js';
 
 const cli = new Cli({binaryLabel: 'Fishyume', binaryName: 'fishyume', binaryVersion: '0.2.1-alpha.1'});
 cli.register(Builtins.HelpCommand);
 cli.register(Builtins.VersionCommand);
 cli.register(DashboardCommand);
-cli.register(SetupCodexCommand);
+cli.register(DemoCommand);
+cli.register(SetupProductCommand);
 cli.register(DoctorCommand);
 cli.register(RunCommand);
 cli.register(StatusCommand);
@@ -31,4 +33,7 @@ cli.register(MemoryListCommand);
 cli.register(MemorySupersedeCommand);
 cli.register(MemoryDeleteCommand);
 const args = process.argv.slice(2);
+// Keep the historical `setup codex` spelling as a compatibility alias for the
+// single product setup command without registering an ambiguous Clipanion path.
+if (args[0] === 'setup' && args[1] === 'codex') args.splice(1, 1);
 await cli.runExit(args.length === 0 ? ['dashboard'] : args, Cli.defaultContext);

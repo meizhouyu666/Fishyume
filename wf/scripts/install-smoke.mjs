@@ -82,15 +82,19 @@ try {
   if (!existsSync(cli)) throw new Error(`installed CLI is missing: ${cli}`);
 
   const help = invoke(cli, ['--help']);
-  if (!/Fishyume/.test(help) || !/dashboard/.test(help)) throw new Error('installed top-level help is incomplete');
+  if (!/Fishyume/.test(help) || !/dashboard/.test(help) || !/demo/.test(help) || !/setup/.test(help)) throw new Error('installed top-level help is incomplete');
   if (!/Operator Dashboard/.test(invoke(cli, ['dashboard', '--help']))) throw new Error('installed Dashboard help is incomplete');
-  const setup = invoke(cli, ['setup', 'codex', '--print']);
+  const setup = invoke(cli, ['setup', '--print']);
   if (!setup.includes('codex mcp add fishyume --') || !setup.includes(process.execPath) || !setup.includes(cli) || !setup.trim().endsWith('"mcp"')) throw new Error('installed Codex setup command is not canonical and copyable');
+  const compatibleSetup = invoke(cli, ['setup', 'codex', '--print']);
+  if (compatibleSetup !== setup) throw new Error('historical setup codex alias does not match product setup');
+  const demo = invoke(cli, ['demo', '--width', '80', '--ascii']);
+  if (!/阶段 2 · 并行 2/.test(demo) || !/依赖 plan/.test(demo) || !/需要人工审批/.test(demo)) throw new Error(`installed offline topology demo is incomplete: ${demo}`);
   const dashboard = invoke(cli, []);
-  if (!/No durable Runs yet\./.test(dashboard) || !/Check readiness: fishyume doctor/.test(dashboard)) throw new Error(`installed zero-argument Dashboard empty state is incomplete: ${dashboard}`);
+  if (!/目前没有可显示的任务。/.test(dashboard) || !/检查运行环境：fishyume doctor/.test(dashboard)) throw new Error(`installed zero-argument Dashboard empty state is incomplete: ${dashboard}`);
   const doctor = invoke(cli, ['doctor'], [0, 1]);
   if (!/ok engine 0\.2\.1-alpha\.1 started/.test(doctor) || !/ok protocol 2 compatible/.test(doctor) || !/(?:ok|fail) codex-mcp/.test(doctor)) throw new Error(`installed Doctor output is incomplete: ${doctor}`);
-  process.stdout.write('Verified packed Fishyume install, Dashboard, Codex setup, and Doctor recovery surface\n');
+  process.stdout.write('Verified packed Fishyume install, Dashboard, setup, offline demo, and Doctor recovery surface\n');
 } finally {
   stopControlPlane();
   rmSync(root, {recursive: true, force: true});

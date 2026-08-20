@@ -29,7 +29,7 @@ fishyume doctor --project "E:\project"
 fishyume
 ```
 
-零参数命令打开 Run Dashboard：方向键或 `j`/`k` 选择 Run，`Enter` attach，随后可观察并行节点、审批、回答 `needs_input`、重试、取消或安全 detach。正常链路不要求用户手写 Workflow、复制 Run ID、提供 profile ID 或处理逐次 MCP allow。完整范围与验收见 [`docs/fishyume-m4.5-developer-preview.md`](./docs/fishyume-m4.5-developer-preview.md)。
+首次安装后运行 `fishyume setup` 即可连接本地 Codex Host 并检查就绪状态；原有 `fishyume setup codex` 继续兼容。`fishyume demo` 无需 Engine、Provider 登录或网络即可预览中文拓扑控制台。日常零参数 `fishyume` 打开 Run Dashboard：方向键或 `j`/`k` 选择 Run，`Enter` attach，随后可观察并行节点、审批、回答 `needs_input`、重试、取消或安全 detach。正常链路不要求用户手写 Workflow、复制 Run ID、提供 profile ID 或处理逐次 MCP allow。完整范围与验收见 [`docs/fishyume-m4.5-developer-preview.md`](./docs/fishyume-m4.5-developer-preview.md)。
 
 ## 核心能力
 

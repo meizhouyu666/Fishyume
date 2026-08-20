@@ -94,11 +94,13 @@ function buildTopologyLines(view: RunStatusView, nodes: NodeSummary[], attempts:
     lines.push({text: fitText(label, width), role: 'muted', bold: true});
     layer.forEach((node, nodeIndex) => {
       const row = formatWorkflowRow(node, attempts.get(node.id), Math.max(20, width - 6), node.id === selectedNodeId, symbolMode);
-      const connector = layer.length > 1 ? (nodeIndex === layer.length - 1 ? '└─' : '├─') : '└─';
+      const connector = symbolMode === 'ascii'
+        ? (layer.length > 1 && nodeIndex < layer.length - 1 ? '|-' : '`-')
+        : (layer.length > 1 && nodeIndex < layer.length - 1 ? '├─' : '└─');
       const dependencyText = node.dependsOn?.length ? ` · 依赖 ${node.dependsOn.join(', ')}` : '';
       lines.push({text: fitText(`  ${connector} ${row.text}${dependencyText}`, width), role: row.selected ? 'brand' : row.role, bold: row.selected});
     });
-    if (layerIndex < layers.length - 1) lines.push({text: fitText('  │', width), role: 'muted'});
+    if (layerIndex < layers.length - 1) lines.push({text: fitText(symbolMode === 'ascii' ? '  |' : '  │', width), role: 'muted'});
   });
   return lines;
 }

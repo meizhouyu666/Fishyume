@@ -21,7 +21,7 @@ test('Fishyume exposes help and version', () => {
 });
 
 test('command help remains available', () => {
-  for (const command of ['dashboard', 'run', 'status', 'resume', 'cancel', 'doctor', 'attach', 'machine', 'mcp']) {
+  for (const command of ['dashboard', 'demo', 'run', 'status', 'resume', 'cancel', 'doctor', 'attach', 'machine', 'mcp']) {
     const result = invoke(command, '--help');
     assert.equal(result.status, 0, `${command}: ${result.stderr}`);
     assert.match(result.stdout, new RegExp(`fishyume ${command}`));
@@ -37,9 +37,18 @@ test('command help remains available', () => {
   assert.doesNotMatch(createMemory.stdout, /--content/);
   const setup = invoke('setup', 'codex', '--help');
   assert.equal(setup.status, 0, setup.stderr);
-  assert.match(setup.stdout, /fishyume setup codex/);
+  assert.match(setup.stdout, /fishyume setup/);
   assert.match(setup.stdout, /--print/);
   assert.match(setup.stdout, /--force/);
+  const compatibleSetupPrint = invoke('setup', 'codex', '--print');
+  assert.equal(compatibleSetupPrint.status, 0, compatibleSetupPrint.stderr);
+  assert.match(compatibleSetupPrint.stdout, /^codex mcp add fishyume --/);
+  const productSetup = invoke('setup', '--help');
+  assert.equal(productSetup.status, 0, productSetup.stderr);
+  assert.match(productSetup.stdout, /fishyume setup/);
+  const demo = invoke('demo', '--help');
+  assert.equal(demo.status, 0, demo.stderr);
+  assert.match(demo.stdout, /--width/);
 });
 
 test('memory file content rejects oversized and invalid UTF-8 input before starting the Engine', () => {
@@ -74,6 +83,8 @@ test('command help describes the Agent-facing control-plane surface', () => {
     ['machine', /Call one Agent-facing Application API method/],
     ['mcp', /Serve the Agent-facing Application API as MCP tools over stdio/],
     ['setup codex', /Connect Fishyume to Codex as a local stdio MCP server/],
+    ['setup', /Set up Fishyume for the local Codex Host/],
+    ['demo', /Preview the Chinese topology console/],
   ]);
   for (const [command, description] of expected) {
     const result = invoke(...command.split(' '), '--help');

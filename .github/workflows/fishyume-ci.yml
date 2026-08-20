@@ -136,8 +136,12 @@ jobs:
           grep -q 'dashboard' <<<"$help_output"
           dashboard_help="$("$install_root/node_modules/.bin/fishyume" dashboard --help)"
           grep -q 'Operator Dashboard' <<<"$dashboard_help"
-          setup_output="$("$install_root/node_modules/.bin/fishyume" setup codex --print)"
+          setup_output="$("$install_root/node_modules/.bin/fishyume" setup --print)"
           grep -q '^codex mcp add fishyume -- ".*node" ".*/fishyume/dist/cli.js" "mcp"$' <<<"$setup_output"
+          demo_output="$("$install_root/node_modules/.bin/fishyume" demo --width 80 --ascii)"
+          grep -q '阶段 2 · 并行 2' <<<"$demo_output"
+          grep -q '依赖 plan' <<<"$demo_output"
+          grep -q '需要人工审批' <<<"$demo_output"
           dashboard_output="$("$install_root/node_modules/.bin/fishyume")"
           grep -q '目前没有可显示的任务。' <<<"$dashboard_output"
           grep -q '检查运行环境：fishyume doctor' <<<"$dashboard_output"
@@ -172,8 +176,10 @@ jobs:
           if ($helpOutput -notmatch 'dashboard') { throw 'installed CLI does not expose Dashboard' }
           $dashboardHelp = & $fishyume dashboard --help | Out-String
           if ($dashboardHelp -notmatch 'Operator Dashboard') { throw 'installed Dashboard help is incomplete' }
-          $setupOutput = (& $fishyume setup codex --print | Out-String).Trim()
+          $setupOutput = (& $fishyume setup --print | Out-String).Trim()
           if ($setupOutput -notmatch '^codex mcp add fishyume -- ".+node(?:\.exe)?" ".+[\\/]fishyume[\\/]dist[\\/]cli\.js" "mcp"$') { throw 'installed Codex setup command is not canonical and copyable' }
+          $demoOutput = & $fishyume demo --width 80 --ascii | Out-String
+          if ($demoOutput -notmatch '阶段 2 · 并行 2' -or $demoOutput -notmatch '依赖 plan' -or $demoOutput -notmatch '需要人工审批') { throw 'installed offline topology demo is incomplete' }
           $dashboardOutput = & $fishyume | Out-String
           if ($dashboardOutput -notmatch '目前没有可显示的任务。' -or $dashboardOutput -notmatch '检查运行环境：fishyume doctor') { throw 'installed zero-argument Dashboard empty state is incomplete' }
 
