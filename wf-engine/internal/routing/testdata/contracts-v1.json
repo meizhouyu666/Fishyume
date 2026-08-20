@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "fishyume.routing-contract-fixture/v1",
+  "catalog": {
+    "schemaVersion": "fishyume.capability-catalog/v1",
+    "policyVersion": "fishyume.routing-policy/v1",
+    "models": [
+      {
+        "id": "codex/local/gpt-5.6",
+        "target": {"driver": "codex", "provider": "local", "model": "gpt-5.6"},
+        "capabilities": ["needs_input", "repo_edit", "repo_read", "streaming", "structured_output", "tool_use"],
+        "contextLimitBytes": 262144,
+        "maxOutputBytes": 65536,
+        "quality": "premium",
+        "cost": "high",
+        "latency": "balanced",
+        "supportsCancellation": true
+      },
+      {
+        "id": "codex/local/gpt-5.6-luna",
+        "target": {"driver": "codex", "provider": "local", "model": "gpt-5.6-luna"},
+        "capabilities": ["repo_edit", "repo_read", "structured_output", "tool_use"],
+        "contextLimitBytes": 131072,
+        "maxOutputBytes": 32768,
+        "quality": "balanced",
+        "cost": "low",
+        "latency": "fast",
+        "supportsCancellation": true
+      }
+    ]
+  },
+  "catalogHash": "7b993c75a20b1a783a1ab9aaeae1235c6514f408f33bc8bdc32de9e85be4a1da",
+  "requirement": {
+    "schemaVersion": "fishyume.routing-requirement/v1",
+    "capabilities": ["repo_edit", "repo_read", "structured_output", "tool_use"],
+    "complexity": "standard",
+    "quality": "balanced",
+    "latency": "balanced",
+    "maxCostUnits": 20,
+    "maxContextBytes": 131072,
+    "maxOutputBytes": 32768,
+    "candidates": ["codex/local/gpt-5.6-luna", "codex/local/gpt-5.6"],
+    "promptProfile": "compact-execution/v1",
+    "allowModelFallback": true
+  },
+  "promptProfile": {
+    "schemaVersion": "fishyume.prompt-profile/v1",
+    "id": "compact-execution/v1",
+    "version": "1",
+    "components": [
+      {"id": "execution-contract", "required": true},
+      {"id": "node-task", "required": true},
+      {"id": "output-contract", "required": true}
+    ],
+    "description": "Bounded execution profile for routine repository work"
+  }
+}
