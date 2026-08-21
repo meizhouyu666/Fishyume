@@ -10,6 +10,7 @@ import (
 
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/contextcompiler"
+	"wf.local/wf-engine/internal/routing"
 	"wf.local/wf-engine/internal/workflow"
 )
 
@@ -159,11 +160,14 @@ type AttemptSnapshot struct {
 	ContextManifest          contextcompiler.Manifest           `json:"contextManifest"`
 	ContextManifestV2        *contextcompiler.ContextManifestV2 `json:"contextManifestV2,omitempty"`
 	ContextHash              string                             `json:"contextHash"`
-	MemoryUsage              *MemoryUsageReceipt                `json:"memoryUsage,omitempty"`
-	PromptHash               string                             `json:"-"`
-	StartedAt                time.Time                          `json:"startedAt"`
-	UpdatedAt                time.Time                          `json:"updatedAt"`
-	CompletedAt              *time.Time                         `json:"completedAt,omitempty"`
+	// RoutingDecision is captured when this Attempt is created. It is never
+	// recomputed while the Attempt advances through launch/recovery states.
+	RoutingDecision *routing.RoutingDecisionV1 `json:"routingDecision,omitempty"`
+	MemoryUsage     *MemoryUsageReceipt        `json:"memoryUsage,omitempty"`
+	PromptHash      string                     `json:"-"`
+	StartedAt       time.Time                  `json:"startedAt"`
+	UpdatedAt       time.Time                  `json:"updatedAt"`
+	CompletedAt     *time.Time                 `json:"completedAt,omitempty"`
 
 	legacyExecution *legacyExecutionSnapshot
 }
@@ -275,6 +279,14 @@ func ValidateAttemptSnapshot(snapshot AttemptSnapshot) error {
 	}
 	if snapshot.ResolvedDriver != "" && snapshot.Backend != "" && snapshot.ResolvedDriver != snapshot.Backend {
 		return fmt.Errorf("attempt Driver %q conflicts with deprecated Backend alias %q", snapshot.ResolvedDriver, snapshot.Backend)
+	}
+	if snapshot.RoutingDecision != nil {
+		if err := routing.ValidateDecision(*snapshot.RoutingDecision); err != nil {
+			return fmt.Errorf("attempt routing decision is invalid: %w", err)
+		}
+		if snapshot.ResolvedDriver != "" && snapshot.RoutingDecision.Selected.Driver != snapshot.ResolvedDriver {
+			return fmt.Errorf("attempt Driver %q conflicts with routing decision Driver %q", snapshot.ResolvedDriver, snapshot.RoutingDecision.Selected.Driver)
+		}
 	}
 	if snapshot.Execution != nil {
 		if err := backend.ValidateExecutionHandle(*snapshot.Execution); err != nil {

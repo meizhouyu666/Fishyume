@@ -17,12 +17,15 @@ type ResultContract struct {
 }
 
 type AgentExecutionSpec struct {
-	RunID          string
-	NodeID         string
-	Attempt        int
-	Workspace      string
-	Tool           string
-	Runtime        string
+	RunID     string
+	NodeID    string
+	Attempt   int
+	Workspace string
+	Tool      string
+	Runtime   string
+	// Model is an optional provider model selected by the routing layer. Empty
+	// preserves the legacy Driver default.
+	Model          string
 	Instructions   string
 	RequiredSkills []string
 	ResultContract ResultContract
@@ -212,6 +215,9 @@ func ValidateAgentExecutionSpec(spec AgentExecutionSpec) error {
 	}
 	if strings.TrimSpace(spec.Runtime) == "" {
 		return fmt.Errorf("runtime is required")
+	}
+	if spec.Model != "" && spec.Model != strings.TrimSpace(spec.Model) {
+		return fmt.Errorf("model contains surrounding whitespace")
 	}
 	if strings.TrimSpace(spec.Instructions) == "" {
 		return fmt.Errorf("instructions are required")

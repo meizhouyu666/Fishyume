@@ -190,9 +190,10 @@ func (b *Backend) Start(ctx context.Context, spec backend.AgentExecutionSpec) (*
 	if err := writeJSONExclusive(paths.Schema, schema); err != nil {
 		return nil, err
 	}
+	args := codexExecArgs(spec, b.config.Sandbox, paths.Schema, paths.Result, workspace)
 	config := supervisorConfig{
 		ExecutionID: executionID, Executable: discovered.Path, Workspace: workspace,
-		Args:       []string{"exec", "--ephemeral", "--sandbox", b.config.Sandbox, "--json", "--color", "never", "--output-schema", paths.Schema, "--output-last-message", paths.Result, "-C", workspace, "-"},
+		Args:       args,
 		EventsPath: paths.Events, StderrPath: paths.Stderr, ReadyPath: paths.Ready, ExitPath: paths.Exit,
 		MaxEventBytes: b.config.MaxEventBytes, MaxStderrBytes: b.config.MaxStderrBytes,
 	}
@@ -249,6 +250,14 @@ func (b *Backend) Start(ctx context.Context, spec backend.AgentExecutionSpec) (*
 		return nil, err
 	}
 	return handle, nil
+}
+
+func codexExecArgs(spec backend.AgentExecutionSpec, sandbox, schemaPath, resultPath, workspace string) []string {
+	args := []string{"exec", "--ephemeral"}
+	if spec.Model != "" {
+		args = append(args, "--model", spec.Model)
+	}
+	return append(args, "--sandbox", sandbox, "--json", "--color", "never", "--output-schema", schemaPath, "--output-last-message", resultPath, "-C", workspace, "-")
 }
 
 func (b *Backend) Observe(_ context.Context, handle backend.ExecutionHandle) (*backend.ExecutionObservation, error) {

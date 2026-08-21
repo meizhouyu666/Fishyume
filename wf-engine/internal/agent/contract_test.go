@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"wf.local/wf-engine/internal/routing"
 )
 
 func validEnvelope() AttemptEnvelope {
@@ -46,6 +48,19 @@ func TestAttemptEnvelopeValidation(t *testing.T) {
 	envelope.ProtocolVersion++
 	if err := ValidateAttemptEnvelope(envelope); err == nil || !strings.Contains(err.Error(), "protocol version") {
 		t.Fatalf("error=%v", err)
+	}
+}
+
+func TestAttemptEnvelopeRejectsInvalidRoutingDecision(t *testing.T) {
+	envelope := validEnvelope()
+	decision := routing.RoutingDecisionV1{
+		SchemaVersion: routing.RoutingDecisionV1Version,
+		CatalogHash:   strings.Repeat("0", 64),
+		Selected:      routing.Target{Driver: "codex", Provider: "local", Model: "gpt-5.6-luna"},
+	}
+	envelope.RoutingDecision = &decision
+	if err := ValidateAttemptEnvelope(envelope); err == nil || !strings.Contains(err.Error(), "routing decision") {
+		t.Fatalf("invalid routing decision was accepted: %v", err)
 	}
 }
 

@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -129,6 +131,19 @@ func TestDirectBackendContract(t *testing.T) {
 			Spec:    backend.AgentExecutionSpec{RunID: "run-1", NodeID: "agent-1", Attempt: 1, Workspace: workspace, Tool: "codex", Runtime: "local", Instructions: "fixture task"},
 		}
 	})
+}
+
+func TestCodexExecArgsPropagateSelectedModel(t *testing.T) {
+	spec := backend.AgentExecutionSpec{Model: "gpt-5.6-luna"}
+	args := codexExecArgs(spec, "workspace-write", "schema.json", "result.json", "C:/workspace")
+	want := []string{"exec", "--ephemeral", "--model", "gpt-5.6-luna", "--sandbox", "workspace-write", "--json", "--color", "never", "--output-schema", "schema.json", "--output-last-message", "result.json", "-C", "C:/workspace", "-"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("Codex args = %v, want %v", args, want)
+	}
+	legacy := codexExecArgs(backend.AgentExecutionSpec{}, "workspace-write", "schema.json", "result.json", "C:/workspace")
+	if slices.Contains(legacy, "--model") {
+		t.Fatalf("legacy args unexpectedly select a model: %v", legacy)
+	}
 }
 
 func newFixtureBackend(t *testing.T, config ...func(*Config)) (*Backend, backend.AgentExecutionSpec) {

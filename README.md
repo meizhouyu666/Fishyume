@@ -176,6 +176,14 @@ Agent Node 可选声明 `agent.routing`（`fishyume.routing-requirement/v1`）�
 `workflow.validate` 与 `workflow.explain` 只校验并投影 effective requirement，
 不会选择模型、查询 Provider 或改变 Driver 启动。
 
+M6.3 已加入纯 deterministic resolver：它只接受上层提供的
+`BudgetGrantV1`，在内置 catalog 中按能力、有效预算、显式候选顺序、复杂度质量门槛、
+质量、延迟、成本和模型 ID 稳定匹配，并生成带 catalog hash/reason codes 的
+`RoutingDecisionV1`。M6.4 已将该决策持久化到新 Attempt，并通过 Agent envelope
+和 Driver launch spec 传播；当前 Codex Driver 会把选定模型传给 direct CLI。历史
+Attempt 缺少 routing metadata 时仍可读取，恢复过程中不会重新计算决策；resolver
+本身不访问网络或 Provider。
+
 Host Agent MCP smoke（不需要 Provider 登录）可重复验证 capabilities、Workflow 校验/解释、幂等 start、Approval、`needs_input`、events 和最终 result：
 
 ```powershell

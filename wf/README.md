@@ -68,6 +68,15 @@ Agent Nodes may optionally declare `agent.routing` using
 Legacy Workflows receive the bounded standard/balanced default, with fallback
 disabled. M6.2 does not query Providers or change Driver startup.
 
+M6.3 adds a pure deterministic resolver in the Engine routing package. It
+requires the upper layer's bounded `BudgetGrantV1`, verifies the catalog hash,
+matches capabilities and model limits, and emits an auditable
+`RoutingDecisionV1`. It does not contact Providers or start a Driver; target
+propagation is completed by M6.4. New Attempts persist that decision, pass it
+through the Agent envelope and Driver launch spec, and the Codex Driver forwards
+the selected model to the direct CLI. Historical Attempts without routing
+metadata remain readable and are never recomputed.
+
 `run.start` is idempotent by caller-owned `clientRequestId`; reuse an ID only for the
 identical request. `run.action` requires a unique `actionId` and preconditions from the
 latest `run.get`. Paginate `run.events` with `afterSequence`, read `run.result` only

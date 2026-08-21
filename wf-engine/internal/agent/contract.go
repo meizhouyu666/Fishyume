@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"wf.local/wf-engine/internal/routing"
 )
 
 const (
@@ -69,6 +71,9 @@ type AttemptEnvelope struct {
 	Constraints     map[string]string `json:"constraints"`
 	Budget          map[string]int64  `json:"budget"`
 	ResultContract  ResultContract    `json:"resultContract"`
+	// RoutingDecision is the immutable model-routing decision used to create
+	// this Attempt. It is absent on historical/compatibility Attempts.
+	RoutingDecision *routing.RoutingDecisionV1 `json:"routingDecision,omitempty"`
 
 	// Prompt is compiled deterministically for the external harness but is not
 	// serialized into the durable Attempt envelope or execution handle.
@@ -233,6 +238,11 @@ func ValidateAttemptEnvelope(envelope AttemptEnvelope) error {
 	}
 	if len(envelope.ResultContract.Schema) > 0 && !json.Valid(envelope.ResultContract.Schema) {
 		return fmt.Errorf("result schema is not valid JSON")
+	}
+	if envelope.RoutingDecision != nil {
+		if err := routing.ValidateDecision(*envelope.RoutingDecision); err != nil {
+			return fmt.Errorf("routing decision is invalid: %w", err)
+		}
 	}
 	for _, upstream := range envelope.Context.UpstreamResults {
 		if strings.TrimSpace(upstream.NodeID) == "" || len(upstream.Result) == 0 || !json.Valid(upstream.Result) {

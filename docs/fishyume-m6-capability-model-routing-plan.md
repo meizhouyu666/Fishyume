@@ -5,8 +5,10 @@ Fishyume remains an orchestration engine: it does not become a conversational
 harness, embed a model loop, or replace the Driver that launches a headless
 Agent process.
 
-> Status: M6.0 contract freeze, M6.1 trusted capability catalog, and M6.2
-> declarative Node routing requirements are complete.
+> Status: M6.0 contract freeze, M6.1 trusted capability catalog, M6.2
+> declarative Node routing requirements, M6.3 deterministic resolver, and M6.4
+> Driver/Attempt propagation are complete. M6.5 fallback/accounting and M6.6
+> operator/release gates remain planned.
 
 ## M6.0 Contract Freeze
 
@@ -53,10 +55,20 @@ not alter `AttemptEnvelope`, Driver startup, Run persistence, MCP, or TUI.
    compatibility default and never enables automatic fallback. M6.2 does not
    select a model, query a Provider, start a different Driver, or persist a
    routing decision.
-4. **M6.3 Deterministic Resolver**: match capabilities and limits using pure
-   rules. No LLM classifier and no network price lookup.
-5. **M6.4 Driver/Attempt Propagation**: include the resolved target and routing
-   metadata in new Attempts while preserving historical snapshots.
+4. **M6.3 Deterministic Resolver**: complete as a pure resolver. It validates
+   the caller-owned `BudgetGrantV1`, verifies the catalog hash, filters models
+   by required capabilities and effective context/output/cost ceilings, then
+   ranks by explicit candidate order, complexity quality floor, quality,
+   latency, cost, and canonical model ID. It emits an auditable
+   `RoutingDecisionV1`; declared fallback is represented as eligible only with
+   no-side-effect protection and approval required. No LLM classifier, clock,
+   filesystem, network price lookup, Provider query, or Driver startup is
+   involved. Application/Attempt propagation is implemented separately in M6.4.
+5. **M6.4 Driver/Attempt Propagation**: complete. New Attempts capture the
+   immutable `RoutingDecisionV1`; the same decision is passed through the Agent
+   envelope and Driver launch spec. The Codex Driver forwards the selected model
+   to the direct CLI. Attempts written before M6.4 remain readable with no
+   routing field, and an Attempt's decision is never recomputed during recovery.
 6. **M6.5 Fallback and Accounting**: enforce preconditions, persist bounded
    route/cost usage, and never retry an indeterminate side effect implicitly.
 7. **M6.6 Operator Surface and Release Gate**: expose route/reason/budget/

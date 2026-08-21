@@ -1461,6 +1461,10 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			if err != nil {
 				return err
 			}
+			routingDecision, err := resolveAttemptRouting(driver, workflow.EffectiveRoutingRequirement(normalized.Document, definition))
+			if err != nil {
+				return err
+			}
 			number, now := node.CurrentAttempt+1, s.now().UTC()
 			ancestorResults := make(map[string]workflow.Result)
 			for ancestorID := range contextDependencySet(normalized, node.ID) {
@@ -1473,12 +1477,16 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			if err != nil {
 				return err
 			}
+			if routingDecision != nil {
+				compiled.Envelope.RoutingDecision = routingDecision
+			}
 			memoryUsage, err := s.consumeCompiledMemory(run.Project, agentIdentity(run.ID, node.ID, number), compiled.Compilation)
 			if err != nil {
 				return err
 			}
 			attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: run.ID, NodeID: node.ID, Number: number, Phase: NodePhaseRunning, LaunchState: LaunchPrepared,
 				ResolvedDriver: driver, ResolvedTarget: target, Backend: driver,
+				RoutingDecision:        routingDecision,
 				ContextCompilerVersion: contextcompiler.Version, ContextCompilerVersionV2: compiled.Compilation.Manifest.CompilerVersion, ContextManifest: compiled.LegacyManifest, ContextManifestV2: &compiled.Compilation.Manifest, ContextHash: compiled.Compilation.Hash, MemoryUsage: memoryUsage, StartedAt: now, UpdatedAt: now}
 			if err := s.writeAttempt(attempt, true); err != nil {
 				return err
@@ -1494,7 +1502,7 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			}
 			launch = &pendingLaunch{runID: run.ID, nodeID: node.ID, attempt: number, backend: driver,
 				launchSpec: backend.AgentExecutionSpec{RunID: run.ID, NodeID: node.ID, Attempt: number, Workspace: run.Project, Tool: legacyToolForDriver(s.registry, driver), Runtime: target,
-					Instructions: compiled.Envelope.Prompt, RequiredSkills: append([]string(nil), definition.RequiredSkills...), ResultContract: backend.ResultContract{Schema: compiled.Envelope.ResultContract.Schema, MaxBytes: workflow.MaxResultBytes}, Envelope: &compiled.Envelope}}
+					Model: routingModel(routingDecision), Instructions: compiled.Envelope.Prompt, RequiredSkills: append([]string(nil), definition.RequiredSkills...), ResultContract: backend.ResultContract{Schema: compiled.Envelope.ResultContract.Schema, MaxBytes: workflow.MaxResultBytes}, Envelope: &compiled.Envelope}}
 			progressed = true
 			return nil
 		}
