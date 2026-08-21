@@ -1,8 +1,0 @@
-# Fishyume launches Codex through CC-Panes, which supplies the real per-session
-# MCP URL and explicitly enables this server on the command line. Keep the local
-# placeholder disabled so direct Codex sessions outside CC-Panes do not try to
-# connect to it, while preserving unattended approval for engine callbacks.
-[mcp_servers.ccpanes]
-url = "http://127.0.0.1:1/mcp"
-enabled = false
-default_tools_approval_mode = "approve"

@@ -6,6 +6,8 @@ Fishyume 是一个面向 Codex、Claude、Kimi、OpenCode 等 Host Agent 的本�
 
 当前版本：`0.2.1-alpha.1`
 
+当前合同基线见 [`docs/fishyume-m6-core-contract-freeze.md`](./docs/fishyume-m6-core-contract-freeze.md)，完整文档按“当前基线、使用指南、里程碑证据和历史计划”分类索引于 [`docs/README.md`](./docs/README.md)。
+
 ## 首次使用黄金链路
 
 当前尚未发布 npm 正式包。Windows Developer Preview 可从仓库根目录一条命令安装 CLI 与当前源码构建的平台 Engine：
