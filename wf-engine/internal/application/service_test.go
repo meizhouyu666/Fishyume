@@ -457,15 +457,6 @@ func TestRunGetProjectsTopologyMetadata(t *testing.T) {
 	}
 }
 
-func TestCompatibilityResumeWithoutActionUsesApplicationBoundary(t *testing.T) {
-	core := newFakeCore()
-	service := NewService(core, "codex", store.New(t.TempDir()))
-	snapshot, appErr := service.CompatibilityResume(context.Background(), run.ResumeRequest{RunID: "run-waiting"})
-	if appErr != nil || snapshot.ID != "run-waiting" || core.resumeCount != 1 || core.resumed.Action != nil {
-		t.Fatalf("snapshot=%+v error=%v request=%+v resumes=%d", snapshot, appErr, core.resumed, core.resumeCount)
-	}
-}
-
 func TestRunEventsPaginationAndBoundedWait(t *testing.T) {
 	core := newFakeCore()
 	service := NewService(core, "codex", store.New(t.TempDir()))

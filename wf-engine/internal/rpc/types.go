@@ -52,12 +52,6 @@ type helloParams struct {
 	Backend string `json:"backend,omitempty"`
 }
 
-type StartResult struct {
-	ProtocolVersion int    `json:"protocolVersion"`
-	RunID           string `json:"runId"`
-}
-
 type runIDParams struct {
-	RunID                string  `json:"runId"`
-	ExpectedStateVersion *uint64 `json:"expectedStateVersion,omitempty"`
+	RunID string `json:"runId"`
 }

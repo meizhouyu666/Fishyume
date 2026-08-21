@@ -32,7 +32,6 @@ class FakeClient implements EngineClient {
       const next = this.mutations.shift() ?? {apiVersion: 'fishyume.application/v1', actionId: 'fixture', runId: 'run-1', type: 'approve', stateVersion: 8, phase: 'running'};
       return await next as T;
     }
-    if (method === 'run.detach') return view('paused').run as T;
     throw new Error(`unexpected ${method}`);
   }
   onRunEvent(listener: EventListener): () => void {this.listener = listener; return () => {this.listener = undefined}}

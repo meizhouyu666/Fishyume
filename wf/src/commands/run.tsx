@@ -1,15 +1,17 @@
 import process from 'node:process';
+import {randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {basename} from 'node:path';
 import {Command, Option} from 'clipanion';
-import {EngineBridge, EngineRpcError, type EngineClient} from '../bridge/engine.js';
-import type {JsonScalar, RunStartResult, RunStatusView, WorkflowSnapshot} from '../bridge/types.js';
+import {applicationRunToStatus, callApplication, type JsonScalar, type RunGetResponse, type RunStartResponse, type WorkflowInput} from '../bridge/application.js';
+import {EngineBridge, type EngineClient} from '../bridge/engine.js';
+import type {WorkflowSnapshot} from '../bridge/types.js';
 import {runLiveConsole} from '../tui/live-console.js';
 import {exitCodeForSnapshot, TextReporter, type TextWriter} from '../tui/text-reporter.js';
 
 const controllerStops = new Set(['waiting', 'paused', 'completed']);
 
-export interface RunOptions {project: string; driver?: 'codex'; target?: 'local'; backend?: string; tool?: 'codex' | 'claude' | 'opencode'; runtime?: 'local' | 'wsl' | 'ssh'; task?: string; workflow?: string; inputs?: Record<string, JsonScalar>; useTUI: boolean}
+export interface RunOptions {project: string; driver?: string; target?: string; backend?: string; tool?: 'codex' | 'claude' | 'opencode'; runtime?: 'local' | 'wsl' | 'ssh'; task?: string; workflow?: string; inputs?: Record<string, JsonScalar>; useTUI: boolean}
 
 export function resolveRunSelection(workflow: string | undefined, driver: string | undefined, target: string | undefined, legacy: boolean): Pick<RunOptions, 'driver' | 'target'> {
   const useAdHocDefaults = !workflow && !legacy;
@@ -30,9 +32,14 @@ export async function runWorkflow(client: EngineClient, options: RunOptions, out
     const selectedDriver = options.driver ?? (options.backend === 'direct' ? 'codex' : options.backend);
     const hello = await client.hello(workflowSelectsDriver ? undefined : options.project, selectedDriver);
     if (!workflowSelectsDriver && (!hello.backendReady || (hello.projectChecked && !hello.projectReady))) {output.write(`fail driver ${hello.projectDiagnostic ?? hello.backendDiagnostic}\n`); return 1}
-    const start = (): Promise<RunStartResult> => options.workflow
-      ? readFile(options.workflow, 'utf8').then(content => client.call<RunStartResult>('run.startWorkflow', {project: options.project, driver: options.driver, target: options.target, backend: options.backend, filename: basename(options.workflow!), content, inputs: options.inputs}))
-      : client.call<RunStartResult>('run.start', {project: options.project, driver: options.driver, target: options.target, backend: options.backend, tool: options.tool, runtime: options.runtime, task: options.task});
+    const driver = options.driver ?? (options.backend === 'direct' ? 'codex' : options.backend) ?? options.tool;
+    const target = options.target ?? options.runtime;
+    const start = async (): Promise<RunStartResponse> => {
+      const workflow: WorkflowInput = options.workflow
+        ? {source: {filename: basename(options.workflow), content: await readFile(options.workflow, 'utf8')}}
+        : {document: {apiVersion: 'fishyume/v2', name: 'ad-hoc', defaults: {agent: {driver: driver ?? 'codex', target: target ?? 'local'}}, execution: {maxConcurrency: 1}, nodes: {'agent-1': {type: 'agent', task: options.task}}}};
+      return callApplication(client, 'run.start', {project: options.project, workflow, inputs: options.inputs, ...(driver ? {driver} : {}), ...(target ? {target} : {}), clientRequestId: `cli-start-${randomUUID()}`});
+    };
     if (options.useTUI) {
       const started = await start();
       const view = await runLiveConsole(client, {runId: started.runId, mode: 'run', startedAt});
@@ -50,7 +57,7 @@ export async function runWorkflow(client: EngineClient, options: RunOptions, out
       if (controllerStops.has(event.phase)) settle();
     });
     const started = await start();
-    const initial = await client.call<RunStatusView>('run.status', {runId: started.runId});
+    const initial = applicationRunToStatus(await callApplication(client, 'run.get', {runId: started.runId}) as RunGetResponse);
     if (!initial.run) throw new Error('new run returned legacy or missing status');
     current = initial.run; reporter.started(current);
     if (controllerStops.has(current.phase)) settle();
@@ -59,14 +66,14 @@ export async function runWorkflow(client: EngineClient, options: RunOptions, out
     process.once('SIGINT', onInterrupt);
     try {
       await stopped;
-      const finalView = await client.call<RunStatusView>('run.status', {runId: started.runId});
+      const finalView = applicationRunToStatus(await callApplication(client, 'run.get', {runId: started.runId}) as RunGetResponse);
       if (!finalView.run) throw new Error('run status disappeared'); current = finalView.run;
       reporter.finished(current, Date.now()-startedAt);
       return exitCodeForSnapshot(current);
     } finally {process.off('SIGINT', onInterrupt); unsubscribe()}
   } catch (error) {
     output.write(`fail ${error instanceof Error ? error.message : String(error)}\n`);
-    return error instanceof EngineRpcError && error.code === -32009 ? 7 : 6;
+    return 6;
   } finally {await client.close()}
 }
 

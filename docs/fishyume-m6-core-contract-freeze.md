@@ -60,6 +60,12 @@ These surfaces may be reorganized or removed after their product callers have
 migrated to the frozen contracts. Historical read compatibility and the public
 Provider-independent acceptance evidence must remain intact.
 
+After the freeze, the product CLI migrated to `run.start`, `run.get`, and
+`run.action`. The former `run.startWorkflow`, `run.resume`, `run.cancel`, and
+`run.detach` mutation methods were removed. A non-advertised, read-only
+`run.status` decoder remains solely for protocol-v1 snapshots that cannot be
+represented by the frozen `run.get` response.
+
 ## Change gate
 
 Go and TypeScript tests load the machine-readable baseline and compare it with

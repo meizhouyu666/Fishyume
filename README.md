@@ -72,6 +72,12 @@ Named Pipe 使用当前 Windows 用户 SID 的 ACL；Unix Socket 所在目录为
 
 多客户端可并发读取；mutation 在 Control Plane 中串行化。Run snapshot 的 `stateVersion` 可作为 `expectedStateVersion` 提交 approve/reject/retry/cancel，陈旧动作返回冲突。TUI 的 `d`、`q` 和 `Ctrl+C` 仅断开观察，不暂停或取消 Run。
 
+正式 CLI、TUI、MCP 和 Machine CLI 现在统一调用冻结后的 Application API。旧的
+`run.startWorkflow`、`run.resume`、`run.cancel` 和 `run.detach` JSON-RPC mutation
+入口已经退役；新 Run 只能通过 `run.start` 创建，动作只能通过 `run.action`
+提交。未公开的只读 `run.status` 仅用于读取无法投影为 `run.get` 的 protocol-v1
+历史 snapshot，不出现在 `engine.hello.supportedMethods` 中，也不能创建或修改状态。
+
 ## 构建与验证
 
 源码构建需要 Go 1.26+ 和 Node.js 24+。
@@ -224,7 +230,7 @@ npm --prefix wf run test:mcp-tui
 
 Console 以 `J`/`K` 或上下方向键遍历全部 Workflow 节点，`Enter` 折叠或展开焦点详情；操作键只对当前由 Engine 判定为 actionable 的选中节点显示并生效。`A/Y` 批准或提交回答，`X/N` 拒绝并填写原因，`T` 确认重试，`C` 明确取消整个任务，`?` 展开中文帮助，`Esc` 放弃当前输入或确认；原有 `a/r/R/c/d/q` 按键继续兼容。answer 绑定 question ID 与 expected Attempt，scalar 或多问题 JSON answers 由 Engine 最终校验。操作模式继续按 `nodeId/kind/duplicateRisk` 固定目标；结果待确认的重试会明确提示重复副作用风险，并只在确认后提交风险确认。`D`、`Q` 或 `Ctrl+C` 只退出观察，不会暂停或取消 Run。
 
-非 TTY 或 CI 环境继续输出可流式处理的逐行纯文本；这些环境中的 `status --watch` 会返回诊断并建议使用普通 `status`，不会进入无限输出。`--watch --json` 会被拒绝，`fishyume status --json` 仍只输出一个 JSON 对象。`NO_COLOR` 会保留 TUI 结构并关闭颜色，TrueColor 不可用时自动降级到 256/16 色或单色；`TERM=dumb` 或 `FISHYUME_ASCII=1` 使用 ASCII 状态与 Divider fallback。实现与验收矩阵见 [`docs/fishyume-m3-tui-productization.md`](./docs/fishyume-m3-tui-productization.md)、[`docs/fishyume-m3.2-interactive-run-console.md`](./docs/fishyume-m3.2-interactive-run-console.md) 与 [`docs/fishyume-m3.3-calm-operator-console.md`](./docs/fishyume-m3.3-calm-operator-console.md)。六个确定性场景的可审阅输出见 [`docs/fishyume-m3.3-canonical-gallery.txt`](./docs/fishyume-m3.3-canonical-gallery.txt)。
+非 TTY 或 CI 环境继续输出可流式处理的逐行纯文本；这些环境中的 `status --watch` 会返回诊断并建议使用普通 `status`，不会进入无限输出。`--watch --json` 会被拒绝，`fishyume status --json` 对当前 Run 输出一个 `run.get` Application response；只有 protocol-v1 历史 Run 回退为只读 compatibility status。`NO_COLOR` 会保留 TUI 结构并关闭颜色，TrueColor 不可用时自动降级到 256/16 色或单色；`TERM=dumb` 或 `FISHYUME_ASCII=1` 使用 ASCII 状态与 Divider fallback。实现与验收矩阵见 [`docs/fishyume-m3-tui-productization.md`](./docs/fishyume-m3-tui-productization.md)、[`docs/fishyume-m3.2-interactive-run-console.md`](./docs/fishyume-m3.2-interactive-run-console.md) 与 [`docs/fishyume-m3.3-calm-operator-console.md`](./docs/fishyume-m3.3-calm-operator-console.md)。六个确定性场景的可审阅输出见 [`docs/fishyume-m3.3-canonical-gallery.txt`](./docs/fishyume-m3.3-canonical-gallery.txt)。
 
 默认状态目录：
 

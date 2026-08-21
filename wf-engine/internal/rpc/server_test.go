@@ -361,7 +361,7 @@ func request(id int, method string, params any) string {
 
 func TestHandshakeV2(t *testing.T) {
 	output, _ := serve(t, request(1, "engine.hello", nil), &fakeBackend{})
-	if !strings.Contains(output.String(), `"engineVersion":"0.2.1-alpha.1"`) || !strings.Contains(output.String(), `"protocolVersion":2`) || !strings.Contains(output.String(), `"run.startWorkflow"`) {
+	if !strings.Contains(output.String(), `"engineVersion":"0.2.1-alpha.1"`) || !strings.Contains(output.String(), `"protocolVersion":2`) || !strings.Contains(output.String(), `"run.start"`) || strings.Contains(output.String(), `"run.startWorkflow"`) {
 		t.Fatalf("response=%s", output.String())
 	}
 }
@@ -406,7 +406,8 @@ func TestOversizedMessageDoesNotStopServer(t *testing.T) {
 func TestOrderedV2NotificationsAndReadOnlyStatus(t *testing.T) {
 	gate := make(chan struct{})
 	backendImpl := &fakeBackend{result: backend.BackendResult{Status: "succeeded", Summary: "done"}, wait: gate}
-	output, service := serve(t, request(1, "run.start", map[string]any{"project": "p", "task": "t"}), backendImpl)
+	workflowDocument := map[string]any{"apiVersion": "fishyume/v2", "name": "ad-hoc", "defaults": map[string]any{"agent": map[string]any{"driver": "codex", "target": "local"}}, "execution": map[string]any{"maxConcurrency": 1}, "nodes": map[string]any{"agent-1": map[string]any{"type": "agent", "task": "t"}}}
+	output, service := serve(t, request(1, "run.start", map[string]any{"project": "p", "workflow": map[string]any{"document": workflowDocument}, "clientRequestId": "rpc-ordered-start"}), backendImpl)
 	var runID string
 	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
 		var value struct {
@@ -484,14 +485,16 @@ func TestOrderedV2NotificationsAndReadOnlyStatus(t *testing.T) {
 	}
 }
 
-func TestStartWorkflowAndMalformedResumeActions(t *testing.T) {
-	doc := "apiVersion: wf/v1\nname: approval\nexecution: {maxConcurrency: 1}\nnodes: {approve: {type: approval, prompt: approve}}\n"
-	input := request(1, "run.startWorkflow", map[string]any{"project": "p", "filename": "x.yaml", "content": doc}) +
-		request(2, "run.resume", map[string]any{"runId": "run-x", "action": map[string]any{"type": "approve", "nodeId": "a", "extra": true}}) +
-		request(3, "run.resume", map[string]any{"runId": "run-x", "action": map[string]any{"type": "both", "nodeId": "a"}})
+func TestRetiredMutationMethodsAreNotAvailable(t *testing.T) {
+	doc := "apiVersion: fishyume/v2\nname: approval\ndefaults: {agent: {driver: codex, target: local}}\nexecution: {maxConcurrency: 1}\nnodes: {approve: {type: approval, prompt: approve}}\n"
+	input := request(1, "run.start", map[string]any{"project": "p", "workflow": map[string]any{"source": map[string]any{"filename": "x.yaml", "content": doc}}, "clientRequestId": "rpc-formal-start"}) +
+		request(2, "run.startWorkflow", map[string]any{"project": "p", "filename": "x.yaml", "content": doc}) +
+		request(3, "run.resume", map[string]any{"runId": "run-x"}) +
+		request(4, "run.cancel", map[string]any{"runId": "run-x"}) +
+		request(5, "run.detach", map[string]any{"runId": "run-x"})
 	output, _ := serve(t, input, &fakeBackend{})
 	text := output.String()
-	if !strings.Contains(text, `"runId":"run-`) || strings.Count(text, `"code":-32602`) != 2 {
+	if !strings.Contains(text, `"runId":"run-`) || strings.Count(text, `"code":-32601`) != 4 {
 		t.Fatalf("response=%s", text)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"wf.local/wf-engine/internal/application"
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/rpc"
 	"wf.local/wf-engine/internal/run"
@@ -113,9 +114,9 @@ func TestConcurrentExpectedStateMutationHasSingleWinner(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer second.Close()
-	document := "apiVersion: wf/v1\nname: approval\nexecution: {maxConcurrency: 1}\nnodes: {approve: {type: approval, prompt: approve}}\n"
-	started := rpcCall(t, first, 1, "run.startWorkflow", map[string]any{"project": "p", "filename": "workflow.yaml", "content": document})
-	var startResult rpc.StartResult
+	document := "apiVersion: fishyume/v2\nname: approval\ndefaults: {agent: {driver: codex, target: local}}\nexecution: {maxConcurrency: 1}\nnodes: {approve: {type: approval, prompt: approve}}\n"
+	started := rpcCall(t, first, 1, "run.start", map[string]any{"project": "p", "workflow": map[string]any{"source": map[string]any{"filename": "workflow.yaml", "content": document}}, "clientRequestId": "control-plane-concurrent-start"})
+	var startResult application.RunStartResponse
 	decodeResult(t, started, &startResult)
 	var snapshot run.WorkflowSnapshot
 	deadline := time.Now().Add(3 * time.Second)
@@ -146,9 +147,9 @@ func TestConcurrentExpectedStateMutationHasSingleWinner(t *testing.T) {
 			action     string
 		}) {
 			defer wait.Done()
-			responses <- rpcCall(t, item.connection, item.id, "run.resume", map[string]any{
-				"runId": startResult.RunID, "expectedStateVersion": snapshot.StateVersion,
-				"action": map[string]any{"type": item.action, "nodeId": "approve"},
+			responses <- rpcCall(t, item.connection, item.id, "run.action", map[string]any{
+				"actionId": fmt.Sprintf("concurrent-%d", item.id), "runId": startResult.RunID,
+				"type": item.action, "nodeId": "approve", "expectedStateVersion": snapshot.StateVersion,
 			})
 		}(request)
 	}

@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,7 +20,7 @@ const (
 	MaxMessageSize = 1 << 20
 )
 
-var supportedMethods = []string{"engine.hello", "run.start", "run.startWorkflow", "run.status", "run.resume", "run.cancel", "run.detach", "system.capabilities", "routing.catalog", "workflow.validate", "workflow.explain", "run.list", "run.get", "run.events", "run.action", "run.result", "memory.create", "memory.get", "memory.list", "memory.supersede", "memory.delete"}
+var supportedMethods = append([]string{"engine.hello"}, application.StableMethods...)
 
 type Server struct {
 	reader               *bufio.Reader
@@ -178,13 +176,7 @@ func (s *Server) handle(ctx context.Context, request Request) {
 			ProjectChecked: doctor.ProjectChecked, ProjectReady: doctor.ProjectReady,
 			ProjectDiagnostic: doctor.ProjectDiagnostic})
 	case "run.start":
-		if isFormalStart(request.Params) {
-			invokeApplication(ctx, s, id, request.Params, application.RunStartRequest{}, s.application.RunStart)
-			return
-		}
-		s.compatibilityStart(ctx, id, request.Params)
-	case "run.startWorkflow":
-		s.compatibilityStartWorkflow(ctx, id, request.Params)
+		invokeApplication(ctx, s, id, request.Params, application.RunStartRequest{}, s.application.RunStart)
 	case "run.list":
 		invokeApplication(ctx, s, id, request.Params, application.RunListRequest{}, s.application.RunList)
 	case "run.get":
@@ -222,34 +214,6 @@ func (s *Server) handle(ctx context.Context, request Request) {
 			return
 		}
 		s.writeResult(id, snapshot)
-	case "run.resume":
-		var params run.ResumeRequest
-		if err := decodeParams(request.Params, &params); err != nil || params.RunID == "" {
-			s.writeError(id, -32602, "invalid run.resume params", errorText(err))
-			return
-		}
-		if params.Action != nil && params.Action.Type != "approve" && params.Action.Type != "reject" && params.Action.Type != "retry" {
-			s.writeError(id, -32602, "invalid run.resume action", params.Action.Type)
-			return
-		}
-		s.compatibilityResume(ctx, id, params)
-	case "run.detach":
-		params, ok := s.parseRunID(id, request.Params)
-		if !ok {
-			return
-		}
-		snapshot, appErr := s.application.CompatibilityDetach(params.RunID)
-		if appErr != nil {
-			s.writeApplicationError(id, appErr)
-			return
-		}
-		s.writeResult(id, snapshot)
-	case "run.cancel":
-		params, ok := s.parseRunID(id, request.Params)
-		if !ok {
-			return
-		}
-		s.compatibilityCancel(ctx, id, params)
 	default:
 		s.writeError(id, -32601, "method not found", request.Method)
 	}
@@ -257,21 +221,11 @@ func (s *Server) handle(ctx context.Context, request Request) {
 
 func isMutation(method string) bool {
 	switch method {
-	case "run.start", "run.startWorkflow", "run.resume", "run.cancel", "run.action", "memory.create", "memory.supersede", "memory.delete", "memory.host.create", "memory.host.supersede", "memory.host.delete":
+	case "run.start", "run.action", "memory.create", "memory.supersede", "memory.delete", "memory.host.create", "memory.host.supersede", "memory.host.delete":
 		return true
 	default:
 		return false
 	}
-}
-
-func isFormalStart(raw json.RawMessage) bool {
-	var value map[string]json.RawMessage
-	if json.Unmarshal(raw, &value) != nil {
-		return true
-	}
-	_, hasWorkflow := value["workflow"]
-	_, hasRequestID := value["clientRequestId"]
-	return hasWorkflow || hasRequestID
 }
 
 func invokeApplication[Request any, Response any](ctx context.Context, s *Server, id any, raw json.RawMessage, request Request, call func(context.Context, Request) (Response, *application.Error)) {
@@ -287,127 +241,6 @@ func invokeApplication[Request any, Response any](ctx context.Context, s *Server
 		return
 	}
 	s.writeResult(id, response)
-}
-
-func (s *Server) compatibilityStart(ctx context.Context, id any, raw json.RawMessage) {
-	var params run.StartRequest
-	if err := decodeParams(raw, &params); err != nil {
-		s.writeError(id, -32602, "invalid run.start params", err.Error())
-		return
-	}
-	document, err := json.Marshal(map[string]any{
-		"apiVersion": "fishyume/v1", "name": "ad-hoc",
-		"defaults":  map[string]any{"agent": map[string]any{"driver": firstNonEmpty(params.Driver, params.Backend, params.Tool, "codex"), "target": firstNonEmpty(params.Target, params.Runtime, "local")}},
-		"execution": map[string]any{"maxConcurrency": 1},
-		"nodes":     map[string]any{"agent-1": map[string]any{"type": "agent", "task": params.Task}},
-	})
-	if err != nil {
-		s.writeError(id, -32603, "could not build compatibility workflow", nil)
-		return
-	}
-	response, appErr := s.application.RunStart(ctx, application.RunStartRequest{Project: params.Project, Workflow: application.WorkflowInput{Document: document}, ClientRequestID: compatibilityID("start")})
-	if appErr != nil {
-		s.writeApplicationError(id, appErr)
-		return
-	}
-	s.writeResult(id, StartResult{ProtocolVersion: ProtocolVersion, RunID: response.RunID})
-}
-
-func (s *Server) compatibilityStartWorkflow(ctx context.Context, id any, raw json.RawMessage) {
-	var params run.StartWorkflowRequest
-	if err := decodeParams(raw, &params); err != nil {
-		s.writeError(id, -32602, "invalid run.startWorkflow params", err.Error())
-		return
-	}
-	response, appErr := s.application.CompatibilityStartWorkflow(ctx, params, compatibilityID("start"))
-	if appErr != nil {
-		s.writeApplicationError(id, appErr)
-		return
-	}
-	s.writeResult(id, StartResult{ProtocolVersion: ProtocolVersion, RunID: response.RunID})
-}
-
-func (s *Server) compatibilityResume(ctx context.Context, id any, params run.ResumeRequest) {
-	view, appErr := s.application.CompatibilityStatus(params.RunID)
-	if appErr != nil || view.Run == nil {
-		if appErr == nil {
-			appErr = application.NewError(application.CodeNotFound, "run not found", nil)
-		}
-		s.writeApplicationError(id, appErr)
-		return
-	}
-	if params.Action == nil {
-		snapshot, resumeErr := s.application.CompatibilityResume(ctx, params)
-		if resumeErr != nil {
-			s.writeApplicationError(id, resumeErr)
-			return
-		}
-		s.writeResult(id, snapshot)
-		return
-	}
-	expected := view.Run.StateVersion
-	if params.ExpectedStateVersion != nil {
-		expected = *params.ExpectedStateVersion
-	}
-	action := application.RunActionRequest{ActionID: compatibilityID("action"), RunID: params.RunID, Type: application.ActionType(params.Action.Type), ExpectedStateVersion: expected, NodeID: params.Action.NodeID, ExpectedAttempt: params.Action.ExpectedAttempt, Reason: params.Action.Reason, Answers: params.Action.Answers, AcknowledgeDuplicateRisk: params.Action.AcknowledgeDuplicateRisk}
-	if action.Type == application.ActionRetry && action.ExpectedAttempt == nil {
-		for _, node := range view.Nodes {
-			if node.ID == action.NodeID {
-				attempt := node.CurrentAttempt
-				action.ExpectedAttempt = &attempt
-				break
-			}
-		}
-	}
-	if _, appErr = s.application.RunAction(ctx, action); appErr != nil {
-		s.writeApplicationError(id, appErr)
-		return
-	}
-	updated, appErr := s.application.CompatibilityStatus(params.RunID)
-	if appErr != nil || updated.Run == nil {
-		s.writeApplicationError(id, appErr)
-		return
-	}
-	s.writeResult(id, *updated.Run)
-}
-
-func (s *Server) compatibilityCancel(ctx context.Context, id any, params runIDParams) {
-	view, appErr := s.application.CompatibilityStatus(params.RunID)
-	if appErr != nil || view.Run == nil {
-		s.writeApplicationError(id, appErr)
-		return
-	}
-	expected := view.Run.StateVersion
-	if params.ExpectedStateVersion != nil {
-		expected = *params.ExpectedStateVersion
-	}
-	if _, appErr = s.application.RunAction(ctx, application.RunActionRequest{ActionID: compatibilityID("action"), RunID: params.RunID, Type: application.ActionCancel, ExpectedStateVersion: expected}); appErr != nil {
-		s.writeApplicationError(id, appErr)
-		return
-	}
-	updated, appErr := s.application.CompatibilityStatus(params.RunID)
-	if appErr != nil || updated.Run == nil {
-		s.writeApplicationError(id, appErr)
-		return
-	}
-	s.writeResult(id, *updated.Run)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func compatibilityID(prefix string) string {
-	value := make([]byte, 12)
-	if _, err := rand.Read(value); err != nil {
-		return fmt.Sprintf("compat-%s-%d", prefix, time.Now().UnixNano())
-	}
-	return "compat-" + prefix + "-" + hex.EncodeToString(value)
 }
 
 func (s *Server) parseRunID(id any, raw json.RawMessage) (runIDParams, bool) {

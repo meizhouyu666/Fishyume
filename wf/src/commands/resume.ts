@@ -1,6 +1,7 @@
 import {Command, Option} from 'clipanion';
-import {EngineBridge, EngineRpcError, type EngineClient} from '../bridge/engine.js';
-import type {ResumeAction, RunEvent, RunStatusView, WorkflowSnapshot} from '../bridge/types.js';
+import {ApplicationCallError, applicationRunToStatus, callApplication, newActionId, type RunGetResponse} from '../bridge/application.js';
+import {EngineBridge, type EngineClient} from '../bridge/engine.js';
+import type {ResumeAction, RunEvent} from '../bridge/types.js';
 import {exitCodeForSnapshot, TextReporter, type TextWriter, writeStatus} from '../tui/text-reporter.js';
 
 const stops = new Set(['waiting', 'paused', 'completed']);
@@ -9,12 +10,15 @@ export async function resumeRun(client: EngineClient, runId: string, action: Res
   const reporter = new TextReporter(output); let settle!: () => void; const stopped = new Promise<void>(resolve => {settle = resolve});
   const unsubscribe = client.onRunEvent((event: RunEvent) => {if (event.runId !== runId) return; reporter.event(event); if (stops.has(event.phase)) settle()});
   try {
-    const expected = action ? (await client.call<RunStatusView>('run.status', {runId})).run?.stateVersion : undefined;
-    const snapshot = await client.call<WorkflowSnapshot>('run.resume', {runId, ...(expected === undefined ? {} : {expectedStateVersion: expected}), ...(action ? {action} : {})});
-    if (stops.has(snapshot.phase)) settle(); await stopped;
-    const view = await client.call<RunStatusView>('run.status', {runId}); writeStatus(view, output);
+    const before = applicationRunToStatus(await callApplication(client, 'run.get', {runId}) as RunGetResponse);
+    if (!before.run) throw new Error(`run ${runId} is missing`);
+    if (!action) {writeStatus(before, output); return exitCodeForSnapshot(before.run)}
+    const node = before.run.nodes[action.nodeId];
+    const response = await callApplication(client, 'run.action', {actionId: newActionId(), runId, type: action.type, expectedStateVersion: before.run.stateVersion ?? 0, nodeId: action.nodeId, ...((action.type === 'retry' || action.type === 'answer') && node?.currentAttempt !== undefined ? {expectedAttempt: node.currentAttempt} : {}), ...(action.reason === undefined ? {} : {reason: action.reason}), ...(action.answers === undefined ? {} : {answers: action.answers}), ...(action.acknowledgeDuplicateRisk === undefined ? {} : {acknowledgeDuplicateRisk: action.acknowledgeDuplicateRisk})});
+    if (stops.has(response.phase)) settle(); await stopped;
+    const view = applicationRunToStatus(await callApplication(client, 'run.get', {runId}) as RunGetResponse); writeStatus(view, output);
     return view.run ? exitCodeForSnapshot(view.run) : 6;
-  } catch (error) {output.write(`fail ${error instanceof Error ? error.message : String(error)}\n`); return error instanceof EngineRpcError && error.code === -32009 ? 7 : 6}
+  } catch (error) {output.write(`fail ${error instanceof Error ? error.message : String(error)}\n`); return error instanceof ApplicationCallError && error.applicationError.code === 'conflict' ? 7 : 6}
   finally {unsubscribe(); await client.close()}
 }
 
