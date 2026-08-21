@@ -35,6 +35,12 @@ jobs:
         run: node wf/scripts/preflight.mjs --step go-vet
       - name: Go build
         run: node wf/scripts/preflight.mjs --step go-build
+      - name: M6 routing release gate
+        working-directory: wf-engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./internal/routing ./internal/run ./internal/application -run 'M6|Routing|Fallback|RoutingUsage' -count=1 -timeout 10m
       - name: Linux race check
         if: runner.os == 'Linux'
         working-directory: wf-engine
@@ -49,6 +55,11 @@ jobs:
         run: npm --prefix wf ci
       - name: TypeScript checks
         run: node wf/scripts/preflight.mjs --step typescript
+      - name: M6 operator surface release gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix wf test -- --test-name-pattern='M6.6|routing|MCP and Machine CLI expose identical'
       - name: Diff check
         run: node wf/scripts/preflight.mjs --step diff-check
       - name: Reliability script tests
@@ -138,6 +149,9 @@ jobs:
           grep -q 'Operator Dashboard' <<<"$dashboard_help"
           setup_output="$("$install_root/node_modules/.bin/fishyume" setup --print)"
           grep -q '^codex mcp add fishyume -- ".*node" ".*/fishyume/dist/cli.js" "mcp"$' <<<"$setup_output"
+          routing_output="$("$install_root/node_modules/.bin/fishyume" machine routing.catalog --params '{}')"
+          grep -q '"apiVersion":"fishyume.application/v1"' <<<"$routing_output"
+          grep -q '"dynamicAvailability":false' <<<"$routing_output"
           demo_output="$("$install_root/node_modules/.bin/fishyume" demo --width 80 --ascii)"
           grep -q '阶段 2 · 并行 2' <<<"$demo_output"
           grep -q '依赖 plan' <<<"$demo_output"
@@ -178,6 +192,8 @@ jobs:
           if ($dashboardHelp -notmatch 'Operator Dashboard') { throw 'installed Dashboard help is incomplete' }
           $setupOutput = (& $fishyume setup --print | Out-String).Trim()
           if ($setupOutput -notmatch '^codex mcp add fishyume -- ".+node(?:\.exe)?" ".+[\\/]fishyume[\\/]dist[\\/]cli\.js" "mcp"$') { throw 'installed Codex setup command is not canonical and copyable' }
+          $routingOutput = & $fishyume machine routing.catalog --params '{}' | Out-String
+          if ($routingOutput -notmatch '"apiVersion":"fishyume.application/v1"' -or $routingOutput -notmatch '"dynamicAvailability":false') { throw 'installed routing catalog Application surface is incomplete' }
           $demoOutput = & $fishyume demo --width 80 --ascii | Out-String
           if ($demoOutput -notmatch '阶段 2 · 并行 2' -or $demoOutput -notmatch '依赖 plan' -or $demoOutput -notmatch '需要人工审批') { throw 'installed offline topology demo is incomplete' }
           $dashboardOutput = & $fishyume | Out-String

@@ -7,8 +7,8 @@ Agent process.
 
 > Status: M6.0 contract freeze, M6.1 trusted capability catalog, M6.2
 > declarative Node routing requirements, M6.3 deterministic resolver, M6.4
-> Driver/Attempt propagation, and M6.5 fallback/accounting are complete. M6.6
-> operator/release gates remain planned.
+> Driver/Attempt propagation, M6.5 fallback/accounting, and M6.6
+> operator/release gates are complete.
 
 ## M6.0 Contract Freeze
 
@@ -82,9 +82,16 @@ not alter `AttemptEnvelope`, Driver startup, Run persistence, MCP, or TUI.
    `acknowledgeDuplicateRisk` for explicit retry. M6.4 Attempts without usage
    receipts or side-effect evidence remain readable and are conservatively
    accounted from their persisted selected target.
-7. **M6.6 Operator Surface and Release Gate**: expose route/reason/budget/
-   fallback status to Host, MCP, CLI, and the Chinese topology TUI; run fake
-   Driver matrices, installed-package smoke, and Windows/Ubuntu CI.
+7. **M6.6 Operator Surface and Release Gate**: complete. `run.get` exposes the
+   immutable routing decision, usage receipt, and Driver side-effect evidence
+   through the shared Application projection used by Host, MCP, and machine
+   CLI. The compatibility status view and plain reporter preserve the same
+   bounded routing record. The Chinese topology TUI shows selected target,
+   route index, reason codes, cumulative/max cost, fallback approval state, and
+   side-effect evidence in focused Node detail. Fake Driver fallback,
+   accounting, unknown-evidence, replay, and historical compatibility tests are
+   release gates; Windows/Ubuntu CI also runs the routing/operator acceptance
+   patterns and installed-package smoke.
 
 ## Complexity and Prompt Policy
 

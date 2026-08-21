@@ -34,6 +34,13 @@ export function writeStatus(view: RunStatusView, output: TextWriter): void {
   for (const node of view.nodes ?? []) {
     output.write(`node=${node.id} type=${node.type} phase=${node.phase}${node.conclusion ? ` conclusion=${node.conclusion}` : ''}${node.reason ? ` reason=${node.reason}` : ''}${node.currentAttempt ? ` attempt=${node.currentAttempt}` : ''}${node.diagnostic ? ` diagnostic=${node.diagnostic}` : ''}\n`);
   }
+  for (const attempt of view.attempts ?? []) {
+    const decision = attempt.routingDecision;
+    if (!decision) continue;
+    const usage = attempt.routingUsage;
+    const fallback = decision.fallback?.map(target => target.model).join(',') || 'none';
+    output.write(`routing node=${attempt.nodeId} attempt=${attempt.number} model=${decision.selected.model} route=${usage ? usage.routeIndex + 1 : 'unknown'}/${decision.fallbackPolicy.maxAttempts} cost=${usage ? usage.cumulativeCostUnits : 'unknown'}/${decision.budget.maxCostUnits} reasons=${decision.reasonCodes.join(',')} fallback=${fallback} approval=${decision.fallbackPolicy.requireApproval}${attempt.sideEffectStatus ? ` sideEffect=${attempt.sideEffectStatus}` : ''}\n`);
+  }
   for (const attempt of view.activeAttempts ?? (view.activeAttempt ? [view.activeAttempt] : [])) output.write(`active node=${attempt.nodeId} attempt=${attempt.number} driver=${attempt.resolvedDriver ?? attempt.backend ?? 'unknown'}\n`);
   for (const approval of view.waitingApprovals ?? []) output.write(`approval node=${approval.id} phase=${approval.phase}${approval.diagnostic ? ` prompt=${approval.diagnostic}` : ''}\n`);
   for (const diagnostic of view.diagnostics ?? []) if (diagnostic.message) output.write(`diagnostic node=${diagnostic.nodeId}${diagnostic.reason ? ` reason=${diagnostic.reason}` : ''} message=${diagnostic.message}\n`);

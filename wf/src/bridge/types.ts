@@ -11,6 +11,15 @@ export interface WorkflowStartParams {project: string; driver?: 'codex'; target?
 export interface RunStartResult {protocolVersion: 2; runId: string}
 export type JsonScalar = string | number | boolean;
 
+export type ModelCapability = 'repo_read' | 'repo_edit' | 'tool_use' | 'structured_output' | 'streaming' | 'needs_input';
+export interface RoutingTarget {driver: string; provider: string; model: string}
+export interface RoutingRequirement {schemaVersion: 'fishyume.routing-requirement/v1'; capabilities: ModelCapability[]; complexity: 'simple' | 'standard' | 'complex'; quality: 'economy' | 'balanced' | 'premium'; latency: 'fast' | 'balanced' | 'slow'; maxCostUnits: number; maxContextBytes: number; maxOutputBytes: number; candidates?: string[]; promptProfile?: string; allowModelFallback: boolean}
+export interface RoutingBudget {maxCostUnits: number; contextBytes: number; outputBytes: number}
+export interface RoutingFallbackPolicy {mode: 'none' | 'eligible'; maxAttempts: number; requireNoSideEffect: boolean; requireApproval: boolean}
+export interface RoutingDecision {schemaVersion: 'fishyume.routing-decision/v1'; catalogHash: string; requirement: RoutingRequirement; selected: RoutingTarget; reasonCodes: string[]; budget: RoutingBudget; fallback?: RoutingTarget[]; fallbackPolicy: RoutingFallbackPolicy; promptProfile?: string}
+export interface RoutingUsage {schemaVersion: 'fishyume.routing-usage/v1'; target: RoutingTarget; routeIndex: number; costUnits: number; cumulativeCostUnits: number}
+export type SideEffectStatus = 'none' | 'unknown';
+
 export type RunPhase = 'created' | 'running' | 'waiting' | 'paused' | 'cancelling' | 'completed';
 export type NodePhase = 'pending' | 'ready' | 'running' | 'waiting' | 'completed' | 'skipped';
 export type Conclusion = 'succeeded' | 'failed' | 'cancelled' | 'rejected' | 'indeterminate';
@@ -35,6 +44,7 @@ export interface AttemptSnapshot {
   conclusion?: Conclusion; reason?: Reason; resolvedDriver?: string; resolvedTarget?: string; backend?: string;
   launchState?: 'prepared' | 'dispatching' | 'handle_persisted' | 'finished_without_handle' | 'session_persisted' | 'finished_without_session';
   execution?: ExecutionHandle; resultConsumed?: boolean;
+  routingDecision?: RoutingDecision; routingUsage?: RoutingUsage; sideEffectStatus?: SideEffectStatus;
   contextCompilerVersion?: string; contextCompilerVersionV2?: string; contextManifest?: {compilerVersion: string; components: Array<{name: string; source: string; version: string}>}; contextHash?: string; memoryUsage?: {schemaVersion: string; recordIds: string[]; committed: boolean}; context?: ContextInspect; promptHash?: string;
   activity?: {schemaVersion: 'fishyume.attempt-activity/v1'; summary?: string; items: Array<{kind: string; status: string; message: string}>; truncated: boolean};
   startedAt: string; updatedAt: string; completedAt?: string;

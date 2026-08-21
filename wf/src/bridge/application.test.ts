@@ -13,6 +13,11 @@ test('M5.4 application projection exposes bounded context metadata only', () => 
       effectiveConcurrency: 1, topologicalOrder: ['work'], deprecationWarnings: [],
       nodes: [{nodeId: 'work', type: 'agent', phase: 'running', currentAttempt: 1, attempt: {
         number: 1, phase: 'running', driver: 'codex', target: 'local', contextHash: 'a'.repeat(64),
+        routingDecision: {schemaVersion: 'fishyume.routing-decision/v1', catalogHash: 'b'.repeat(64),
+          requirement: {schemaVersion: 'fishyume.routing-requirement/v1', capabilities: ['repo_edit', 'repo_read', 'structured_output', 'tool_use'], complexity: 'standard', quality: 'balanced', latency: 'balanced', maxCostUnits: 101, maxContextBytes: 131072, maxOutputBytes: 32768, allowModelFallback: true},
+          selected: {driver: 'codex', provider: 'local', model: 'gpt-5.6-luna'}, reasonCodes: ['capability_match', 'fallback_declared'], budget: {maxCostUnits: 101, contextBytes: 131072, outputBytes: 32768},
+          fallback: [{driver: 'codex', provider: 'local', model: 'gpt-5.6'}], fallbackPolicy: {mode: 'eligible', maxAttempts: 2, requireNoSideEffect: true, requireApproval: true}},
+        routingUsage: {schemaVersion: 'fishyume.routing-usage/v1', target: {driver: 'codex', provider: 'local', model: 'gpt-5.6-luna'}, routeIndex: 0, costUnits: 1, cumulativeCostUnits: 1}, sideEffectStatus: 'unknown',
         context: {schemaVersion: 'fishyume.context-manifest/v2', compilerVersion: 'context-compiler/v2', hash: 'a'.repeat(64),
           budget: {totalBytes: 1024}, usage: {totalBytes: 128}, components: [{id: 'node-task', kind: 'node_task', tier: 'required', truncation: 'none'}], omissions: ['memory-secret'], truncated: false},
         activity: {schemaVersion: 'fishyume.attempt-activity/v1', summary: '正在执行命令：go test ./...', items: [{kind: 'command', status: 'running', message: '正在执行命令：go test ./...'}], truncated: false},
@@ -28,4 +33,8 @@ test('M5.4 application projection exposes bounded context metadata only', () => 
   assert.match(encoded, new RegExp(marker));
   assert.equal(view.activeAttempts?.[0]?.context?.components.length, 1);
   assert.equal(view.activeAttempts?.[0]?.activity?.summary, '正在执行命令：go test ./...');
+  assert.equal(view.attempts?.[0]?.routingDecision?.selected.model, 'gpt-5.6-luna');
+  assert.equal(view.attempts?.[0]?.routingDecision?.fallback?.[0]?.model, 'gpt-5.6');
+  assert.equal(view.attempts?.[0]?.routingUsage?.cumulativeCostUnits, 1);
+  assert.equal(view.attempts?.[0]?.sideEffectStatus, 'unknown');
 });

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"wf.local/wf-engine/internal/agent"
 	"wf.local/wf-engine/internal/routing"
 	"wf.local/wf-engine/internal/run"
 	"wf.local/wf-engine/internal/store"
@@ -340,6 +341,10 @@ func TestRunApplicationQueriesActionsAndResult(t *testing.T) {
 	}
 	if got.Run.Nodes[0].Attempt.Activity == nil || got.Run.Nodes[0].Attempt.Activity.Summary != "正在执行命令：go test ./..." {
 		t.Fatalf("activity projection = %+v", got.Run.Nodes[0].Attempt.Activity)
+	}
+	route := got.Run.Nodes[0].Attempt
+	if route.RoutingDecision == nil || route.RoutingDecision.Selected.Model != "gpt-5.6-luna" || len(route.RoutingDecision.ReasonCodes) == 0 || len(route.RoutingDecision.Fallback) != 1 || route.RoutingUsage == nil || route.RoutingUsage.CumulativeCostUnits != 1 || route.SideEffectStatus != agent.SideEffectUnknown {
+		t.Fatalf("routing projection = %+v", route)
 	}
 	again, appErr := service.RunGet(context.Background(), RunGetRequest{RunID: "run-waiting"})
 	if appErr != nil || again.Run.StateVersion != got.Run.StateVersion || !reflect.DeepEqual(again.Run.Nodes[0].Attempt.Activity, got.Run.Nodes[0].Attempt.Activity) {
@@ -677,6 +682,18 @@ func TestRecoverReplaysPendingActionAfterCoreNodeMutation(t *testing.T) {
 
 func newFakeCore() *fakeCore {
 	created := time.Unix(10, 0).UTC()
+	requirement := routing.DefaultRequirementV1()
+	requirement.MaxCostUnits = 101
+	requirement.AllowModelFallback = true
+	catalog := routing.BuiltinCatalogV1()
+	decision, err := routing.ResolveV1(routing.ResolveRequestV1{Catalog: catalog, Requirement: requirement, Budget: routing.BudgetGrantV1{MaxCostUnits: requirement.MaxCostUnits, ContextBytes: requirement.MaxContextBytes, OutputBytes: requirement.MaxOutputBytes}})
+	if err != nil {
+		panic(err)
+	}
+	usage, err := routing.ReserveRoutingUsageV1(catalog, decision, 0, 0)
+	if err != nil {
+		panic(err)
+	}
 	waitingRun := run.WorkflowSnapshot{ProtocolVersion: 2, StateSchemaVersion: 3, StateVersion: 4, ID: "run-waiting", WorkflowName: "example", Project: "project", ResolvedDriver: "codex", ResolvedTarget: "local", Phase: run.PhaseWaiting, Reason: run.ReasonAgentWaitingInput, TopologicalOrder: []string{"plan"}, Nodes: map[string]run.NodeSummary{"plan": {ID: "plan", Type: "agent", Phase: run.NodePhaseWaiting, Reason: run.ReasonAgentWaitingInput, CurrentAttempt: 1}}, CreatedAt: created, UpdatedAt: created.Add(time.Second)}
 	waitingNode := run.NodeSnapshot{RunID: waitingRun.ID, ID: "plan", Type: "agent", Phase: run.NodePhaseWaiting, Reason: run.ReasonAgentWaitingInput, CurrentAttempt: 1, Result: &workflow.Result{Summary: "input required", Questions: []workflow.InputQuestion{{ID: "scope", Prompt: "Which scope?", Choices: []string{"core", "all"}, Required: true}}}}
 	completeRun := waitingRun
@@ -695,7 +712,7 @@ func newFakeCore() *fakeCore {
 			{RunID: "run-waiting", Sequence: 2, Type: "node.waiting", Phase: run.PhaseWaiting, Timestamp: created.Add(time.Second)},
 		}},
 		attempts: map[string]run.AttemptSnapshot{
-			"run-waiting/plan":  {Number: 1, Phase: run.NodePhaseWaiting, ResolvedDriver: "codex", ResolvedTarget: "local", ContextHash: "hash", StartedAt: created, UpdatedAt: created.Add(time.Second)},
+			"run-waiting/plan":  {Number: 1, Phase: run.NodePhaseWaiting, ResolvedDriver: "codex", ResolvedTarget: "local", RoutingDecision: &decision, RoutingUsage: &usage, SideEffectStatus: agent.SideEffectUnknown, ContextHash: "hash", StartedAt: created, UpdatedAt: created.Add(time.Second)},
 			"run-complete/plan": {Number: 1, Phase: run.NodePhaseCompleted, Conclusion: run.ConclusionSucceeded, ResolvedDriver: "codex", ResolvedTarget: "local", ContextHash: "hash", StartedAt: created, UpdatedAt: created.Add(time.Second)},
 		},
 		outputs: map[string]string{

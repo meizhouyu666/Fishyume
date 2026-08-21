@@ -190,6 +190,12 @@ M6.5 为每个新路由 Attempt 持久化 `RoutingUsageV1` 成本预留，并按
 证据缺失、事件日志截断、发生工具活动或结果为 `indeterminate` 时都不会自动换模型。
 这些 cost units 用于确定性路由预算，不代表 Provider 账单或精确 Token 定价。
 
+M6.6 已将不可变 routing decision、usage receipt 与 side-effect 证据加入共享
+`run.get` Application projection，因此 Host、MCP、machine CLI 与兼容 status
+读取同一份 route/reason/budget/fallback 数据；中文 topology TUI 在节点详情中
+显示模型、路径、累计成本、fallback 批准状态和证据。Windows/Ubuntu CI、fake
+Driver 矩阵与安装包 smoke 现在将这些 operator/release gate 纳入验收。
+
 Host Agent MCP smoke（不需要 Provider 登录）可重复验证 capabilities、Workflow 校验/解释、幂等 start、Approval、`needs_input`、events 和最终 result：
 
 ```powershell

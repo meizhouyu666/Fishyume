@@ -88,6 +88,8 @@ try {
   if (!setup.includes('codex mcp add fishyume --') || !setup.includes(process.execPath) || !setup.includes(cli) || !setup.trim().endsWith('"mcp"')) throw new Error('installed Codex setup command is not canonical and copyable');
   const compatibleSetup = invoke(cli, ['setup', 'codex', '--print']);
   if (compatibleSetup !== setup) throw new Error('historical setup codex alias does not match product setup');
+  const routing = JSON.parse(invoke(cli, ['machine', 'routing.catalog', '--params', '{}']));
+  if (routing.apiVersion !== 'fishyume.application/v1' || routing.dynamicAvailability !== false || !routing.catalogHash || !Array.isArray(routing.catalog?.models) || routing.catalog.models.length < 1) throw new Error('installed routing catalog Application surface is incomplete');
   const demo = invoke(cli, ['demo', '--width', '80', '--ascii']);
   if (!/阶段 2 · 并行 2/.test(demo) || !/依赖 plan/.test(demo) || !/需要人工审批/.test(demo)) throw new Error(`installed offline topology demo is incomplete: ${demo}`);
   const dashboard = invoke(cli, []);

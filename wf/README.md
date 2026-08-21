@@ -85,6 +85,12 @@ none` advances to the next persisted fallback; missing, truncated, tool-active,
 or indeterminate evidence never changes route implicitly. Catalog cost units
 are deterministic routing allocations, not Provider billing estimates.
 
+M6.6 exposes the immutable routing decision, usage receipt, and Driver
+side-effect evidence through `run.get`, which is shared by Host, MCP, machine
+CLI, and compatibility status. The Chinese topology TUI renders route,
+reason, budget, fallback approval, and evidence in bounded Node detail. Fake
+Driver matrices and Windows/Linux CI plus install smoke are release gates.
+
 `run.start` is idempotent by caller-owned `clientRequestId`; reuse an ID only for the
 identical request. `run.action` requires a unique `actionId` and preconditions from the
 latest `run.get`. Paginate `run.events` with `afterSequence`, read `run.result` only

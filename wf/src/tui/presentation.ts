@@ -217,6 +217,24 @@ function appendResult(lines: string[], snapshot: NodeSnapshot | undefined, separ
   }
 }
 
+function appendRouting(lines: string[], attempt: AttemptSnapshot, separator: string): void {
+  const decision = attempt.routingDecision;
+  if (!decision) return;
+  const usage = attempt.routingUsage;
+  const target = decision.selected;
+  const route = usage ? `${usage.routeIndex + 1}/${decision.fallbackPolicy.maxAttempts}` : `?/${decision.fallbackPolicy.maxAttempts}`;
+  lines.push(`路由${separator}${target.driver}/${target.provider}/${target.model}${separator}路径 ${route}`);
+  const reasons = decision.reasonCodes.includes('fallback_selected')
+    ? ['fallback_selected', ...decision.reasonCodes.filter(reason => reason !== 'fallback_selected')]
+    : decision.reasonCodes;
+  lines.push(`路由原因${separator}${reasons.join(separator)}`);
+  const cost = usage ? `${usage.cumulativeCostUnits}/${decision.budget.maxCostUnits}${separator}本次 ${usage.costUnits}` : `?/${decision.budget.maxCostUnits}`;
+  lines.push(`路由预算${separator}成本 ${cost}${separator}上下文 ${decision.budget.contextBytes}B${separator}输出 ${decision.budget.outputBytes}B`);
+  const fallback = decision.fallback?.length ? decision.fallback.map(item => item.model).join(',') : '无剩余候选';
+  const approval = decision.fallbackPolicy.requireApproval ? '需显式批准' : '无需批准';
+  lines.push(`回退${separator}${decision.fallbackPolicy.mode}${separator}${approval}${separator}${fallback}${attempt.sideEffectStatus ? `${separator}副作用 ${attempt.sideEffectStatus}` : ''}`);
+}
+
 function nodeDetail(
   view: RunStatusView,
   node: NodeSummary,
@@ -231,6 +249,7 @@ function nodeDetail(
     lines.push([
       `第 ${attempt.number} 次尝试`, attempt.resolvedDriver ?? attempt.backend, human(attempt.launchState), attempt.execution ? `执行标识 ${attempt.execution.id}` : undefined,
     ].filter((value): value is string => Boolean(value)).join(separator));
+    appendRouting(lines, attempt, separator);
     if (attempt.context) {
       const context = attempt.context;
       const components = context.components.map(component => `${component.id}:${component.kind} ${component.includedBytes ?? 0}/${component.originalBytes ?? component.includedBytes ?? 0}B`).join(',');
