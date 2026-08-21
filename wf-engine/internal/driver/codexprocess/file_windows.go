@@ -1,6 +1,6 @@
 //go:build windows
 
-package directcli
+package codexprocess
 
 import (
 	"errors"

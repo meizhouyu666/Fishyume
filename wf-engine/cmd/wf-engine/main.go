@@ -9,9 +9,9 @@ import (
 
 	"wf.local/wf-engine/internal/application"
 	"wf.local/wf-engine/internal/backend"
-	"wf.local/wf-engine/internal/backend/driveradapter"
 	"wf.local/wf-engine/internal/controlplane"
 	"wf.local/wf-engine/internal/driver/codex"
+	"wf.local/wf-engine/internal/driver/scheduleradapter"
 	"wf.local/wf-engine/internal/rpc"
 	"wf.local/wf-engine/internal/run"
 	"wf.local/wf-engine/internal/store"
@@ -27,7 +27,7 @@ func main() {
 		os.Exit(1)
 	}
 	registry := backend.NewRegistry()
-	if err := registry.Register(driveradapter.New(codex.New(codex.Config{StateRoot: state.Root()}))); err != nil {
+	if err := registry.Register(scheduleradapter.New(codex.New(codex.Config{StateRoot: state.Root()}))); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

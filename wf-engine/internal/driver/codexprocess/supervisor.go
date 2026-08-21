@@ -1,4 +1,4 @@
-package directcli
+package codexprocess
 
 import (
 	"bytes"

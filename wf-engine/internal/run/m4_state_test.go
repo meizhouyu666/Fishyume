@@ -11,7 +11,7 @@ import (
 
 	"wf.local/wf-engine/internal/agent"
 	"wf.local/wf-engine/internal/backend"
-	"wf.local/wf-engine/internal/backend/driveradapter"
+	"wf.local/wf-engine/internal/driver/scheduleradapter"
 	"wf.local/wf-engine/internal/store"
 	"wf.local/wf-engine/internal/workflow"
 )
@@ -135,7 +135,7 @@ func TestHistoricalCCPanesStatusIsReadableButUnrecoverableWithoutLegacyAdapter(t
 func TestNeedsInputQuestionsPersistAcrossRestartWithoutDuplicateObserve(t *testing.T) {
 	driver := &questionDriver{}
 	state := store.New(t.TempDir())
-	first := NewService(driveradapter.New(driver), state)
+	first := NewService(scheduleradapter.New(driver), state)
 	started, err := first.Start(context.Background(), StartRequest{Project: t.TempDir(), Task: "request approval"})
 	if err != nil {
 		t.Fatal(err)
@@ -174,7 +174,7 @@ func TestNeedsInputQuestionsPersistAcrossRestartWithoutDuplicateObserve(t *testi
 	waitingEvents := countEventsOfType(t, state, started.ID, "node.waiting")
 	eventsBeforeResume := countEvents(t, state, started.ID)
 
-	second := NewService(driveradapter.New(driver), state)
+	second := NewService(scheduleradapter.New(driver), state)
 	assertPersistedQuestion(second)
 	if _, err := second.Resume(context.Background(), ResumeRequest{RunID: started.ID}); err != nil {
 		t.Fatal(err)
@@ -195,7 +195,7 @@ func TestNeedsInputQuestionsPersistAcrossRestartWithoutDuplicateObserve(t *testi
 func TestGenericDriverRejectsQuestionsOnNonNeedsInputResult(t *testing.T) {
 	driver := &questionDriver{result: &agent.AgentResult{Status: "succeeded", Summary: "done", Questions: []agent.InputQuestion{{ID: "unexpected", Prompt: "Should not exist", Required: true}}}}
 	state := store.New(t.TempDir())
-	service := NewService(driveradapter.New(driver), state)
+	service := NewService(scheduleradapter.New(driver), state)
 	started, err := service.Start(context.Background(), StartRequest{Project: t.TempDir(), Task: "invalid questions"})
 	if err != nil {
 		t.Fatal(err)
@@ -219,7 +219,7 @@ func TestGenericDriverRejectsQuestionsOnNonNeedsInputResult(t *testing.T) {
 func TestNeedsInputResultWriteFailureIsAtomicAndRetryable(t *testing.T) {
 	driver := &questionDriver{}
 	state := store.New(t.TempDir())
-	first := NewService(driveradapter.New(driver), state)
+	first := NewService(scheduleradapter.New(driver), state)
 	var once sync.Once
 	first.testHooks.beforeControllerMutation = func(point string) {
 		if point == "node.waiting_result" {
@@ -254,7 +254,7 @@ func TestNeedsInputResultWriteFailureIsAtomicAndRetryable(t *testing.T) {
 		t.Fatalf("failed result write emitted node.waiting events=%d", count)
 	}
 
-	second := NewService(driveradapter.New(driver), state)
+	second := NewService(scheduleradapter.New(driver), state)
 	if _, err := second.Resume(context.Background(), ResumeRequest{RunID: started.ID}); err != nil {
 		t.Fatal(err)
 	}

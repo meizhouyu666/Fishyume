@@ -26,7 +26,7 @@ func buildCodexFixtures(t *testing.T) (string, string) {
 	directory := t.TempDir()
 	agentPath := filepath.Join(directory, "fake-codex"+extension)
 	supervisorPath := filepath.Join(directory, "fishyume-engine"+extension)
-	for output, target := range map[string]string{agentPath: "./internal/backend/directcli/testdata/fake-agent", supervisorPath: "./cmd/wf-engine"} {
+	for output, target := range map[string]string{agentPath: "./internal/driver/codexprocess/testdata/fake-agent", supervisorPath: "./cmd/wf-engine"} {
 		command := exec.Command("go", "build", "-o", output, target)
 		command.Dir = root
 		if data, err := command.CombinedOutput(); err != nil {

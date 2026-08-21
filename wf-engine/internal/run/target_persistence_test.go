@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"wf.local/wf-engine/internal/agent"
-	"wf.local/wf-engine/internal/backend/driveradapter"
+	"wf.local/wf-engine/internal/driver/scheduleradapter"
 	"wf.local/wf-engine/internal/store"
 )
 
@@ -68,7 +68,7 @@ nodes:
     agent: {target: wsl}
     task: work
 `
-	first := NewService(driveradapter.New(candidate), state)
+	first := NewService(scheduleradapter.New(candidate), state)
 	started, err := first.StartWorkflow(context.Background(), StartWorkflowRequest{Project: t.TempDir(), Filename: "workflow.yaml", Content: document})
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ nodes:
 	}
 	assertTarget(1)
 
-	retry := NewService(driveradapter.New(candidate), state)
+	retry := NewService(scheduleradapter.New(candidate), state)
 	if _, err := retry.Resume(context.Background(), ResumeRequest{RunID: started.ID, Action: &ResumeAction{Type: "retry", NodeID: "agent-1"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ nodes:
 	}
 	close(candidate.recoveryRelease)
 
-	recovered := NewService(driveradapter.New(candidate), state)
+	recovered := NewService(scheduleradapter.New(candidate), state)
 	if _, err := recovered.Resume(context.Background(), ResumeRequest{RunID: started.ID}); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ nodes:
     agent: {target: wsl}
     task: work
 `
-	service := NewService(driveradapter.New(candidate), state)
+	service := NewService(scheduleradapter.New(candidate), state)
 	started, err := service.StartWorkflow(context.Background(), StartWorkflowRequest{Project: t.TempDir(), Filename: "workflow.yaml", Content: document})
 	if err != nil {
 		t.Fatal(err)

@@ -112,7 +112,7 @@ test('Application Run survives Control Plane crash/restart without duplicate Att
   const environment = {FISHYUME_CODEX_PATH: codexPath, FISHYUME_STATE_DIR: stateDir, WF_STATE_DIR: stateDir};
   const engineBuild = spawnSync('go', ['build', '-o', enginePath, './cmd/wf-engine'], {cwd: engineRoot, encoding: 'utf8'});
   assert.equal(engineBuild.status, 0, engineBuild.stderr);
-  const codexBuild = spawnSync('go', ['build', '-o', codexPath, './internal/backend/directcli/testdata/fake-agent'], {cwd: engineRoot, encoding: 'utf8'});
+  const codexBuild = spawnSync('go', ['build', '-o', codexPath, './internal/driver/codexprocess/testdata/fake-agent'], {cwd: engineRoot, encoding: 'utf8'});
   assert.equal(codexBuild.status, 0, codexBuild.stderr);
 
   let starter: EngineBridge | undefined;

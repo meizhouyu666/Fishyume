@@ -1,5 +1,5 @@
 //go:build !windows
 
-package directcli
+package codexprocess
 
 func isTransientFileAccess(error) bool { return false }

@@ -1,6 +1,6 @@
 //go:build !windows && !linux
 
-package directcli
+package codexprocess
 
 import (
 	"context"

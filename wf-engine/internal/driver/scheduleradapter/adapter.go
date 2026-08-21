@@ -1,8 +1,6 @@
-// Package driveradapter is the temporary M4 compatibility bridge from the
-// deprecated backend surface to the Agent Driver contract. New production
-// composition registers Drivers through this adapter; historical tests and
-// snapshot decoders may continue to use backend.AgentBackend during M4.1.
-package driveradapter
+// Package scheduleradapter adapts the Agent Driver contract to the Run
+// scheduler's internal execution port. It does not expose a product API.
+package scheduleradapter
 
 import (
 	"context"

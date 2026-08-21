@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"wf.local/wf-engine/internal/backend"
-	"wf.local/wf-engine/internal/backend/directcli"
-	"wf.local/wf-engine/internal/backend/driveradapter"
 	"wf.local/wf-engine/internal/driver/codex"
+	"wf.local/wf-engine/internal/driver/codexprocess"
+	"wf.local/wf-engine/internal/driver/scheduleradapter"
 	"wf.local/wf-engine/internal/run"
 	"wf.local/wf-engine/internal/store"
 )
@@ -171,12 +171,12 @@ func TestCodexNeedsInputQuestionsSurviveServiceRestart(t *testing.T) {
 	}
 	agentPath := filepath.Join(fixtureDir, "fake-codex"+extension)
 	supervisorPath := filepath.Join(fixtureDir, "fishyume-engine"+extension)
-	buildFixture(t, moduleRoot, agentPath, "./internal/backend/directcli/testdata/fake-agent")
+	buildFixture(t, moduleRoot, agentPath, "./internal/driver/codexprocess/testdata/fake-agent")
 	buildFixture(t, moduleRoot, supervisorPath, "./cmd/wf-engine")
 
 	stateRoot, workspace := t.TempDir(), t.TempDir()
 	state := store.New(stateRoot)
-	candidate := driveradapter.New(codex.New(codex.Config{StateRoot: stateRoot, Executable: agentPath, SupervisorExecutable: supervisorPath, Sandbox: "read-only", PollInterval: 10 * time.Millisecond}))
+	candidate := scheduleradapter.New(codex.New(codex.Config{StateRoot: stateRoot, Executable: agentPath, SupervisorExecutable: supervisorPath, Sandbox: "read-only", PollInterval: 10 * time.Millisecond}))
 	first := run.NewService(candidate, state)
 	started, err := first.Start(context.Background(), run.StartRequest{Project: workspace, Driver: "codex", Target: "local", Task: "scenario:terminal-needs-input\nrequest approval"})
 	if err != nil {
@@ -220,7 +220,7 @@ func TestAgentApprovalAgentWorkflowMatchesAcrossBackends(t *testing.T) {
 	}
 	directAgent := filepath.Join(fixtureDir, "fake-codex"+extension)
 	directSupervisor := filepath.Join(fixtureDir, "fishyume-engine"+extension)
-	buildFixture(t, moduleRoot, directAgent, "./internal/backend/directcli/testdata/fake-agent")
+	buildFixture(t, moduleRoot, directAgent, "./internal/driver/codexprocess/testdata/fake-agent")
 	buildFixture(t, moduleRoot, directSupervisor, "./cmd/wf-engine")
 
 	tests := []struct {
@@ -228,12 +228,12 @@ func TestAgentApprovalAgentWorkflowMatchesAcrossBackends(t *testing.T) {
 		make func(*testing.T, string, string) backend.AgentBackend
 	}{
 		{name: "codex", make: func(_ *testing.T, stateRoot, _ string) backend.AgentBackend {
-			return driveradapter.New(codex.New(codex.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond}))
+			return scheduleradapter.New(codex.New(codex.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond}))
 		}},
 		{
 			name: "direct",
 			make: func(_ *testing.T, stateRoot, _ string) backend.AgentBackend {
-				return directcli.New(directcli.Config{
+				return codexprocess.New(codexprocess.Config{
 					StateRoot:            stateRoot,
 					Executable:           directAgent,
 					SupervisorExecutable: directSupervisor,
@@ -332,7 +332,7 @@ func TestParallelWorkflowMatchesAcrossBackends(t *testing.T) {
 	}
 	directAgent := filepath.Join(fixtureDir, "fake-codex"+extension)
 	directSupervisor := filepath.Join(fixtureDir, "fishyume-engine"+extension)
-	buildFixture(t, moduleRoot, directAgent, "./internal/backend/directcli/testdata/fake-agent")
+	buildFixture(t, moduleRoot, directAgent, "./internal/driver/codexprocess/testdata/fake-agent")
 	buildFixture(t, moduleRoot, directSupervisor, "./cmd/wf-engine")
 
 	tests := []struct {
@@ -340,10 +340,10 @@ func TestParallelWorkflowMatchesAcrossBackends(t *testing.T) {
 		make func(*testing.T, string, string) backend.AgentBackend
 	}{
 		{name: "codex", make: func(_ *testing.T, stateRoot, _ string) backend.AgentBackend {
-			return driveradapter.New(codex.New(codex.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond}))
+			return scheduleradapter.New(codex.New(codex.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond}))
 		}},
 		{name: "direct", make: func(_ *testing.T, stateRoot, _ string) backend.AgentBackend {
-			return directcli.New(directcli.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond})
+			return codexprocess.New(codexprocess.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond})
 		}},
 	}
 	for _, test := range tests {
@@ -405,17 +405,17 @@ func TestConcurrentCancelMatchesAcrossBackends(t *testing.T) {
 	}
 	directAgent := filepath.Join(fixtureDir, "fake-codex"+extension)
 	directSupervisor := filepath.Join(fixtureDir, "fishyume-engine"+extension)
-	buildFixture(t, moduleRoot, directAgent, "./internal/backend/directcli/testdata/fake-agent")
+	buildFixture(t, moduleRoot, directAgent, "./internal/driver/codexprocess/testdata/fake-agent")
 	buildFixture(t, moduleRoot, directSupervisor, "./cmd/wf-engine")
 	tests := []struct {
 		name string
 		make func(*testing.T, string, string) backend.AgentBackend
 	}{
 		{name: "codex", make: func(_ *testing.T, stateRoot, _ string) backend.AgentBackend {
-			return driveradapter.New(codex.New(codex.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond}))
+			return scheduleradapter.New(codex.New(codex.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond}))
 		}},
 		{name: "direct", make: func(_ *testing.T, stateRoot, _ string) backend.AgentBackend {
-			return directcli.New(directcli.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond})
+			return codexprocess.New(codexprocess.Config{StateRoot: stateRoot, Executable: directAgent, SupervisorExecutable: directSupervisor, Sandbox: "read-only", PollInterval: 10 * time.Millisecond})
 		}},
 	}
 	for _, test := range tests {

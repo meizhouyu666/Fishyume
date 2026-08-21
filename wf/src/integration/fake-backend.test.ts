@@ -109,7 +109,7 @@ test('CLI bridge fake integration closes completed, waiting, failed, and error-p
   };
   let testError: unknown;
   try {
-    for (const [output, target] of [[enginePath, './cmd/wf-engine'], [codexPath, './internal/backend/directcli/testdata/fake-agent']] as const) {
+    for (const [output, target] of [[enginePath, './cmd/wf-engine'], [codexPath, './internal/driver/codexprocess/testdata/fake-agent']] as const) {
       const built = spawnSync('go', ['build', '-o', output, target], {cwd: engineRoot, encoding: 'utf8'});
       assert.equal(built.status, 0, built.stderr);
     }

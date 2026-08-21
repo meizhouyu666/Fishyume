@@ -16,7 +16,7 @@ For high-risk lifecycle packages, run the deterministic stress gate before deliv
 node wf/scripts/stress.mjs
 ```
 
-The default is `go test -count=20 -timeout 10m` over `internal/run`, `internal/store`, `internal/controlplane`, and `internal/backend/directcli`. Set `--count N` or `--timeout DURATION` for a focused local check. This is one bounded test invocation, not retry-on-failure: a failure always fails the gate.
+The default is `go test -count=20 -timeout 10m` over `internal/run`, `internal/store`, `internal/controlplane`, and `internal/driver/codexprocess`. Set `--count N` or `--timeout DURATION` for a focused local check. This is one bounded test invocation, not retry-on-failure: a failure always fails the gate.
 
 ## Test lifecycle
 

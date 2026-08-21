@@ -8,7 +8,7 @@ export const STRESS_PACKAGES = Object.freeze([
   './internal/run',
   './internal/store',
   './internal/controlplane',
-  './internal/backend/directcli',
+  './internal/driver/codexprocess',
 ]);
 
 export function parseArgs(args) {

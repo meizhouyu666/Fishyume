@@ -66,6 +66,12 @@ After the freeze, the product CLI migrated to `run.start`, `run.get`, and
 `run.status` decoder remains solely for protocol-v1 snapshots that cannot be
 represented by the frozen `run.get` response.
 
+The local Codex process implementation now lives under `internal/driver`, and
+the remaining `internal/backend` package is explicitly the Run scheduler's
+internal execution port plus historical decoders. It is not a second product
+Driver API. Replacing that scheduler port is an internal refactor and is not a
+prerequisite for the frozen core baseline.
+
 ## Change gate
 
 Go and TypeScript tests load the machine-readable baseline and compare it with

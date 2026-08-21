@@ -7,16 +7,16 @@ import (
 
 	"wf.local/wf-engine/internal/agent"
 	"wf.local/wf-engine/internal/backend"
-	"wf.local/wf-engine/internal/backend/directcli"
+	"wf.local/wf-engine/internal/driver/codexprocess"
 )
 
-type Config = directcli.Config
+type Config = codexprocess.Config
 
 type Driver struct {
-	legacy *directcli.Backend
+	executor *codexprocess.Backend
 }
 
-func New(config Config) *Driver { return &Driver{legacy: directcli.New(config)} }
+func New(config Config) *Driver { return &Driver{executor: codexprocess.New(config)} }
 
 func (*Driver) Name() string { return "codex" }
 
@@ -32,7 +32,7 @@ func (*Driver) Capabilities() agent.DriverCapabilities {
 }
 
 func (d *Driver) Doctor(ctx context.Context, request agent.DoctorRequest) agent.DoctorReport {
-	report := d.legacy.Doctor(ctx, backend.DoctorRequest{Workspace: request.Workspace, Tool: "codex", Runtime: request.Target})
+	report := d.executor.Doctor(ctx, backend.DoctorRequest{Workspace: request.Workspace, Tool: "codex", Runtime: request.Target})
 	converted := agent.DoctorReport{Driver: d.Name(), Ready: report.Ready}
 	for _, item := range report.Diagnostics {
 		converted.Diagnostics = append(converted.Diagnostics, agent.Diagnostic{Name: item.Name, Status: string(item.Status), Message: item.Message})
@@ -51,7 +51,7 @@ func (d *Driver) Start(ctx context.Context, envelope agent.AttemptEnvelope) (*ag
 	if prompt == "" {
 		prompt = envelope.Task
 	}
-	handle, err := d.legacy.Start(ctx, backend.AgentExecutionSpec{
+	handle, err := d.executor.Start(ctx, backend.AgentExecutionSpec{
 		RunID: envelope.Identity.RunID, NodeID: envelope.Identity.NodeID, Attempt: envelope.Identity.Attempt,
 		Workspace: envelope.Workspace, Tool: "codex", Runtime: envelope.Target, Instructions: prompt,
 		Model:          selectedModel(envelope),
@@ -72,7 +72,7 @@ func selectedModel(envelope agent.AttemptEnvelope) string {
 }
 
 func (d *Driver) Observe(ctx context.Context, handle agent.ExecutionHandle) (*agent.ExecutionObservation, error) {
-	legacy, err := d.legacy.Observe(ctx, toLegacyHandle(handle))
+	legacy, err := d.executor.Observe(ctx, toProcessHandle(handle))
 	if legacy == nil {
 		return nil, err
 	}
@@ -87,18 +87,18 @@ func (d *Driver) Observe(ctx context.Context, handle agent.ExecutionHandle) (*ag
 }
 
 func (d *Driver) Output(ctx context.Context, handle agent.ExecutionHandle, lines int) (string, error) {
-	return d.legacy.Output(ctx, toLegacyHandle(handle), lines)
+	return d.executor.Output(ctx, toProcessHandle(handle), lines)
 }
 
 func (d *Driver) Cancel(ctx context.Context, handle agent.ExecutionHandle) (*agent.CancelResult, error) {
-	result, err := d.legacy.Cancel(ctx, toLegacyHandle(handle))
+	result, err := d.executor.Cancel(ctx, toProcessHandle(handle))
 	if result == nil {
 		return nil, err
 	}
 	return &agent.CancelResult{State: agent.CancelState(result.State), Diagnostic: result.Diagnostic}, err
 }
 
-func toLegacyHandle(handle agent.ExecutionHandle) backend.ExecutionHandle {
+func toProcessHandle(handle agent.ExecutionHandle) backend.ExecutionHandle {
 	return backend.ExecutionHandle{Driver: "direct", Target: "local", Backend: "direct", SchemaVersion: handle.SchemaVersion, ID: handle.ID, Data: append(json.RawMessage(nil), handle.Data...)}
 }
 
@@ -131,4 +131,4 @@ func normalizedEvents(observation agent.ExecutionObservation) []agent.DriverEven
 	}
 }
 
-func RunSupervisor(configPath string) int { return directcli.RunSupervisor(configPath) }
+func RunSupervisor(configPath string) int { return codexprocess.RunSupervisor(configPath) }
