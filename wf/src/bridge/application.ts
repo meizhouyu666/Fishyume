@@ -6,7 +6,12 @@ export type {ModelCapability, RoutingBudget, RoutingDecision, RoutingFallbackPol
 
 export const applicationApiVersion = 'fishyume.application/v1' as const;
 export type JsonScalar = string | number | boolean;
-export type ApplicationMethod = 'system.capabilities' | 'routing.catalog' | 'workflow.validate' | 'workflow.explain' | 'run.start' | 'run.list' | 'run.get' | 'run.events' | 'run.action' | 'run.result' | 'memory.create' | 'memory.get' | 'memory.list' | 'memory.supersede' | 'memory.delete';
+export const applicationMethods = [
+  'system.capabilities', 'routing.catalog', 'workflow.validate', 'workflow.explain',
+  'run.start', 'run.list', 'run.get', 'run.events', 'run.action', 'run.result',
+  'memory.create', 'memory.get', 'memory.list', 'memory.supersede', 'memory.delete',
+] as const;
+export type ApplicationMethod = typeof applicationMethods[number];
 export type ApplicationErrorCode = 'invalid_argument' | 'invalid_workflow' | 'not_found' | 'conflict' | 'capability_unavailable' | 'not_ready' | 'protocol_mismatch' | 'internal';
 export interface ApplicationError {code: ApplicationErrorCode; message: string; data?: Record<string, unknown>}
 

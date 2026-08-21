@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "fishyume.core-contract-freeze/v1",
+  "status": "frozen",
+  "compatibility": {
+    "newWrites": "current-only",
+    "historicalReads": "preserved",
+    "breakingChanges": "new-version"
+  },
+  "application": {
+    "apiVersion": "fishyume.application/v1",
+    "methods": [
+      "system.capabilities",
+      "routing.catalog",
+      "workflow.validate",
+      "workflow.explain",
+      "run.start",
+      "run.list",
+      "run.get",
+      "run.events",
+      "run.action",
+      "run.result",
+      "memory.create",
+      "memory.get",
+      "memory.list",
+      "memory.supersede",
+      "memory.delete"
+    ],
+    "errorCodes": [
+      "invalid_argument",
+      "invalid_workflow",
+      "not_found",
+      "conflict",
+      "capability_unavailable",
+      "not_ready",
+      "protocol_mismatch",
+      "internal"
+    ]
+  },
+  "workflow": {
+    "writeVersion": "fishyume/v2",
+    "readVersions": ["fishyume/v1", "fishyume/v2"]
+  },
+  "agent": {
+    "attemptProtocolVersion": 1
+  },
+  "state": {
+    "runProtocolVersion": 2,
+    "currentSchemaVersion": 3,
+    "historicalReadMinimum": 1
+  },
+  "context": {
+    "envelopeVersion": "fishyume.context/v2",
+    "compilerVersion": "context-compiler/v2",
+    "manifestVersion": "fishyume.context-manifest/v2",
+    "memoryVersion": "fishyume.memory/v1",
+    "memoryUsageVersion": "fishyume.memory-usage/v1"
+  },
+  "routing": {
+    "catalogVersion": "fishyume.capability-catalog/v1",
+    "requirementVersion": "fishyume.routing-requirement/v1",
+    "decisionVersion": "fishyume.routing-decision/v1",
+    "usageVersion": "fishyume.routing-usage/v1",
+    "promptProfileVersion": "fishyume.prompt-profile/v1",
+    "policyVersion": "fishyume.routing-policy/v1",
+    "dynamicAvailability": false
+  }
+}

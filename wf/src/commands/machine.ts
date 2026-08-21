@@ -1,8 +1,8 @@
 import {Command, Option} from 'clipanion';
-import {ApplicationCallError, callApplication, type ApplicationMethod} from '../bridge/application.js';
+import {ApplicationCallError, applicationMethods, callApplication, type ApplicationMethod} from '../bridge/application.js';
 import {EngineBridge, type EngineClient} from '../bridge/engine.js';
 
-const methods = new Set<ApplicationMethod>(['system.capabilities', 'routing.catalog', 'workflow.validate', 'workflow.explain', 'run.start', 'run.list', 'run.get', 'run.events', 'run.action', 'run.result', 'memory.create', 'memory.get', 'memory.list', 'memory.supersede', 'memory.delete']);
+const methods = new Set<ApplicationMethod>(applicationMethods);
 
 export async function runMachine(client: EngineClient, method: string, paramsText: string | undefined, output: {write(text: string): unknown}): Promise<number> {
   try {

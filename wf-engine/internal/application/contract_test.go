@@ -8,9 +8,67 @@ import (
 	"strings"
 	"testing"
 
+	"wf.local/wf-engine/internal/agent"
 	"wf.local/wf-engine/internal/contextcompiler"
 	"wf.local/wf-engine/internal/routing"
 )
+
+type coreContractFreeze struct {
+	SchemaVersion string `json:"schemaVersion"`
+	Status        string `json:"status"`
+	Application   struct {
+		APIVersion string      `json:"apiVersion"`
+		Methods    []string    `json:"methods"`
+		ErrorCodes []ErrorCode `json:"errorCodes"`
+	} `json:"application"`
+	Workflow struct {
+		WriteVersion string `json:"writeVersion"`
+	} `json:"workflow"`
+	Agent struct {
+		AttemptProtocolVersion int `json:"attemptProtocolVersion"`
+	} `json:"agent"`
+	Context struct {
+		EnvelopeVersion string `json:"envelopeVersion"`
+		CompilerVersion string `json:"compilerVersion"`
+		ManifestVersion string `json:"manifestVersion"`
+		MemoryVersion   string `json:"memoryVersion"`
+	} `json:"context"`
+	Routing struct {
+		CatalogVersion       string `json:"catalogVersion"`
+		RequirementVersion   string `json:"requirementVersion"`
+		DecisionVersion      string `json:"decisionVersion"`
+		UsageVersion         string `json:"usageVersion"`
+		PromptProfileVersion string `json:"promptProfileVersion"`
+		PolicyVersion        string `json:"policyVersion"`
+		DynamicAvailability  bool   `json:"dynamicAvailability"`
+	} `json:"routing"`
+}
+
+func TestCoreContractFreezeMatchesImplementation(t *testing.T) {
+	data, err := os.ReadFile("../../../contracts/fishyume-core-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var freeze coreContractFreeze
+	if err := json.Unmarshal(data, &freeze); err != nil {
+		t.Fatal(err)
+	}
+	if freeze.SchemaVersion != "fishyume.core-contract-freeze/v1" || freeze.Status != "frozen" {
+		t.Fatalf("invalid core freeze identity: %+v", freeze)
+	}
+	if freeze.Application.APIVersion != APIVersion || !reflect.DeepEqual(freeze.Application.Methods, StableMethods) || !reflect.DeepEqual(freeze.Application.ErrorCodes, StableErrorCodes) {
+		t.Fatalf("application freeze does not match implementation: %+v", freeze.Application)
+	}
+	if freeze.Workflow.WriteVersion != WorkflowSchemaVersion || freeze.Agent.AttemptProtocolVersion != agent.ProtocolVersion {
+		t.Fatalf("workflow/agent freeze does not match implementation: %+v %+v", freeze.Workflow, freeze.Agent)
+	}
+	if freeze.Context.EnvelopeVersion != contextcompiler.EnvelopeV2Version || freeze.Context.CompilerVersion != contextcompiler.CompilerV2Version || freeze.Context.ManifestVersion != contextcompiler.ManifestV2Version || freeze.Context.MemoryVersion != contextcompiler.MemoryRecordV1Version {
+		t.Fatalf("context freeze does not match implementation: %+v", freeze.Context)
+	}
+	if freeze.Routing.CatalogVersion != routing.CapabilityCatalogV1Version || freeze.Routing.RequirementVersion != routing.RoutingRequirementV1Version || freeze.Routing.DecisionVersion != routing.RoutingDecisionV1Version || freeze.Routing.UsageVersion != routing.RoutingUsageV1Version || freeze.Routing.PromptProfileVersion != routing.PromptProfileV1Version || freeze.Routing.PolicyVersion != routing.RoutingPolicyV1Version || freeze.Routing.DynamicAvailability {
+		t.Fatalf("routing freeze does not match implementation: %+v", freeze.Routing)
+	}
+}
 
 func TestApplicationContractFixture(t *testing.T) {
 	data, err := os.ReadFile("testdata/contracts-v1.json")

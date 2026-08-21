@@ -32,6 +32,12 @@ const (
 	MaxAttemptActivityReadBytes    = 32 * 1024
 )
 
+var StableMethods = []string{
+	"system.capabilities", "routing.catalog", "workflow.validate", "workflow.explain",
+	"run.start", "run.list", "run.get", "run.events", "run.action", "run.result",
+	"memory.create", "memory.get", "memory.list", "memory.supersede", "memory.delete",
+}
+
 type JSONScalar any
 
 type WorkflowSource struct {
