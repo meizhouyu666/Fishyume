@@ -40,7 +40,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go test ./internal/routing ./internal/run ./internal/application -run 'M6|Routing|Fallback|RoutingUsage' -count=1 -timeout 10m
+          go test ./internal/routing ./internal/run ./internal/application -run 'M6|Routing|Fallback|RoutingUsage|Preflight' -count=1 -timeout 10m
       - name: Linux race check
         if: runner.os == 'Linux'
         working-directory: wf-engine
@@ -59,7 +59,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm --prefix wf test -- --test-name-pattern='M6.6|routing|MCP and Machine CLI expose identical'
+          npm --prefix wf test -- --test-name-pattern='M6.6|M6.7|routing|MCP and Machine CLI expose identical'
       - name: Diff check
         run: node wf/scripts/preflight.mjs --step diff-check
       - name: Reliability script tests

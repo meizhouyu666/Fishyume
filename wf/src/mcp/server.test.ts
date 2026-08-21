@@ -4,7 +4,7 @@ import {PassThrough} from 'node:stream';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import {StdioServerTransport} from '@modelcontextprotocol/sdk/server/stdio.js';
-import type {RoutingCatalogResponse, SystemCapabilitiesResponse} from '../bridge/application.js';
+import type {RoutingCatalogResponse, SystemCapabilitiesResponse, WorkflowExplainResponse, WorkflowValidateResponse} from '../bridge/application.js';
 import type {EngineClient, EventListener} from '../bridge/engine.js';
 import type {EngineHello} from '../bridge/types.js';
 import {runMachine} from '../commands/machine.js';
@@ -25,6 +25,12 @@ const routingCatalog: RoutingCatalogResponse = {
   limits: {maxCatalogModels: 256, maxCandidates: 32, maxFallbacks: 8, maxRoutingBudgetBytes: 16777216, maxCostUnits: 1000000}, errorCodes: ['routing_invalid_contract'],
 };
 
+const routingPreviewResponse = {
+  apiVersion: 'fishyume.application/v1', workflowSchemaVersion: 'fishyume/v2', valid: true, issues: [], capabilityGaps: [], warnings: [], routingRequirements: [],
+  routingPreviews: [{nodeId: 'work', driver: 'codex', target: 'local', requirement: {schemaVersion: 'fishyume.routing-requirement/v1', capabilities: ['repo_read'], complexity: 'simple', quality: 'economy', latency: 'fast', maxCostUnits: 1, maxContextBytes: 131072, maxOutputBytes: 32768, allowModelFallback: false}, decision: {schemaVersion: 'fishyume.routing-decision/v1', catalogHash: 'a'.repeat(64), requirement: {schemaVersion: 'fishyume.routing-requirement/v1', capabilities: ['repo_read'], complexity: 'simple', quality: 'economy', latency: 'fast', maxCostUnits: 1, maxContextBytes: 131072, maxOutputBytes: 32768, allowModelFallback: false}, selected: {driver: 'codex', provider: 'local', model: 'model'}, reasonCodes: ['capability_match'], budget: {maxCostUnits: 1, contextBytes: 131072, outputBytes: 32768}, fallbackPolicy: {mode: 'none', maxAttempts: 1, requireNoSideEffect: false, requireApproval: false}}}],
+} as WorkflowValidateResponse;
+const explainPreviewResponse = {...routingPreviewResponse, name: 'preview', topologicalOrder: ['work'], parallelLayers: [['work']], nodes: []} as WorkflowExplainResponse;
+
 class FakeApplicationClient implements EngineClient {
   closed = false;
 	closeCount = 0;
@@ -32,6 +38,8 @@ class FakeApplicationClient implements EngineClient {
   async call<T>(method: string): Promise<T> {
     if (method === 'system.capabilities') return capabilities as T;
     if (method === 'routing.catalog') return routingCatalog as T;
+    if (method === 'workflow.validate') return routingPreviewResponse as T;
+    if (method === 'workflow.explain') return explainPreviewResponse as T;
     throw new Error(`unexpected ${method}`);
   }
   onRunEvent(_listener: EventListener): () => void {return () => undefined}
@@ -57,6 +65,26 @@ test('MCP transport close settles the command and closes the EngineClient exactl
   await Promise.race([running, new Promise<void>((_, reject) => setTimeout(() => reject(new Error('MCP command did not settle after host EOF')), 250))]);
   assert.equal(engine.closed, true);
   assert.equal(engine.closeCount, 1);
+});
+
+test('M6.7 MCP and Machine CLI preserve routing previews identically', async () => {
+  const mcpServer = createMCPServer(new FakeApplicationClient());
+  const mcpClient = new Client({name: 'preview-host', version: '1.0.0'});
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([mcpServer.connect(serverTransport), mcpClient.connect(clientTransport)]);
+  try {
+    const args = {workflow: {document: {apiVersion: 'fishyume/v2'}}};
+    for (const method of ['workflow.validate', 'workflow.explain'] as const) {
+      const machineClient = new FakeApplicationClient(); let machineOutput = '';
+      assert.equal(await runMachine(machineClient, method, JSON.stringify(args), {write(text) {machineOutput += text}}), 0);
+      const result = await mcpClient.callTool({name: method, arguments: args});
+      assert.deepEqual(result.structuredContent, JSON.parse(machineOutput));
+      assert.equal((result.structuredContent as {routingPreviews: unknown[]}).routingPreviews.length, 1);
+    }
+  } finally {
+    await mcpClient.close();
+    await mcpServer.close();
+  }
 });
 
 test('MCP stdio input EOF settles without an explicit transport close', async () => {

@@ -118,7 +118,7 @@ func stableRoutingCatalogResponse() (RoutingCatalogResponse, error) {
 }
 
 func (s *Service) WorkflowValidate(ctx context.Context, request WorkflowValidateRequest) (WorkflowValidateResponse, *Error) {
-	response := WorkflowValidateResponse{APIVersion: APIVersion, WorkflowSchemaVersion: WorkflowSchemaVersion, Issues: []ValidationIssue{}, CapabilityGaps: []ValidationIssue{}, Warnings: []string{}, RoutingRequirements: []RoutingRequirementView{}}
+	response := WorkflowValidateResponse{APIVersion: APIVersion, WorkflowSchemaVersion: WorkflowSchemaVersion, Issues: []ValidationIssue{}, CapabilityGaps: []ValidationIssue{}, RoutingPreviews: []RoutingPreview{}, Warnings: []string{}, RoutingRequirements: []RoutingRequirementView{}}
 	normalized, issues := parseWorkflow(request.Workflow, request.Inputs)
 	if len(issues) > 0 {
 		response.Issues = issues
@@ -130,6 +130,7 @@ func (s *Service) WorkflowValidate(ctx context.Context, request WorkflowValidate
 	}
 	response.Warnings = append(response.Warnings, normalized.Warnings...)
 	response.RoutingRequirements = effectiveRoutingRequirements(normalized)
+	response.RoutingPreviews = s.routingPreviews(normalized, request.Driver, request.Target)
 	response.CapabilityGaps = s.capabilityGaps(ctx, strings.TrimSpace(request.Project), normalized, request.Driver, request.Target)
 	response.Valid = len(response.Issues) == 0
 	if err := ensureResponseBound(response, MaxSchemaResponseBytes); err != nil {
@@ -185,7 +186,7 @@ func (s *Service) WorkflowExplain(ctx context.Context, request WorkflowExplainRe
 		}
 		nodes = append(nodes, node)
 	}
-	response := WorkflowExplainResponse{APIVersion: APIVersion, WorkflowSchemaVersion: WorkflowSchemaVersion, Name: normalized.Document.Name, TopologicalOrder: append([]string(nil), normalized.TopologicalOrder...), ParallelLayers: layers, Nodes: nodes, CapabilityGaps: s.capabilityGaps(ctx, strings.TrimSpace(request.Project), normalized, request.Driver, request.Target), Warnings: append([]string(nil), normalized.Warnings...)}
+	response := WorkflowExplainResponse{APIVersion: APIVersion, WorkflowSchemaVersion: WorkflowSchemaVersion, Name: normalized.Document.Name, TopologicalOrder: append([]string(nil), normalized.TopologicalOrder...), ParallelLayers: layers, Nodes: nodes, CapabilityGaps: s.capabilityGaps(ctx, strings.TrimSpace(request.Project), normalized, request.Driver, request.Target), RoutingPreviews: s.routingPreviews(normalized, request.Driver, request.Target), Warnings: append([]string(nil), normalized.Warnings...)}
 	if err := ensureResponseBound(response, MaxResponseBytes); err != nil {
 		return WorkflowExplainResponse{}, internalError(err)
 	}
@@ -202,6 +203,71 @@ func effectiveRoutingRequirements(normalized workflow.Normalized) []RoutingRequi
 		views = append(views, RoutingRequirementView{NodeID: nodeID, Requirement: workflow.EffectiveRoutingRequirement(normalized.Document, node)})
 	}
 	return views
+}
+
+func (s *Service) routingPreviews(normalized workflow.Normalized, driverOverride, targetOverride string) []RoutingPreview {
+	previews := make([]RoutingPreview, 0)
+	for _, nodeID := range normalized.TopologicalOrder {
+		definition := normalized.Document.Nodes[nodeID]
+		if definition.Type != "agent" {
+			continue
+		}
+		requirement := workflow.EffectiveRoutingRequirement(normalized.Document, definition)
+		preview := RoutingPreview{NodeID: nodeID, Requirement: requirement}
+		driver, target, selectionErr := resolvedSelection(normalized, definition, driverOverride, targetOverride, s.defaultDriver)
+		preview.Driver, preview.Target = driver, target
+		if selectionErr != nil {
+			preview.Issue = routingPreviewIssue("$.nodes."+nodeID+".agent", "driver_selection", selectionErr)
+			previews = append(previews, preview)
+			continue
+		}
+		decision, err := previewRoutingDecision(driver, requirement)
+		if err != nil {
+			preview.Issue = routingPreviewIssue("$.nodes."+nodeID+".agent.routing", "routing_unavailable", err)
+		} else {
+			preview.Decision = decision
+		}
+		previews = append(previews, preview)
+	}
+	return previews
+}
+
+func previewRoutingDecision(driver string, requirement routing.RoutingRequirementV1) (*routing.RoutingDecisionV1, error) {
+	catalog := routing.BuiltinCatalogV1()
+	knownDriver := false
+	for _, model := range catalog.Models {
+		if model.Target.Driver == driver {
+			knownDriver = true
+			break
+		}
+	}
+	if !knownDriver {
+		return nil, fmt.Errorf("driver %q has no trusted routing catalog target", driver)
+	}
+	catalogHash, err := routing.CatalogHash(catalog)
+	if err != nil {
+		return nil, fmt.Errorf("hash routing catalog: %w", err)
+	}
+	decision, err := routing.ResolveV1(routing.ResolveRequestV1{
+		Catalog: catalog, CatalogHash: catalogHash, Requirement: requirement,
+		Budget: routing.BudgetGrantV1{MaxCostUnits: requirement.MaxCostUnits, ContextBytes: requirement.MaxContextBytes, OutputBytes: requirement.MaxOutputBytes},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if decision.Selected.Driver != driver {
+		return nil, fmt.Errorf("routing selected Driver %q for requested Driver %q", decision.Selected.Driver, driver)
+	}
+	return &decision, nil
+}
+
+func routingPreviewIssue(path, fallbackCode string, err error) *ValidationIssue {
+	code := fallbackCode
+	var contractErr *routing.ContractError
+	if errors.As(err, &contractErr) {
+		code = string(contractErr.Code)
+	}
+	return &ValidationIssue{Kind: "routing", Path: path, Code: code, Message: err.Error()}
 }
 
 func (s *Service) RunStart(ctx context.Context, request RunStartRequest) (RunStartResponse, *Error) {

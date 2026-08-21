@@ -91,6 +91,15 @@ CLI, and compatibility status. The Chinese topology TUI renders route,
 reason, budget, fallback approval, and evidence in bounded Node detail. Fake
 Driver matrices and Windows/Linux CI plus install smoke are release gates.
 
+M6.7 adds deterministic routing preflight to the existing `workflow.validate`
+and `workflow.explain` responses. Their bounded `routingPreviews` list contains
+the resolved Driver/Target, effective requirement, selected model, reason codes,
+budget, and fallback policy for every Agent Node. If the trusted catalog cannot
+satisfy a requirement, the preview returns a stable routing issue while the
+static Workflow remains valid. The preview is read-only, does not contact a
+Provider, and does not persist an Attempt; pass the same request to `run.start`
+to create the durable Run.
+
 `run.start` is idempotent by caller-owned `clientRequestId`; reuse an ID only for the
 identical request. `run.action` requires a unique `actionId` and preconditions from the
 latest `run.get`. Paginate `run.events` with `afterSequence`, read `run.result` only

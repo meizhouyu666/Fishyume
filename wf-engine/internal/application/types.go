@@ -153,6 +153,7 @@ type WorkflowValidateResponse struct {
 	Valid                 bool                     `json:"valid"`
 	Issues                []ValidationIssue        `json:"issues"`
 	CapabilityGaps        []ValidationIssue        `json:"capabilityGaps"`
+	RoutingPreviews       []RoutingPreview         `json:"routingPreviews"`
 	Warnings              []string                 `json:"warnings"`
 	RoutingRequirements   []RoutingRequirementView `json:"routingRequirements"`
 }
@@ -160,6 +161,18 @@ type WorkflowValidateResponse struct {
 type RoutingRequirementView struct {
 	NodeID      string                       `json:"nodeId"`
 	Requirement routing.RoutingRequirementV1 `json:"requirement"`
+}
+
+// RoutingPreview is a deterministic, non-persisted projection of the route
+// that a new Attempt would receive for one Agent Node. An Issue means the
+// requirement cannot currently be resolved against the trusted catalog.
+type RoutingPreview struct {
+	NodeID      string                       `json:"nodeId"`
+	Driver      string                       `json:"driver"`
+	Target      string                       `json:"target"`
+	Requirement routing.RoutingRequirementV1 `json:"requirement"`
+	Decision    *routing.RoutingDecisionV1   `json:"decision,omitempty"`
+	Issue       *ValidationIssue             `json:"issue,omitempty"`
 }
 
 type ResolvedAgent struct {
@@ -192,6 +205,7 @@ type WorkflowExplainResponse struct {
 	ParallelLayers        [][]string        `json:"parallelLayers"`
 	Nodes                 []ExplainNode     `json:"nodes"`
 	CapabilityGaps        []ValidationIssue `json:"capabilityGaps"`
+	RoutingPreviews       []RoutingPreview  `json:"routingPreviews"`
 	Warnings              []string          `json:"warnings"`
 }
 

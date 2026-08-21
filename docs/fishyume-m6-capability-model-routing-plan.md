@@ -8,7 +8,7 @@ Agent process.
 > Status: M6.0 contract freeze, M6.1 trusted capability catalog, M6.2
 > declarative Node routing requirements, M6.3 deterministic resolver, M6.4
 > Driver/Attempt propagation, M6.5 fallback/accounting, and M6.6
-> operator/release gates are complete.
+> operator/release gates, and M6.7 routing preflight are complete.
 
 ## M6.0 Contract Freeze
 
@@ -92,6 +92,14 @@ not alter `AttemptEnvelope`, Driver startup, Run persistence, MCP, or TUI.
    accounting, unknown-evidence, replay, and historical compatibility tests are
    release gates; Windows/Ubuntu CI also runs the routing/operator acceptance
    patterns and installed-package smoke.
+8. **M6.7 Routing Preflight and Explainability**: complete. The existing
+   `workflow.validate` and `workflow.explain` projections now include bounded
+   `routingPreviews` for every Agent Node. Each preview uses the same trusted
+   catalog and deterministic resolver as a new Attempt, returning the resolved
+   Driver/Target, effective budget, fallback policy, reason codes, and selected
+   model, or a stable routing issue when no model satisfies the request. The
+   preview is read-only, Provider-independent, and never persists an Attempt;
+   `run.start` remains the authoritative mutation boundary.
 
 ## Complexity and Prompt Policy
 

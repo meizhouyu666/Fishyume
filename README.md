@@ -196,6 +196,12 @@ M6.6 已将不可变 routing decision、usage receipt 与 side-effect 证据加�
 显示模型、路径、累计成本、fallback 批准状态和证据。Windows/Ubuntu CI、fake
 Driver 矩阵与安装包 smoke 现在将这些 operator/release gate 纳入验收。
 
+M6.7 在现有 `workflow.validate` 与 `workflow.explain` 响应中加入
+`routingPreviews`：Host 可以在 `run.start` 前看到每个 Agent Node 的 resolved
+Driver/Target、确定性选中模型、reason codes、预算和 fallback policy；无法满足
+时返回稳定 routing issue。预检使用同一可信 catalog/resolver，不访问 Provider、
+不持久化 Attempt，`run.start` 仍是唯一执行和持久化边界。
+
 Host Agent MCP smoke（不需要 Provider 登录）可重复验证 capabilities、Workflow 校验/解释、幂等 start、Approval、`needs_input`、events 和最终 result：
 
 ```powershell

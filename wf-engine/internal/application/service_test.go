@@ -223,6 +223,9 @@ func TestWorkflowAuthoringApplicationAPI(t *testing.T) {
 	if len(validated.RoutingRequirements) != 1 || validated.RoutingRequirements[0].NodeID != "plan" || !reflect.DeepEqual(validated.RoutingRequirements[0].Requirement, routing.DefaultRequirementV1()) {
 		t.Fatalf("validate routing projection = %+v", validated.RoutingRequirements)
 	}
+	if len(validated.RoutingPreviews) != 1 || validated.RoutingPreviews[0].Decision == nil || validated.RoutingPreviews[0].Decision.Selected.Model != "gpt-5.6-luna" || validated.RoutingPreviews[0].Issue != nil {
+		t.Fatalf("validate routing preview = %+v", validated.RoutingPreviews)
+	}
 	explained, appErr := service.WorkflowExplain(context.Background(), request)
 	if appErr != nil {
 		t.Fatal(appErr)
@@ -233,17 +236,51 @@ func TestWorkflowAuthoringApplicationAPI(t *testing.T) {
 	if explained.Nodes[0].Routing == nil || !reflect.DeepEqual(*explained.Nodes[0].Routing, routing.DefaultRequirementV1()) || explained.Nodes[1].Routing != nil {
 		t.Fatalf("explain routing projection = %+v", explained.Nodes)
 	}
+	if len(explained.RoutingPreviews) != 1 || explained.RoutingPreviews[0].Decision == nil || explained.RoutingPreviews[0].Decision.CatalogHash == "" {
+		t.Fatalf("explain routing preview = %+v", explained.RoutingPreviews)
+	}
 	explicit := request
 	explicit.Workflow = WorkflowInput{Document: json.RawMessage(`{"apiVersion":"fishyume/v2","name":"explicit-routing","defaults":{"agent":{"driver":"codex","target":"local"}},"execution":{"maxConcurrency":1},"nodes":{"plan":{"type":"agent","task":"Plan","agent":{"routing":{"schemaVersion":"fishyume.routing-requirement/v1","capabilities":["repo_edit","repo_read","structured_output","tool_use"],"complexity":"complex","quality":"premium","latency":"slow","maxCostUnits":42,"maxContextBytes":262144,"maxOutputBytes":65536,"allowModelFallback":false}}}}}`)}
 	explicitValidated, appErr := service.WorkflowValidate(context.Background(), explicit)
 	if appErr != nil || !explicitValidated.Valid || len(explicitValidated.RoutingRequirements) != 1 || explicitValidated.RoutingRequirements[0].Requirement.Complexity != routing.ComplexityComplex || explicitValidated.RoutingRequirements[0].Requirement.MaxCostUnits != 42 {
 		t.Fatalf("explicit routing validate = %+v, error = %v", explicitValidated, appErr)
 	}
+	if len(explicitValidated.RoutingPreviews) != 1 || explicitValidated.RoutingPreviews[0].Decision != nil || explicitValidated.RoutingPreviews[0].Issue == nil || explicitValidated.RoutingPreviews[0].Issue.Code != string(routing.CodeInvalidTarget) {
+		t.Fatalf("explicit routing preview = %+v", explicitValidated.RoutingPreviews)
+	}
+	noMatch := request
+	noMatch.Workflow = WorkflowInput{Document: json.RawMessage(`{"apiVersion":"fishyume/v2","name":"no-match","defaults":{"agent":{"driver":"codex","target":"local"}},"execution":{"maxConcurrency":1},"nodes":{"plan":{"type":"agent","task":"Plan","agent":{"routing":{"schemaVersion":"fishyume.routing-requirement/v1","capabilities":["repo_edit","repo_read","structured_output","tool_use"],"complexity":"complex","quality":"premium","latency":"slow","maxCostUnits":1,"maxContextBytes":262144,"maxOutputBytes":65536,"allowModelFallback":false}}}}}`)}
+	noMatchValidated, appErr := service.WorkflowValidate(context.Background(), noMatch)
+	if appErr != nil || !noMatchValidated.Valid || len(noMatchValidated.RoutingPreviews) != 1 || noMatchValidated.RoutingPreviews[0].Decision != nil || noMatchValidated.RoutingPreviews[0].Issue == nil || noMatchValidated.RoutingPreviews[0].Issue.Code != string(routing.CodeInvalidTarget) {
+		t.Fatalf("unresolvable routing preview = %+v, error = %v", noMatchValidated.RoutingPreviews, appErr)
+	}
 	invalid := request
 	invalid.Workflow = WorkflowInput{Document: json.RawMessage(`{"apiVersion":"fishyume/v1"}`)}
 	validated, appErr = service.WorkflowValidate(context.Background(), invalid)
 	if appErr != nil || validated.Valid || len(validated.Issues) != 1 || validated.Issues[0].Path != "$" {
 		t.Fatalf("invalid validate = %+v, error = %v", validated, appErr)
+	}
+}
+
+func TestM67RoutingPreflightIsReadOnlyAndBounded(t *testing.T) {
+	core := newFakeCore()
+	service := NewService(core, "codex", store.New(t.TempDir()))
+	request := WorkflowValidateRequest{Project: "project", Workflow: WorkflowInput{Document: validWorkflowDocument()}}
+	validated, appErr := service.WorkflowValidate(context.Background(), request)
+	if appErr != nil || !validated.Valid || len(validated.RoutingPreviews) != 1 || validated.RoutingPreviews[0].Decision == nil {
+		t.Fatalf("M6.7 validate preview = %+v, error = %v", validated, appErr)
+	}
+	explained, appErr := service.WorkflowExplain(context.Background(), request)
+	if appErr != nil || len(explained.RoutingPreviews) != 1 || explained.RoutingPreviews[0].Decision == nil {
+		t.Fatalf("M6.7 explain preview = %+v, error = %v", explained, appErr)
+	}
+	if !reflect.DeepEqual(validated.RoutingPreviews, explained.RoutingPreviews) || core.startCount != 0 {
+		t.Fatalf("M6.7 preview was not identical/read-only: validate=%+v explain=%+v starts=%d", validated.RoutingPreviews, explained.RoutingPreviews, core.startCount)
+	}
+	for _, value := range []any{validated, explained} {
+		if err := ensureResponseBound(value, MaxResponseBytes); err != nil {
+			t.Fatalf("M6.7 preview exceeded response bound: %v", err)
+		}
 	}
 }
 
