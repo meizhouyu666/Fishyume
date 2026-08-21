@@ -103,6 +103,13 @@ type Usage struct {
 	OutputTokensEstimated int `json:"outputTokensEstimated"`
 }
 
+type SideEffectStatus string
+
+const (
+	SideEffectNone    SideEffectStatus = "none"
+	SideEffectUnknown SideEffectStatus = "unknown"
+)
+
 type InputQuestion struct {
 	ID       string   `json:"id"`
 	Prompt   string   `json:"prompt"`
@@ -118,6 +125,9 @@ type AgentResult struct {
 	Checks    []string        `json:"checks,omitempty"`
 	Questions []InputQuestion `json:"questions,omitempty"`
 	Usage     Usage           `json:"usage"`
+	// SideEffectStatus is Driver evidence, not a model assertion. Empty is
+	// retained for historical Drivers and is treated as unknown by fallback.
+	SideEffectStatus SideEffectStatus `json:"sideEffectStatus,omitempty"`
 }
 
 type DriverEventType string
@@ -291,6 +301,9 @@ func ValidateAgentResult(result AgentResult) error {
 	}
 	if result.Usage.InputTokensEstimated < 0 || result.Usage.OutputTokensEstimated < 0 {
 		return fmt.Errorf("Agent result usage cannot be negative")
+	}
+	if result.SideEffectStatus != "" && result.SideEffectStatus != SideEffectNone && result.SideEffectStatus != SideEffectUnknown {
+		return fmt.Errorf("unsupported side-effect status %q", result.SideEffectStatus)
 	}
 	questionIDs := make(map[string]struct{}, len(result.Questions))
 	for _, question := range result.Questions {

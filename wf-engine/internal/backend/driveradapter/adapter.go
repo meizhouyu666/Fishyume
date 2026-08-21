@@ -109,5 +109,5 @@ func toBackendResult(result agent.AgentResult) *backend.AgentResult {
 		questions[index] = backend.InputQuestion{ID: question.ID, Prompt: question.Prompt, Choices: append([]string(nil), question.Choices...), Required: question.Required}
 	}
 	return &backend.AgentResult{Status: result.Status, Summary: result.Summary, Artifacts: result.Artifacts, Warnings: result.Warnings, Checks: result.Checks, Questions: questions,
-		Usage: backend.Usage{InputTokensEstimated: result.Usage.InputTokensEstimated, OutputTokensEstimated: result.Usage.OutputTokensEstimated}}
+		Usage: backend.Usage{InputTokensEstimated: result.Usage.InputTokensEstimated, OutputTokensEstimated: result.Usage.OutputTokensEstimated}, SideEffectStatus: result.SideEffectStatus}
 }

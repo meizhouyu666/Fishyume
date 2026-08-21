@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"wf.local/wf-engine/internal/agent"
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/contextcompiler"
 	"wf.local/wf-engine/internal/routing"
@@ -122,9 +123,12 @@ type NodeSnapshot struct {
 	Diagnostic         string           `json:"diagnostic,omitempty"`
 	Result             *workflow.Result `json:"result,omitempty"`
 	PendingInputAnswer json.RawMessage  `json:"pendingInputAnswer,omitempty"`
-	CurrentAttempt     int              `json:"currentAttempt,omitempty"`
-	CreatedAt          time.Time        `json:"createdAt"`
-	UpdatedAt          time.Time        `json:"updatedAt"`
+	// PendingRoutingTarget binds an accepted retry/answer action to the route
+	// that the next Attempt must use. It is cleared when that Attempt is made.
+	PendingRoutingTarget *routing.Target `json:"pendingRoutingTarget,omitempty"`
+	CurrentAttempt       int             `json:"currentAttempt,omitempty"`
+	CreatedAt            time.Time       `json:"createdAt"`
+	UpdatedAt            time.Time       `json:"updatedAt"`
 }
 
 type LaunchState string
@@ -162,12 +166,14 @@ type AttemptSnapshot struct {
 	ContextHash              string                             `json:"contextHash"`
 	// RoutingDecision is captured when this Attempt is created. It is never
 	// recomputed while the Attempt advances through launch/recovery states.
-	RoutingDecision *routing.RoutingDecisionV1 `json:"routingDecision,omitempty"`
-	MemoryUsage     *MemoryUsageReceipt        `json:"memoryUsage,omitempty"`
-	PromptHash      string                     `json:"-"`
-	StartedAt       time.Time                  `json:"startedAt"`
-	UpdatedAt       time.Time                  `json:"updatedAt"`
-	CompletedAt     *time.Time                 `json:"completedAt,omitempty"`
+	RoutingDecision  *routing.RoutingDecisionV1 `json:"routingDecision,omitempty"`
+	RoutingUsage     *routing.RoutingUsageV1    `json:"routingUsage,omitempty"`
+	SideEffectStatus agent.SideEffectStatus     `json:"sideEffectStatus,omitempty"`
+	MemoryUsage      *MemoryUsageReceipt        `json:"memoryUsage,omitempty"`
+	PromptHash       string                     `json:"-"`
+	StartedAt        time.Time                  `json:"startedAt"`
+	UpdatedAt        time.Time                  `json:"updatedAt"`
+	CompletedAt      *time.Time                 `json:"completedAt,omitempty"`
 
 	legacyExecution *legacyExecutionSnapshot
 }
@@ -252,6 +258,14 @@ func ValidateNodeSnapshot(snapshot NodeSnapshot) error {
 	if snapshot.Phase == NodePhaseSkipped && snapshot.Reason == "" {
 		return fmt.Errorf("skipped node requires a reason")
 	}
+	if snapshot.PendingRoutingTarget != nil {
+		if err := routing.ValidateTarget(*snapshot.PendingRoutingTarget); err != nil {
+			return fmt.Errorf("pending routing target is invalid: %w", err)
+		}
+		if snapshot.Phase != NodePhaseReady || snapshot.Type != "agent" || snapshot.CurrentAttempt < 1 {
+			return fmt.Errorf("pending routing target requires a ready Agent node with Attempt history")
+		}
+	}
 	return nil
 }
 
@@ -287,6 +301,17 @@ func ValidateAttemptSnapshot(snapshot AttemptSnapshot) error {
 		if snapshot.ResolvedDriver != "" && snapshot.RoutingDecision.Selected.Driver != snapshot.ResolvedDriver {
 			return fmt.Errorf("attempt Driver %q conflicts with routing decision Driver %q", snapshot.ResolvedDriver, snapshot.RoutingDecision.Selected.Driver)
 		}
+	}
+	if snapshot.RoutingUsage != nil {
+		if snapshot.RoutingDecision == nil {
+			return fmt.Errorf("attempt routing usage requires a routing decision")
+		}
+		if err := routing.ValidateRoutingUsageForDecision(routing.BuiltinCatalogV1(), *snapshot.RoutingDecision, *snapshot.RoutingUsage); err != nil {
+			return fmt.Errorf("attempt routing usage is invalid: %w", err)
+		}
+	}
+	if snapshot.SideEffectStatus != "" && snapshot.SideEffectStatus != agent.SideEffectNone && snapshot.SideEffectStatus != agent.SideEffectUnknown {
+		return fmt.Errorf("attempt has invalid side-effect status %q", snapshot.SideEffectStatus)
 	}
 	if snapshot.Execution != nil {
 		if err := backend.ValidateExecutionHandle(*snapshot.Execution); err != nil {

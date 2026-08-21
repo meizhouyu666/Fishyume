@@ -18,6 +18,7 @@ const (
 	CapabilityCatalogV1Version  = "fishyume.capability-catalog/v1"
 	RoutingRequirementV1Version = "fishyume.routing-requirement/v1"
 	RoutingDecisionV1Version    = "fishyume.routing-decision/v1"
+	RoutingUsageV1Version       = "fishyume.routing-usage/v1"
 	PromptProfileV1Version      = "fishyume.prompt-profile/v1"
 	RoutingPolicyV1Version      = "fishyume.routing-policy/v1"
 	MaxCatalogModels            = 256
@@ -202,6 +203,17 @@ type RoutingDecisionV1 struct {
 	PromptProfile  string               `json:"promptProfile,omitempty"`
 }
 
+// RoutingUsageV1 is an immutable cost reservation captured with an Attempt.
+// CostUnits use the trusted catalog's coarse cost class; they are not a
+// Provider invoice or a token-price estimate.
+type RoutingUsageV1 struct {
+	SchemaVersion       string `json:"schemaVersion"`
+	Target              Target `json:"target"`
+	RouteIndex          int    `json:"routeIndex"`
+	CostUnits           int    `json:"costUnits"`
+	CumulativeCostUnits int    `json:"cumulativeCostUnits"`
+}
+
 var identityPattern = regexp.MustCompile(`^[a-z][a-z0-9._:/-]{0,127}$`)
 var reasonPattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,63}$`)
 
@@ -245,6 +257,13 @@ func ValidateModelCapability(model ModelCapabilityV1) error {
 	}
 	if err := validateCapabilities(model.Capabilities); err != nil {
 		return err
+	}
+	return nil
+}
+
+func ValidateTarget(target Target) error {
+	if !validTarget(target) {
+		return contractError(CodeInvalidTarget, "routing target is invalid", target.Model)
 	}
 	return nil
 }
@@ -354,6 +373,19 @@ func ValidateDecision(d RoutingDecisionV1) error {
 	}
 	if d.PromptProfile != "" && !validIdentity(d.PromptProfile) {
 		return contractError(CodeInvalidPromptProfile, "decision prompt profile identity is invalid", d.PromptProfile)
+	}
+	return nil
+}
+
+func ValidateRoutingUsage(usage RoutingUsageV1) error {
+	if usage.SchemaVersion != RoutingUsageV1Version || !validTarget(usage.Target) {
+		return contractError(CodeInvalidContract, "routing usage identity is invalid", "")
+	}
+	if usage.RouteIndex < 0 || usage.RouteIndex > MaxFallbacks {
+		return contractError(CodeInvalidFallback, "routing usage route index is outside its bound", "")
+	}
+	if usage.CostUnits < 1 || usage.CostUnits > MaxCostUnits || usage.CumulativeCostUnits < usage.CostUnits || usage.CumulativeCostUnits > MaxCostUnits {
+		return contractError(CodeInvalidBudget, "routing usage cost is outside its bound", "")
 	}
 	return nil
 }

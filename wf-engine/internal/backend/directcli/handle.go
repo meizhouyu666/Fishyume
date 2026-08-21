@@ -26,6 +26,7 @@ type handleData struct {
 	AttemptDir            string     `json:"attemptDir"`
 	Workspace             string     `json:"workspace"`
 	ResultMaxBytes        int        `json:"resultMaxBytes"`
+	EventMaxBytes         int64      `json:"eventMaxBytes,omitempty"`
 	AgentExecutable       string     `json:"agentExecutable"`
 	AgentExecutableSHA256 string     `json:"agentExecutableSha256"`
 	Supervisor            processRef `json:"supervisor"`
@@ -91,6 +92,9 @@ func (b *Backend) decodeHandle(handle backend.ExecutionHandle) (handleData, arti
 	}
 	if data.ResultMaxBytes <= 0 || data.ResultMaxBytes > maxResultBytes {
 		return handleData{}, artifactSet{}, fmt.Errorf("Direct handle result limit is invalid")
+	}
+	if data.EventMaxBytes < 0 {
+		return handleData{}, artifactSet{}, fmt.Errorf("Direct handle event limit is invalid")
 	}
 	attemptDir, err := b.resolveRelativePath(filepath.FromSlash(data.AttemptDir))
 	if err != nil {

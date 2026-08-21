@@ -19,6 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"wf.local/wf-engine/internal/agent"
 	"wf.local/wf-engine/internal/backend"
 )
 
@@ -240,6 +241,7 @@ func (b *Backend) Start(ctx context.Context, spec backend.AgentExecutionSpec) (*
 	handleData := handleData{
 		ExecutionID: executionID, RunID: spec.RunID, NodeID: spec.NodeID, Attempt: spec.Attempt,
 		AttemptDir: filepath.ToSlash(relativeAttempt), Workspace: workspace, ResultMaxBytes: resultBytes,
+		EventMaxBytes:   b.config.MaxEventBytes,
 		AgentExecutable: discovered.Path, AgentExecutableSHA256: discovered.SHA256,
 		Supervisor: processRef{PID: command.Process.Pid, GroupID: supervisorIdentity.GroupID, Fingerprint: supervisorIdentity.Fingerprint, Executable: supervisorIdentity.Executable},
 		Child:      ready.Child, StartedAt: ready.StartedAt,
@@ -265,7 +267,7 @@ func (b *Backend) Observe(_ context.Context, handle backend.ExecutionHandle) (*b
 	if err != nil {
 		return nil, err
 	}
-	events, err := readEventEvidence(paths.Events)
+	events, err := readEventEvidence(paths.Events, data.EventMaxBytes)
 	if err != nil {
 		if isTransientFileAccess(err) {
 			return transientArtifactObservation("event log", err), nil
@@ -307,6 +309,9 @@ func completedObservation(paths artifactSet, data handleData, events eventEviden
 		return invalidResultObservation(err.Error())
 	}
 	if resultExists {
+		if result.Status == "failed" {
+			result.SideEffectStatus = sideEffectStatus(events)
+		}
 		if exitExists {
 			if exit.ResultSHA256 == "" {
 				return invalidResultObservation("Direct result appeared after the supervisor recorded process exit")
@@ -334,7 +339,7 @@ func completedObservation(paths artifactSet, data handleData, events eventEviden
 		return invalidResultObservation("Direct structured result recorded at process exit is now missing")
 	}
 	if exitExists && exit.ExitCode != 0 {
-		return &backend.ExecutionObservation{State: backend.ObservationTerminal, Result: &backend.AgentResult{Status: "failed", Summary: fmt.Sprintf("Codex CLI exited with code %d without a structured result", exit.ExitCode)}}
+		return &backend.ExecutionObservation{State: backend.ObservationTerminal, Result: &backend.AgentResult{Status: "failed", Summary: fmt.Sprintf("Codex CLI exited with code %d without a structured result", exit.ExitCode), SideEffectStatus: sideEffectStatus(events)}}
 	}
 	return &backend.ExecutionObservation{State: backend.ObservationResultPending, Diagnostic: "Codex CLI finished without a structured result"}
 }
@@ -525,11 +530,13 @@ func invalidResultObservation(message string) *backend.ExecutionObservation {
 type eventEvidence struct {
 	Completed    bool
 	WaitingInput bool
+	ToolActivity bool
+	CompleteLog  bool
 	InputTokens  int
 	OutputTokens int
 }
 
-func readEventEvidence(path string) (eventEvidence, error) {
+func readEventEvidence(path string, maxBytes int64) (eventEvidence, error) {
 	file, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return eventEvidence{}, nil
@@ -539,17 +546,26 @@ func readEventEvidence(path string) (eventEvidence, error) {
 	}
 	defer file.Close()
 	var evidence eventEvidence
+	if info, statErr := file.Stat(); statErr != nil {
+		return eventEvidence{}, fmt.Errorf("inspect Direct event log: %w", statErr)
+	} else {
+		evidence.CompleteLog = maxBytes > 0 && info.Size() <= maxBytes
+	}
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		var event struct {
-			Type  string `json:"type"`
+			Type string `json:"type"`
+			Item struct {
+				Type string `json:"type"`
+			} `json:"item"`
 			Usage struct {
 				InputTokens  int `json:"input_tokens"`
 				OutputTokens int `json:"output_tokens"`
 			} `json:"usage"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			evidence.CompleteLog = false
 			continue
 		}
 		switch event.Type {
@@ -559,12 +575,31 @@ func readEventEvidence(path string) (eventEvidence, error) {
 			evidence.OutputTokens = event.Usage.OutputTokens
 		case "turn.waiting_input", "item.waiting_input", "fishyume.waiting_input":
 			evidence.WaitingInput = true
+		case "item.started", "item.completed":
+			switch event.Item.Type {
+			case "agent_message", "reasoning", "error":
+			default:
+				evidence.ToolActivity = true
+			}
+		case "fishyume.log_truncated":
+			evidence.CompleteLog = false
+		default:
+			if strings.HasPrefix(event.Type, "item.") {
+				evidence.ToolActivity = true
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return eventEvidence{}, fmt.Errorf("read Direct event log: %w", err)
 	}
 	return evidence, nil
+}
+
+func sideEffectStatus(events eventEvidence) agent.SideEffectStatus {
+	if events.CompleteLog && !events.ToolActivity {
+		return agent.SideEffectNone
+	}
+	return agent.SideEffectUnknown
 }
 
 func readJSONFile(path string, maxBytes int64, target any) error {

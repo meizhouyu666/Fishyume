@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"wf.local/wf-engine/internal/agent"
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/backend/contracttest"
 )
@@ -282,6 +283,76 @@ func TestDirectBackendUsesExitCodeOnlyForConfirmedFailure(t *testing.T) {
 	observation := awaitObservation(t, candidate, handle, func(value *backend.ExecutionObservation) bool { return value.State == backend.ObservationTerminal })
 	if observation.Result == nil || observation.Result.Status != "failed" || !strings.Contains(observation.Result.Summary, "code 17") {
 		t.Fatalf("observation=%+v", observation)
+	}
+	if observation.Result.SideEffectStatus != agent.SideEffectNone {
+		t.Fatalf("tool-free failure side-effect evidence = %q", observation.Result.SideEffectStatus)
+	}
+}
+
+func TestDirectSideEffectEvidenceIsConservative(t *testing.T) {
+	if got := sideEffectStatus(eventEvidence{CompleteLog: true}); got != agent.SideEffectNone {
+		t.Fatalf("complete tool-free log = %q", got)
+	}
+	for _, evidence := range []eventEvidence{{}, {CompleteLog: true, ToolActivity: true}, {ToolActivity: false}} {
+		if got := sideEffectStatus(evidence); got != agent.SideEffectUnknown {
+			t.Fatalf("incomplete/tool-active evidence %+v = %q", evidence, got)
+		}
+	}
+}
+
+func TestBoundedEventLogRetainsTruncationEvidence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	log, err := newBoundedLog(path, 64*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := append([]byte(`{"type":"item.completed","item":{"type":"agent_message"},"text":"`), []byte(strings.Repeat("x", 80*1024))...)
+	line = append(line, []byte(`"}`+"\n")...)
+	if _, err := log.Write(line); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := readEventEvidence(path, 64*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evidence.CompleteLog || sideEffectStatus(evidence) != agent.SideEffectUnknown {
+		t.Fatalf("truncated event evidence = %+v", evidence)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() > 64*1024 {
+		t.Fatalf("bounded event log size = %d", info.Size())
+	}
+}
+
+func TestDirectEventEvidenceRejectsToolActivityMalformedAndOversizedLogs(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		content  string
+		maxBytes int64
+	}{
+		{name: "tool activity", content: "{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\"}}\n", maxBytes: 1024},
+		{name: "malformed", content: "{not-json}\n", maxBytes: 1024},
+		{name: "oversized", content: "{\"type\":\"turn.completed\"}\n", maxBytes: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "events.jsonl")
+			if err := os.WriteFile(path, []byte(test.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			evidence, err := readEventEvidence(path, test.maxBytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sideEffectStatus(evidence) != agent.SideEffectUnknown {
+				t.Fatalf("event evidence = %+v", evidence)
+			}
+		})
 	}
 }
 

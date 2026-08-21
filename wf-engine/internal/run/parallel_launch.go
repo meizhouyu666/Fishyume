@@ -155,7 +155,7 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 			if err != nil {
 				return err
 			}
-			routingDecision, err := resolveAttemptRouting(driver, workflow.EffectiveRoutingRequirement(normalized.Document, definition))
+			routingDecision, routingUsage, err := s.prepareAttemptRouting(run.ID, *node, driver, workflow.EffectiveRoutingRequirement(normalized.Document, definition))
 			if err != nil {
 				return err
 			}
@@ -179,12 +179,12 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 				return err
 			}
 			attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: run.ID, NodeID: node.ID, Number: number, Phase: NodePhaseRunning, LaunchState: LaunchPrepared,
-				ResolvedDriver: driver, ResolvedTarget: target, Backend: driver, RoutingDecision: routingDecision, ContextCompilerVersion: contextcompiler.Version, ContextCompilerVersionV2: compiled.Compilation.Manifest.CompilerVersion,
+				ResolvedDriver: driver, ResolvedTarget: target, Backend: driver, RoutingDecision: routingDecision, RoutingUsage: routingUsage, ContextCompilerVersion: contextcompiler.Version, ContextCompilerVersionV2: compiled.Compilation.Manifest.CompilerVersion,
 				ContextManifest: compiled.LegacyManifest, ContextManifestV2: &compiled.Compilation.Manifest, ContextHash: compiled.Compilation.Hash, MemoryUsage: memoryUsage, StartedAt: now, UpdatedAt: now}
 			if err := s.writeAttempt(attempt, true); err != nil {
 				return err
 			}
-			node.Phase, node.Reason, node.Diagnostic, node.Conclusion, node.PendingInputAnswer, node.CurrentAttempt, node.UpdatedAt = NodePhaseRunning, "", "", "", nil, number, now
+			node.Phase, node.Reason, node.Diagnostic, node.Conclusion, node.PendingInputAnswer, node.PendingRoutingTarget, node.CurrentAttempt, node.UpdatedAt = NodePhaseRunning, "", "", "", nil, nil, number, now
 			if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
 				return err
 			}

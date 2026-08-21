@@ -184,6 +184,12 @@ M6.3 已加入纯 deterministic resolver：它只接受上层提供的
 Attempt 缺少 routing metadata 时仍可读取，恢复过程中不会重新计算决策；resolver
 本身不访问网络或 Provider。
 
+M6.5 为每个新路由 Attempt 持久化 `RoutingUsageV1` 成本预留，并按可信 catalog
+校验 route、粗粒度 cost units 与累计预算。显式 `retry` 是 fallback 的批准边界；
+仅 Driver 明确证明 `sideEffectStatus: none` 的失败才会推进到下一个持久化 fallback。
+证据缺失、事件日志截断、发生工具活动或结果为 `indeterminate` 时都不会自动换模型。
+这些 cost units 用于确定性路由预算，不代表 Provider 账单或精确 Token 定价。
+
 Host Agent MCP smoke（不需要 Provider 登录）可重复验证 capabilities、Workflow 校验/解释、幂等 start、Approval、`needs_input`、events 和最终 result：
 
 ```powershell

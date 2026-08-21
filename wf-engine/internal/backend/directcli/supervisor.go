@@ -12,6 +12,7 @@ import (
 )
 
 const maxSupervisorPromptBytes = 256 * 1024
+const boundedLogTruncatedMarker = "{\"type\":\"fishyume.log_truncated\"}\n"
 
 type supervisorConfig struct {
 	ExecutionID    string   `json:"executionId"`
@@ -139,8 +140,9 @@ func (w *boundedLog) Write(data []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if int64(len(data)) >= w.maxBytes {
-		data = data[len(data)-int(w.maxBytes):]
+	if int64(len(data)+len(boundedLogTruncatedMarker)) >= w.maxBytes {
+		capacity := int(w.maxBytes) - len(boundedLogTruncatedMarker)
+		data = data[len(data)-capacity:]
 		if newline := bytes.IndexByte(data, '\n'); newline >= 0 && newline+1 < len(data) {
 			data = data[newline+1:]
 		}
@@ -150,6 +152,9 @@ func (w *boundedLog) Write(data []byte) (int, error) {
 		if _, err := w.file.Seek(0, io.SeekStart); err != nil {
 			return 0, err
 		}
+		if _, err := io.WriteString(w.file, boundedLogTruncatedMarker); err != nil {
+			return 0, err
+		}
 		if _, err := w.file.Write(data); err != nil {
 			return 0, err
 		}
@@ -157,6 +162,10 @@ func (w *boundedLog) Write(data []byte) (int, error) {
 	}
 	keep := w.maxBytes - int64(len(data))
 	if info.Size() > keep {
+		keep -= int64(len(boundedLogTruncatedMarker))
+		if keep < 0 {
+			keep = 0
+		}
 		start := info.Size() - keep
 		if _, err := w.file.Seek(start, io.SeekStart); err != nil {
 			return 0, err
@@ -172,6 +181,9 @@ func (w *boundedLog) Write(data []byte) (int, error) {
 			return 0, err
 		}
 		if _, err := w.file.Seek(0, io.SeekStart); err != nil {
+			return 0, err
+		}
+		if _, err := io.WriteString(w.file, boundedLogTruncatedMarker); err != nil {
 			return 0, err
 		}
 		if _, err := w.file.Write(tail); err != nil {

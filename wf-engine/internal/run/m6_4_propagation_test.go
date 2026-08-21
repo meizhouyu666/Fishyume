@@ -66,6 +66,9 @@ nodes:
 	if attempt.RoutingDecision == nil || attempt.RoutingDecision.Selected.Model != "gpt-5.6-luna" {
 		t.Fatalf("attempt routing decision = %+v", attempt.RoutingDecision)
 	}
+	if attempt.RoutingUsage == nil || attempt.RoutingUsage.CostUnits != 1 || attempt.RoutingUsage.CumulativeCostUnits != 1 {
+		t.Fatalf("attempt routing usage = %+v", attempt.RoutingUsage)
+	}
 	if err := ValidateAttemptSnapshot(attempt); err != nil {
 		t.Fatal(err)
 	}
@@ -127,6 +130,9 @@ nodes:
 		}
 		if attempt.RoutingDecision == nil || attempt.RoutingDecision.Selected.Model != "gpt-5.6-luna" {
 			t.Fatalf("parallel node %q routing decision = %+v", nodeID, attempt.RoutingDecision)
+		}
+		if attempt.RoutingUsage == nil || attempt.RoutingUsage.CostUnits != 1 || attempt.RoutingUsage.CumulativeCostUnits != 1 {
+			t.Fatalf("parallel node %q routing usage = %+v", nodeID, attempt.RoutingUsage)
 		}
 	}
 	backendImpl.mu.Lock()

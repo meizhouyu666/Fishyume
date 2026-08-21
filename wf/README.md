@@ -77,6 +77,14 @@ through the Agent envelope and Driver launch spec, and the Codex Driver forwards
 the selected model to the direct CLI. Historical Attempts without routing
 metadata remain readable and are never recomputed.
 
+M6.5 reserves a bounded `RoutingUsageV1` for every new routed Attempt and
+validates its route, coarse catalog cost units, and cumulative cost against the
+trusted catalog and Node budget. Explicit `retry` is the fallback approval
+boundary. Only a failed Attempt with Driver evidence of `sideEffectStatus:
+none` advances to the next persisted fallback; missing, truncated, tool-active,
+or indeterminate evidence never changes route implicitly. Catalog cost units
+are deterministic routing allocations, not Provider billing estimates.
+
 `run.start` is idempotent by caller-owned `clientRequestId`; reuse an ID only for the
 identical request. `run.action` requires a unique `actionId` and preconditions from the
 latest `run.get`. Paginate `run.events` with `afterSequence`, read `run.result` only

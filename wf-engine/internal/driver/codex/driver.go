@@ -108,7 +108,7 @@ func toAgentResult(result backend.AgentResult) *agent.AgentResult {
 		questions[index] = agent.InputQuestion{ID: question.ID, Prompt: question.Prompt, Choices: append([]string(nil), question.Choices...), Required: question.Required}
 	}
 	return &agent.AgentResult{Status: result.Status, Summary: result.Summary, Artifacts: result.Artifacts, Warnings: result.Warnings, Checks: result.Checks, Questions: questions,
-		Usage: agent.Usage{InputTokensEstimated: result.Usage.InputTokensEstimated, OutputTokensEstimated: result.Usage.OutputTokensEstimated}}
+		Usage: agent.Usage{InputTokensEstimated: result.Usage.InputTokensEstimated, OutputTokensEstimated: result.Usage.OutputTokensEstimated}, SideEffectStatus: result.SideEffectStatus}
 }
 
 func normalizedEvents(observation agent.ExecutionObservation) []agent.DriverEvent {

@@ -6,8 +6,8 @@ harness, embed a model loop, or replace the Driver that launches a headless
 Agent process.
 
 > Status: M6.0 contract freeze, M6.1 trusted capability catalog, M6.2
-> declarative Node routing requirements, M6.3 deterministic resolver, and M6.4
-> Driver/Attempt propagation are complete. M6.5 fallback/accounting and M6.6
+> declarative Node routing requirements, M6.3 deterministic resolver, M6.4
+> Driver/Attempt propagation, and M6.5 fallback/accounting are complete. M6.6
 > operator/release gates remain planned.
 
 ## M6.0 Contract Freeze
@@ -69,8 +69,19 @@ not alter `AttemptEnvelope`, Driver startup, Run persistence, MCP, or TUI.
    envelope and Driver launch spec. The Codex Driver forwards the selected model
    to the direct CLI. Attempts written before M6.4 remain readable with no
    routing field, and an Attempt's decision is never recomputed during recovery.
-6. **M6.5 Fallback and Accounting**: enforce preconditions, persist bounded
-   route/cost usage, and never retry an indeterminate side effect implicitly.
+6. **M6.5 Fallback and Accounting**: complete. Every new routed Attempt reserves
+   a bounded `RoutingUsageV1` against the immutable catalog decision before
+   launch. The receipt records route index, catalog cost units, and cumulative
+   cost; recovery validates it against the trusted catalog and Node budget.
+   Catalog cost units are coarse routing allocations, not Provider invoices or
+   token-price estimates. Existing explicit `retry` is the approval boundary
+   for fallback. A failed Attempt advances to its next persisted fallback only
+   when Driver evidence says `sideEffectStatus: none`; missing, truncated, or
+   tool-active evidence is `unknown` and retains the current route. An
+   `indeterminate` Attempt never changes route implicitly and still requires
+   `acknowledgeDuplicateRisk` for explicit retry. M6.4 Attempts without usage
+   receipts or side-effect evidence remain readable and are conservatively
+   accounted from their persisted selected target.
 7. **M6.6 Operator Surface and Release Gate**: expose route/reason/budget/
    fallback status to Host, MCP, CLI, and the Chinese topology TUI; run fake
    Driver matrices, installed-package smoke, and Windows/Ubuntu CI.

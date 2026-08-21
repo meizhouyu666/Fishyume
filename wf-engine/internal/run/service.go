@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"wf.local/wf-engine/internal/agent"
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/contextcompiler"
 	"wf.local/wf-engine/internal/store"
@@ -1461,7 +1462,7 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			if err != nil {
 				return err
 			}
-			routingDecision, err := resolveAttemptRouting(driver, workflow.EffectiveRoutingRequirement(normalized.Document, definition))
+			routingDecision, routingUsage, err := s.prepareAttemptRouting(run.ID, *node, driver, workflow.EffectiveRoutingRequirement(normalized.Document, definition))
 			if err != nil {
 				return err
 			}
@@ -1486,12 +1487,12 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			}
 			attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: run.ID, NodeID: node.ID, Number: number, Phase: NodePhaseRunning, LaunchState: LaunchPrepared,
 				ResolvedDriver: driver, ResolvedTarget: target, Backend: driver,
-				RoutingDecision:        routingDecision,
+				RoutingDecision: routingDecision, RoutingUsage: routingUsage,
 				ContextCompilerVersion: contextcompiler.Version, ContextCompilerVersionV2: compiled.Compilation.Manifest.CompilerVersion, ContextManifest: compiled.LegacyManifest, ContextManifestV2: &compiled.Compilation.Manifest, ContextHash: compiled.Compilation.Hash, MemoryUsage: memoryUsage, StartedAt: now, UpdatedAt: now}
 			if err := s.writeAttempt(attempt, true); err != nil {
 				return err
 			}
-			node.Phase, node.Reason, node.Conclusion, node.PendingInputAnswer, node.CurrentAttempt, node.UpdatedAt = NodePhaseRunning, "", "", nil, number, now
+			node.Phase, node.Reason, node.Conclusion, node.PendingInputAnswer, node.PendingRoutingTarget, node.CurrentAttempt, node.UpdatedAt = NodePhaseRunning, "", "", nil, nil, number, now
 			run.Phase, run.Reason, run.Conclusion, run.ActiveNodeID, run.Summary, run.UpdatedAt = PhaseRunning, "", "", node.ID, "launching Agent", now
 			if err := s.store.WriteNode(run.ID, node.ID, node); err != nil {
 				return err
@@ -1791,6 +1792,7 @@ func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generati
 			}
 			now := s.now().UTC()
 			attempt.Phase, attempt.Conclusion, attempt.ResultConsumed, attempt.UpdatedAt, attempt.CompletedAt = NodePhaseCompleted, ConclusionSucceeded, true, now, &now
+			attempt.SideEffectStatus = result.SideEffectStatus
 			node.Phase, node.Conclusion, node.Reason, node.Diagnostic, node.Result, node.UpdatedAt = NodePhaseCompleted, ConclusionSucceeded, "", "", &normalized, now
 			if err := s.store.WriteResult(runID, nodeID, attemptNumber, normalized); err != nil {
 				return err
@@ -1817,6 +1819,10 @@ func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generati
 			}
 			now := s.now().UTC()
 			attempt.Phase, attempt.Conclusion, attempt.ResultConsumed, attempt.UpdatedAt, attempt.CompletedAt = NodePhaseCompleted, ConclusionFailed, true, now, &now
+			attempt.SideEffectStatus = result.SideEffectStatus
+			if attempt.SideEffectStatus == "" {
+				attempt.SideEffectStatus = agent.SideEffectUnknown
+			}
 			node.Phase, node.Conclusion, node.Reason, node.Diagnostic, node.Result, node.UpdatedAt = NodePhaseCompleted, ConclusionFailed, "", result.Summary, &normalized, now
 			if err := s.store.WriteResult(runID, nodeID, attemptNumber, normalized); err != nil {
 				return err
@@ -1965,6 +1971,7 @@ func (s *Service) finishIndeterminate(runID, nodeID string, attemptNumber int, g
 		}
 		now := s.now().UTC()
 		attempt.Phase, attempt.Conclusion, attempt.UpdatedAt, attempt.CompletedAt = NodePhaseCompleted, ConclusionIndeterminate, now, &now
+		attempt.SideEffectStatus = agent.SideEffectUnknown
 		node.Phase, node.Conclusion, node.Reason, node.Diagnostic, node.UpdatedAt = NodePhaseCompleted, ConclusionIndeterminate, "", message, now
 		run.Phase, run.Conclusion, run.Reason, run.ActiveNodeID, run.Summary, run.UpdatedAt = PhaseRunning, "", "", "", message, now
 		if err := s.writeAttempt(attempt, false); err != nil {
@@ -2029,8 +2036,12 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 		if node.Conclusion == ConclusionIndeterminate && !action.AcknowledgeDuplicateRisk {
 			return fmt.Errorf("retrying indeterminate node %q requires acknowledgeDuplicateRisk", node.ID)
 		}
+		pendingRoute, err := s.pendingRoutingTarget(run, node, true)
+		if err != nil {
+			return fmt.Errorf("prepare retry route: %w", err)
+		}
 		now := s.now().UTC()
-		node.Phase, node.Conclusion, node.Reason, node.Result, node.UpdatedAt = NodePhaseReady, "", "", nil, now
+		node.Phase, node.Conclusion, node.Reason, node.Result, node.PendingRoutingTarget, node.UpdatedAt = NodePhaseReady, "", "", nil, pendingRoute, now
 		mutations = append(mutations, actionNodeMutation{Before: before, After: node})
 		downstream, err := s.planDownstreamReset(run, node.ID)
 		if err != nil {
@@ -2050,8 +2061,12 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 		if err != nil {
 			return err
 		}
+		pendingRoute, err := s.pendingRoutingTarget(run, node, false)
+		if err != nil {
+			return fmt.Errorf("prepare answer route: %w", err)
+		}
 		now := s.now().UTC()
-		node.Phase, node.Conclusion, node.Reason, node.Diagnostic, node.PendingInputAnswer, node.Result, node.UpdatedAt = NodePhaseReady, "", "", "", inputAnswer, nil, now
+		node.Phase, node.Conclusion, node.Reason, node.Diagnostic, node.PendingInputAnswer, node.PendingRoutingTarget, node.Result, node.UpdatedAt = NodePhaseReady, "", "", "", inputAnswer, pendingRoute, nil, now
 		mutations = append(mutations, actionNodeMutation{Before: before, After: node})
 		downstream, err := s.planDownstreamReset(run, node.ID)
 		if err != nil {

@@ -94,13 +94,14 @@ type Usage struct {
 }
 
 type AgentResult struct {
-	Status    string          `json:"status"`
-	Summary   string          `json:"summary,omitempty"`
-	Artifacts []string        `json:"artifacts,omitempty"`
-	Warnings  []string        `json:"warnings,omitempty"`
-	Checks    []string        `json:"checks,omitempty"`
-	Questions []InputQuestion `json:"questions,omitempty"`
-	Usage     Usage           `json:"usage"`
+	Status           string                 `json:"status"`
+	Summary          string                 `json:"summary,omitempty"`
+	Artifacts        []string               `json:"artifacts,omitempty"`
+	Warnings         []string               `json:"warnings,omitempty"`
+	Checks           []string               `json:"checks,omitempty"`
+	Questions        []InputQuestion        `json:"questions,omitempty"`
+	Usage            Usage                  `json:"usage"`
+	SideEffectStatus agent.SideEffectStatus `json:"sideEffectStatus,omitempty"`
 }
 
 type InputQuestion struct {
@@ -290,6 +291,9 @@ func ValidateAgentResult(result AgentResult) error {
 	}
 	if result.Usage.InputTokensEstimated < 0 || result.Usage.OutputTokensEstimated < 0 {
 		return fmt.Errorf("Agent result usage cannot be negative")
+	}
+	if result.SideEffectStatus != "" && result.SideEffectStatus != agent.SideEffectNone && result.SideEffectStatus != agent.SideEffectUnknown {
+		return fmt.Errorf("unsupported side-effect status %q", result.SideEffectStatus)
 	}
 	return nil
 }
