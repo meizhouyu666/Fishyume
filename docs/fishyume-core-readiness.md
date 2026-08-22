@@ -52,11 +52,18 @@ Still separate from this gate:
 - authenticated real Codex Provider smoke;
 - long-running event, output, journal, and state-growth soak beyond the
   Provider-independent 64-cycle steady-state gate;
-- install, upgrade, rollback, and historical-state migration drills.
+- rollback and historical-state migration drills beyond the state-schema-v1
+  retry and same-prefix package-upgrade checks recorded below.
 
 The event log is currently an append-only audit history. Retention or
 compaction would change pagination semantics and therefore requires an explicit
 future contract decision; this batch does not silently prune historical events.
 
-Those are the next readiness batches and must not be made prerequisites for
-Provider-independent public CI.
+The upgrade compatibility gate also verifies that a retry against a historical
+state-schema-v1 Run preserves the old Attempt byte-for-byte while the new
+Attempt is written with the current state/context schema. The packed install
+smoke repeats installation into the same prefix after stopping an idle Control
+Plane and verifies that the external state directory survives replacement.
+
+The remaining live and rollback gates are intentionally separate and must not
+become prerequisites for Provider-independent public CI.

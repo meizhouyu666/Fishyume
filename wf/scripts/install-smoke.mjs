@@ -1,5 +1,5 @@
 import {spawnSync} from 'node:child_process';
-import {cpSync, existsSync, mkdirSync, readFileSync, rmSync} from 'node:fs';
+import {cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {mkdtemp} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
@@ -96,6 +96,21 @@ try {
   if (!/目前没有可显示的任务。/.test(dashboard) || !/检查运行环境：fishyume doctor/.test(dashboard)) throw new Error(`installed zero-argument Dashboard empty state is incomplete: ${dashboard}`);
   const doctor = invoke(cli, ['doctor'], [0, 1]);
   if (!/ok engine 0\.2\.1-alpha\.1 started/.test(doctor) || !/ok protocol 2 compatible/.test(doctor) || !/(?:ok|fail) codex-mcp/.test(doctor)) throw new Error(`installed Doctor output is incomplete: ${doctor}`);
+
+  // Simulate an in-place upgrade while the installed Control Plane is idle.
+  // The state directory is external to npm and must survive replacement of
+  // both the CLI and platform Engine packages.
+  stopControlPlane();
+  const upgradeMarker = join(stateRoot, 'upgrade-marker.txt');
+  mkdirSync(stateRoot, {recursive: true});
+  const marker = 'state-survives-package-upgrade';
+  writeFileSync(upgradeMarker, marker, 'utf8');
+  npm(['install', '--prefix', installRoot, cliTarball, engineTarball, '--ignore-scripts', '--no-audit', '--no-fund']);
+  if (readFileSync(upgradeMarker, 'utf8') !== marker) throw new Error('in-place package upgrade touched external state');
+  const upgradedCli = join(installRoot, 'node_modules', 'fishyume', 'dist', 'cli.js');
+  if (!existsSync(upgradedCli)) throw new Error('upgraded CLI is missing');
+  const upgradedHelp = invoke(upgradedCli, ['--help']);
+  if (!/Fishyume/.test(upgradedHelp) || !/dashboard/.test(upgradedHelp)) throw new Error('upgraded CLI help is incomplete');
   process.stdout.write('Verified packed Fishyume install, Dashboard, setup, offline demo, and Doctor recovery surface\n');
 } finally {
   stopControlPlane();
