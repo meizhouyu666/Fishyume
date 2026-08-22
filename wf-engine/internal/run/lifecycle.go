@@ -212,6 +212,9 @@ type LegacySnapshot struct {
 }
 
 func ValidateWorkflowSnapshot(snapshot WorkflowSnapshot) error {
+	if err := validateStateSchemaVersion(snapshot.StateSchemaVersion, "run"); err != nil {
+		return err
+	}
 	if !validPhase(snapshot.Phase) {
 		return fmt.Errorf("unknown run phase %q", snapshot.Phase)
 	}
@@ -240,6 +243,9 @@ func ValidateWorkflowSnapshot(snapshot WorkflowSnapshot) error {
 }
 
 func ValidateNodeSnapshot(snapshot NodeSnapshot) error {
+	if err := validateStateSchemaVersion(snapshot.StateSchemaVersion, "node"); err != nil {
+		return err
+	}
 	if !validNodePhase(snapshot.Phase) {
 		return fmt.Errorf("unknown node phase %q", snapshot.Phase)
 	}
@@ -270,6 +276,9 @@ func ValidateNodeSnapshot(snapshot NodeSnapshot) error {
 }
 
 func ValidateAttemptSnapshot(snapshot AttemptSnapshot) error {
+	if err := validateStateSchemaVersion(snapshot.StateSchemaVersion, "Attempt"); err != nil {
+		return err
+	}
 	if snapshot.Number < 1 {
 		return fmt.Errorf("attempt number must be positive")
 	}
@@ -329,6 +338,16 @@ func ValidateAttemptSnapshot(snapshot AttemptSnapshot) error {
 	}
 	if err := validateAttemptMemoryUsage(snapshot); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateStateSchemaVersion(version int, kind string) error {
+	// Zero is the legacy wire omission and is normalized to schema v1 by the
+	// read path. A newer schema is not safe to mutate without an explicit
+	// migration, so fail closed instead of silently rewriting future state.
+	if version < 0 || version > stateSchemaVersion {
+		return fmt.Errorf("%s state schema version %d is newer than supported version %d", kind, version, stateSchemaVersion)
 	}
 	return nil
 }

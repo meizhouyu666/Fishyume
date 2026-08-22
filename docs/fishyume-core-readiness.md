@@ -67,3 +67,7 @@ Plane and verifies that the external state directory survives replacement.
 
 The remaining live and rollback gates are intentionally separate and must not
 become prerequisites for Provider-independent public CI.
+
+Rollback safety now also fails closed on a future `stateSchemaVersion`: an old
+reader may continue reading known historical schemas and omitted schema fields,
+but it will not mutate a snapshot whose required semantics it cannot know.
