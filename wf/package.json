@@ -43,7 +43,8 @@
     "pack:dry-run": "npm pack --dry-run",
     "pack:audit": "node scripts/audit-pack.mjs --dry-run",
     "pack:audit:real": "node scripts/audit-pack.mjs --real",
-    "smoke:install": "npm run build && node scripts/install-smoke.mjs"
+    "smoke:install": "npm run build && node scripts/install-smoke.mjs",
+    "smoke:downgrade": "npm run build && node scripts/downgrade-smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

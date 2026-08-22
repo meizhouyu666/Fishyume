@@ -47,6 +47,8 @@ This pass does not claim that product stabilization is finished. The packed
 install gate now covers same-prefix replacement and an Approval-only durable
 state snapshot/restore with terminal reconvergence. The next work should focus
 on real business Workflow acceptance, longer state growth, Provider failure
-drills, archived-package downgrade rehearsal, and operator-facing diagnostics.
-The third-party Driver SDK, dynamic discovery, Web/Desktop UI, and Native
-Harness remain outside the frozen core.
+drills, a published-tag downgrade gate once an immutable artifact exists, and
+operator-facing diagnostics. A local cross-commit package downgrade rehearsal
+now covers the accepted M5.6 commit without presenting that untagged alpha
+snapshot as a published release. The third-party Driver SDK, dynamic discovery,
+Web/Desktop UI, and Native Harness remain outside the frozen core.

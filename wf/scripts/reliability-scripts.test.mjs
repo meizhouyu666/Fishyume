@@ -32,3 +32,14 @@ test('packed install gate retains the durable rollback rehearsal', () => {
   assert.match(source, /actionId: 'install-rollback-approve-1'/);
   assert.match(source, /restoredTerminal\.stateVersion !== upgradedTerminal\.stateVersion/);
 });
+
+test('historical downgrade gate pins package identity and restores matching state', () => {
+  const source = readFileSync(new URL('./downgrade-smoke.mjs', import.meta.url), 'utf8');
+  assert.match(source, /391dc2c3a788b7754b52d4234fbfc80c5d5a3dae/);
+  assert.match(source, /git', \['archive'/);
+  assert.match(source, /npm did not install the expected/);
+  assert.match(source, /hash\(installed\.cliEvidence\) !== expected\.cli/);
+  assert.match(source, /cpSync\(rollbackSnapshot, stateRoot/);
+  assert.match(source, /actionId, runId: waiting\.runId/);
+  assert.match(source, /historical-downgrade-approve-1/);
+});

@@ -52,7 +52,7 @@ Still separate from this gate:
 - authenticated real Codex Provider smoke;
 - long-running event, output, journal, and state-growth soak beyond the
   Provider-independent 64-cycle steady-state gate;
-- downgrade rehearsal using an archived prior-version package, and rollback of
+- downgrade against a future immutable published tag/artifact, and rollback of
   Workflows that may already have produced external side effects.
 
 The event log is currently an append-only audit history. Retention or
@@ -75,10 +75,33 @@ external side effect, so the restore cannot duplicate business execution.
 
 This drill proves that the current package can restore and reconcile a stopped
 current-schema snapshot. It does not claim that an arbitrary older executable
-can read state created by a newer release. That downgrade claim requires an
-archived prior-version package and remains a separate release gate.
+can read state created by a newer release.
 
-The remaining live and cross-version downgrade gates are intentionally
+## Historical package downgrade rehearsal
+
+The explicit local gate `npm --prefix wf run smoke:downgrade` rebuilds packages
+from the accepted M5.6 commit
+`391dc2c3a788b7754b52d4234fbfc80c5d5a3dae` and from the current checkout. It
+verifies the installed CLI implementation and Engine binary hashes after every
+replacement, so npm cache or the shared alpha version cannot silently turn the
+test into a same-package reinstall.
+
+The historical package creates an Approval-only Run and snapshot. The current
+package reads the historical state, replays the same `clientRequestId`, and
+completes it. The gate then stops the current Control Plane, installs the
+historical package pair, restores the matching historical snapshot, replays the
+same start receipt, and completes the Run with a distinct action ID. Both paths
+must converge to `succeeded` with the same terminal state version. No Provider,
+network, credential, or external business side effect enters the drill.
+
+The repository has no release tag and both commits identify themselves as
+`0.2.1-alpha.1`; this is therefore a cross-commit package rehearsal, not proof
+about a published release artifact. The base can be overridden explicitly with
+`FISHYUME_DOWNGRADE_BASE` when testing a future immutable tag. A shallow clone
+that lacks the selected commit fails with a fetch-history diagnostic rather
+than falling back to current source.
+
+The remaining live and published-artifact downgrade gates are intentionally
 separate and must not become prerequisites for Provider-independent public CI.
 
 Rollback safety now also fails closed on a future `stateSchemaVersion`: an old
