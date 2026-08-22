@@ -1,264 +1,148 @@
 # Fishyume
 
-Fishyume 是一个面向 Codex、Claude、Kimi、OpenCode 等 Host Agent 的本地、可恢复 AI Agent 编排控制面。Host Agent 通过 MCP 或 Machine CLI 调用同一套 Application API，创建和管理由 Agent 与人工审批组成的 DAG；人类可随时用 TUI attach 到同一个持久化 Run，观察或提交审批、取消和重试。执行侧由 headless Agent Driver 负责，当前正式组合是 `codex + local`。Fishyume 的新 Run 与 CC-Panes 无关，也不在 Core 中实现聊天 Agent 或模型 Tool loop。
+Fishyume 是一个本地、可恢复的 AI Agent 工作流控制台。
 
-当前 `0.2.1-alpha.1` 已完成 M4 Agent-Native Control Plane：Agent Driver/Context Compiler、用户级 Local Control Plane、统一 Application Service、持久化 start/action 幂等、MCP、Machine CLI、`fishyume attach` 和 TUI 的 `run.get/run.action` 迁移。Windows 使用 Named Pipe，Linux/macOS 使用 Unix Domain Socket；直接启动 `wf-engine` 时仍保留 stdio JSON-RPC，供测试和受控嵌入使用。M4.4 的产品/迁移表面、真实 Codex Driver 单节点与并行 Workflow、真实 Host MCP、Host + rendered PTY/TUI 冲突收敛，以及 Provider-independent Control Plane crash/restart 验收均已通过；独立审查 P0/P1/P2 为 `0/0/0`，公开 CI 六项全绿。M4 已技术收口，M4.5 Developer Preview 产品体验门禁已于 2026-08-14 验收通过；尚未执行版本发布或 GitHub Release。
+它把多个 Agent 步骤和人工决策组织成一个可观察的工作流：Agent 负责执行，Fishyume 负责调度、持久化、恢复和安全动作，人类可以随时接管同一个 Run，审批、补充输入、重试或取消。
 
-当前版本：`0.2.1-alpha.1`
+## 你可以用它做什么
 
-当前合同基线见 [`docs/fishyume-m6-core-contract-freeze.md`](./docs/fishyume-m6-core-contract-freeze.md)，完整文档按“当前基线、使用指南、里程碑证据和历史计划”分类索引于 [`docs/README.md`](./docs/README.md)。
+- 把计划、研究、实现、验证等步骤组织成有依赖关系的 Workflow
+- 并行运行互不依赖的 Agent 节点，再在审批节点汇合
+- 在 Agent 等待审批或补充信息时从终端接管
+- 在进程崩溃、Control Plane 重启或客户端断开后继续同一个 Run
+- 通过 MCP 让 Codex 等 Host Agent 创建和管理 Workflow
+- 通过 Machine CLI 在脚本中使用同一套 Application API
+- 在运行前查看确定性的路由预览、预算和 fallback 边界
 
-## 首次使用黄金链路
+当前正式支持的执行组合是 `codex + local`。Fishyume 本身不是聊天客户端，也不内置模型 Tool loop；它是 Agent 工作流的本地控制面。
 
-当前尚未发布 npm 正式包。Windows Developer Preview 可从仓库根目录一条命令安装 CLI 与当前源码构建的平台 Engine：
+## 当前状态
+
+当前版本：`0.2.1-alpha.1`。项目处于 Developer Preview 阶段，尚未发布 npm 正式包或 GitHub Release。Windows + Codex 是参考体验，Ubuntu 也有安装和 CI 验证。
+
+## 五分钟开始
+
+### Windows Developer Preview
+
+环境要求：Node.js 24+、Go 1.26+、已安装的 Codex CLI。仓库根目录执行：
 
 ```powershell
-.\install-fishyume.ps1 -Proxy "http://127.0.0.1:7897"  # 仅在当前网络需要代理时添加 -Proxy
+.\install-fishyume.ps1
 ```
 
-安装后只需完成一次 Codex 接入：
+如果 npm 需要代理，可以显式传入：
 
 ```powershell
-fishyume setup codex
+.\install-fishyume.ps1 -Proxy "http://127.0.0.1:7897"
+```
+
+安装后连接 Codex 并检查环境：
+
+```powershell
+fishyume setup
 fishyume doctor --project "E:\project"
 ```
 
-`setup codex` 是用户对本地 Fishyume MCP 的显式授权点：它通过 Codex CLI 注册 canonical stdio transport，并只在 Fishyume 自己的配置 section 中为九个 Application 工具写入 unattended approval，避免每次调用出现人工 MCP allow；不会修改其他 MCP、Provider 或认证信息。
+`fishyume setup codex` 仍是兼容写法。setup 只修改 Fishyume 自己的 Codex MCP 配置，不会改动其他 MCP、Provider 或认证信息。
 
-重启 Codex 后，用户与 Codex 讨论目标并声明使用 Fishyume；Codex 通过 MCP 获取 capabilities、编排并启动 Workflow。用户在另一个终端直接运行：
+### 运行与接管
+
+让 Codex 通过 Fishyume MCP 创建工作后，在另一个终端打开 Dashboard：
 
 ```powershell
 fishyume
 ```
 
-首次安装后运行 `fishyume setup` 即可连接本地 Codex Host 并检查就绪状态；原有 `fishyume setup codex` 继续兼容。`fishyume demo` 无需 Engine、Provider 登录或网络即可预览中文拓扑控制台。日常零参数 `fishyume` 打开 Run Dashboard：方向键或 `j`/`k` 选择 Run，`Enter` attach，随后可观察并行节点、审批、回答 `needs_input`、重试、取消或安全 detach。正常链路不要求用户手写 Workflow、复制 Run ID、提供 profile ID 或处理逐次 MCP allow。完整范围与验收见 [`docs/fishyume-m4.5-developer-preview.md`](./docs/fishyume-m4.5-developer-preview.md)。
-
-## 核心能力
-
-- Agent、Approval 节点及显式依赖关系
-- 输入、条件分支和受限模板变量
-- Run、Node、Attempt 持久化与跨进程恢复
-- 崩溃接管、取消和执行进程身份校验
-- 确定性、有界的并行 Agent 调度与多 Attempt 恢复
-- 失败后停止新调度并排空活动兄弟；显式取消要求逐 Attempt 确认
-- Agent Driver Registry、能力检查和 Doctor 诊断
-- 确定性 Context Compiler v1、Attempt Envelope、Driver Event/Observation、结构化 Agent Result（含 `needs_input`）
-- Calm Operator Console：以 Workflow 和单一焦点节点为主体，覆盖并行 Attempt、Approval、显式 retry/cancel、诊断与终态汇总
-- 用户级 Local Control Plane、跨客户端状态共享、崩溃重启对账与串行 mutation
-- Agent-native capabilities、Workflow validate/explain、Run start/list/get/events/action/result
-- 持久化 request/action journal、稳定分页/byte bounds 与 MCP/Machine JSON parity
-- `fishyume` 主命令及兼容别名 `wf`
-
-`execution.maxConcurrency` 可设为 `1..32`；实际并发取 Workflow 请求、Driver 每 Run 限制和 Fishyume 安全上限的最小值。`maxConcurrency: 1` 保持原有确定性顺序。
-
-## 当前 Agent Driver
-
-正式新语义是 `agent.driver/target`，当前只提供 `codex + local`。Driver 将确定性的 Attempt Envelope 转换为 `codex exec --ephemeral --json` 调用，并保持进程指纹、PID 复用防护、结果 hash、有界日志、崩溃对账和明确取消确认：
-
-- 已安装并认证 Codex CLI；本里程碑实机验证版本为 `codex-cli 0.144.6`
-- `FISHYUME_CODEX_PATH` 可显式指定原生 Codex 可执行文件；通常可自动解析 npm shim 对应的原生二进制
-- `FISHYUME_DIRECT_SANDBOX` 可设为 `read-only`、`workspace-write` 或 `danger-full-access`，默认 `workspace-write`
+也可以直接运行一个单 Agent 任务：
 
 ```powershell
-fishyume doctor --driver codex --project "E:\project"
 fishyume run --driver codex --target local --project "E:\project" "实现指定需求"
 ```
 
-旧 `--backend/--tool/--runtime`、Workflow `defaults.backend/tool/runtime` 与 `FISHYUME_BACKEND` 仍在兼容窗口读取并输出 deprecation warning；`direct` 会归一化为 `codex`。请将新配置写成 `--driver codex --target local` 或 `defaults.agent.driver/target`；完整映射与冲突规则见 [`docs/fishyume-m4-migration-guide.md`](./docs/fishyume-m4-migration-guide.md)。兼容读取不会删除或重写历史 snapshot；新状态只写 `resolvedDriver`、`resolvedTarget`、Driver Handle、Context manifest/version/hash，不写 CC-Panes Profile、TaskBinding 或 Session 身份。
-
-## Local Control Plane
-
-CLI/TUI 默认读取状态目录中的 `control-plane.json`，校验 Engine/RPC/IPC/state schema、规范化 `stateDir`、owner ID 与 state-dir hash 后连接；不存在或已确认陈旧时会 detached 启动 `wf-engine serve`。Control Plane 用进程生命周期持有 `control-plane.lock`，因此不兼容版本不能并发写同一状态目录。只有取得 owner lock 后才会替换陈旧 endpoint。
-
-Named Pipe 使用当前 Windows 用户 SID 的 ACL；Unix Socket 所在目录为 `0700`、socket 为 `0600`。握手和 JSON-RPC frame 均有大小上限与 deadline，默认不监听 TCP。Control Plane 不因客户端断线退出；`run.start` 返回后 controller 继续运行。服务重启扫描非终态 Run，对已持久化 Attempt 先 Observe/Reconcile，再允许 scheduler 决策。当前 M4.2 服务不启用自动 idle 退出。
-
-多客户端可并发读取；mutation 在 Control Plane 中串行化。Run snapshot 的 `stateVersion` 可作为 `expectedStateVersion` 提交 approve/reject/retry/cancel，陈旧动作返回冲突。TUI 的 `d`、`q` 和 `Ctrl+C` 仅断开观察，不暂停或取消 Run。
-
-正式 CLI、TUI、MCP 和 Machine CLI 现在统一调用冻结后的 Application API。旧的
-`run.startWorkflow`、`run.resume`、`run.cancel` 和 `run.detach` JSON-RPC mutation
-入口已经退役；新 Run 只能通过 `run.start` 创建，动作只能通过 `run.action`
-提交。未公开的只读 `run.status` 仅用于读取无法投影为 `run.get` 的 protocol-v1
-历史 snapshot，不出现在 `engine.hello.supportedMethods` 中，也不能创建或修改状态。
-
-## 构建与验证
-
-源码构建需要 Go 1.26+ 和 Node.js 24+。
+常用操作：
 
 ```powershell
-cd wf-engine
-go test ./...
-go vet ./...
-go build ./cmd/wf-engine
-
-cd ..\wf
-npm ci
-npm run verify
-```
-
-跨平台可靠性预检、确定性 stress gate、测试生命周期约定和交付策略见 [`docs/fishyume-development.md`](./docs/fishyume-development.md)。
-
-开发 checkout 可显式设置 Engine：
-
-```powershell
-$env:FISHYUME_ENGINE_PATH = "E:\path\to\Fishyume\wf-engine\wf-engine.exe"
-```
-
-## 工作流示例
-
-```yaml
-apiVersion: fishyume/v1
-name: implement-with-approval
-
-inputs:
-  goal:
-    required: true
-
-defaults:
-  agent:
-    driver: codex
-    target: local
-
-execution:
-  maxConcurrency: 2
-
-nodes:
-  plan:
-    type: agent
-    task: "为 {{ inputs.goal }} 制定实现方案"
-
-  research:
-    type: agent
-    task: "并行分析 {{ inputs.goal }} 的风险与验证点"
-
-  approve:
-    type: approval
-    dependsOn: [plan]
-    prompt: "是否批准方案：{{ nodes.plan.result.summary }}"
-
-  implement:
-    type: agent
-    dependsOn: [approve, research]
-    when:
-      node: approve
-      field: result.decision
-      equals: approved
-    task: "执行已批准的方案：{{ nodes.plan.result.summary }}；验证：{{ nodes.research.result.summary }}"
-```
-
-CLI `--driver/--target` 可以覆盖示例中的 `defaults.agent`：
-
-```powershell
-fishyume run --workflow .\workflow.yaml --driver codex --target local --project "E:\project" --input goal="实现新功能"
-
 fishyume status <run-id>
-fishyume status <run-id> --watch
-fishyume resume <run-id> --approve approve
-fishyume resume <run-id> --reject approve --reason "需要调整方案"
-fishyume resume <run-id> --retry implement
-fishyume cancel <run-id>
 fishyume attach <run-id>
+fishyume resume <run-id> --approve <node-id>
+fishyume resume <run-id> --retry <node-id>
+fishyume cancel <run-id>
+```
 
-# Machine API：每次只输出一个 Application response JSON
-fishyume machine system.capabilities --params '{}'
-fishyume machine routing.catalog --params '{}'
-fishyume machine run.get --params '{"runId":"<run-id>"}'
+`fishyume demo` 不需要 Engine、Provider 登录或网络，可直接预览终端工作流界面。
 
-# MCP：通过 stdio 提供同一组 Application tools
+## Agent 集成
+
+Fishyume MCP 和 Machine CLI 暴露同一套 Application API。Host Agent 的典型顺序是：
+
+```text
+system.capabilities
+workflow.validate -> workflow.explain
+run.start -> run.events/run.get
+run.action -> run.result
+```
+
+启动 MCP 服务：
+
+```powershell
 fishyume mcp
 ```
 
-Host Agent 应先调用 `system.capabilities`，读取其中有界且版本化的
-`fishyume.authoring-guide/v1`，再调用只读 `routing.catalog` 检查内置模型能力目录，最后按公开顺序完成
-`validate → explain → start → events/get → action → result`。对于
-`fishyume/v2`，`dependsOn` 只决定调度，`context.dependencies` 才决定节点结果
-注入；Host 选择的 Memory 必须通过同一份 `contextBindings` 原样传给 validate、
-explain 和 start。标准 Workflow 与精确请求集合见
-[`docs/examples/fishyume-v2-host.yaml`](./docs/examples/fishyume-v2-host.yaml) 和
-[`docs/examples/fishyume-v2-host-requests.json`](./docs/examples/fishyume-v2-host-requests.json)。
-`run.start` 返回的 `attach` 命令会让人类 TUI 观察同一个持久化 Run。
-
-Agent Node 可选声明 `agent.routing`（`fishyume.routing-requirement/v1`），
-用于表达所需能力、复杂度/质量/延迟偏好、候选模型顺序、Prompt Profile ID
-以及有界的成本/上下文/输出预算。旧 Workflow 省略该字段时使用保守的
-`standard`/`balanced` 默认值，并始终关闭自动 fallback。M6.2 的
-`workflow.validate` 与 `workflow.explain` 只校验并投影 effective requirement，
-不会选择模型、查询 Provider 或改变 Driver 启动。
-
-M6.3 已加入纯 deterministic resolver：它只接受上层提供的
-`BudgetGrantV1`，在内置 catalog 中按能力、有效预算、显式候选顺序、复杂度质量门槛、
-质量、延迟、成本和模型 ID 稳定匹配，并生成带 catalog hash/reason codes 的
-`RoutingDecisionV1`。M6.4 已将该决策持久化到新 Attempt，并通过 Agent envelope
-和 Driver launch spec 传播；当前 Codex Driver 会把选定模型传给 direct CLI。历史
-Attempt 缺少 routing metadata 时仍可读取，恢复过程中不会重新计算决策；resolver
-本身不访问网络或 Provider。
-
-M6.5 为每个新路由 Attempt 持久化 `RoutingUsageV1` 成本预留，并按可信 catalog
-校验 route、粗粒度 cost units 与累计预算。显式 `retry` 是 fallback 的批准边界；
-仅 Driver 明确证明 `sideEffectStatus: none` 的失败才会推进到下一个持久化 fallback。
-证据缺失、事件日志截断、发生工具活动或结果为 `indeterminate` 时都不会自动换模型。
-这些 cost units 用于确定性路由预算，不代表 Provider 账单或精确 Token 定价。
-
-M6.6 已将不可变 routing decision、usage receipt 与 side-effect 证据加入共享
-`run.get` Application projection，因此 Host、MCP、machine CLI 与兼容 status
-读取同一份 route/reason/budget/fallback 数据；中文 topology TUI 在节点详情中
-显示模型、路径、累计成本、fallback 批准状态和证据。Windows/Ubuntu CI、fake
-Driver 矩阵与安装包 smoke 现在将这些 operator/release gate 纳入验收。
-
-M6.7 在现有 `workflow.validate` 与 `workflow.explain` 响应中加入
-`routingPreviews`：Host 可以在 `run.start` 前看到每个 Agent Node 的 resolved
-Driver/Target、确定性选中模型、reason codes、预算和 fallback policy；无法满足
-时返回稳定 routing issue。预检使用同一可信 catalog/resolver，不访问 Provider、
-不持久化 Attempt，`run.start` 仍是唯一执行和持久化边界。
-
-Host Agent MCP smoke（不需要 Provider 登录）可重复验证 capabilities、Workflow 校验/解释、幂等 start、Approval、`needs_input`、events 和最终 result：
+脚本调用示例：
 
 ```powershell
-npm --prefix wf run test:mcp-host
+fishyume machine system.capabilities --params '{}'
+fishyume machine routing.catalog --params '{}'
+fishyume machine run.get --params '{"runId":"<run-id>"}'
 ```
 
-该测试使用仓库内 deterministic fake Agent；真实 Codex Provider smoke 仍是独立手动验收，不会退化为 TUI 或人工 MCP allow。流程说明见 [`docs/fishyume-m4-live-smoke.md`](./docs/fishyume-m4-live-smoke.md)。
+标准 `fishyume/v2` Workflow 示例和 Host 请求集合见：
 
-MCP Host 与 TUI controller 的双客户端验收可重复验证共享状态、陈旧版本动作冲突、detach/close 不取消 Run，以及 Attempt 不重复：
+- [`docs/examples/fishyume-v2-host.yaml`](./docs/examples/fishyume-v2-host.yaml)
+- [`docs/examples/fishyume-v2-host-requests.json`](./docs/examples/fishyume-v2-host-requests.json)
 
-```powershell
-npm --prefix wf run test:mcp-tui
-```
+## 核心特性
 
-真实 Codex Driver 的本地单节点验收已使用 `codex-cli 0.147.0` 通过；重复执行要求本机已安装并认证 Codex CLI，并强制使用 headless `--ephemeral --json` 与显式 read-only sandbox。它不属于公共 CI。
-
-## 终端体验
-
-交互式终端中的 `fishyume` Dashboard 与 Run Console 默认使用中文。Header 直接展示任务状态，紧凑 Workflow 行使用符号与中文短标签，当前焦点节点集中展示执行次数、审批说明、结果与诊断详情，底部只保留当前真正可用的操作。等待人工审批、回答或重试时，首屏会出现醒目的下一步提示；打开 Run 时优先聚焦第一个可操作节点。界面在 80/120/160 columns 下保持有界、稳定和 scrollback 友好。`fishyume status <run-id> --watch` 可重新进入同一 Console；终态停止轮询并明确显示任务总结、状态目录与下一步命令。
-
-Console 以 `J`/`K` 或上下方向键遍历全部 Workflow 节点，`Enter` 折叠或展开焦点详情；操作键只对当前由 Engine 判定为 actionable 的选中节点显示并生效。`A/Y` 批准或提交回答，`X/N` 拒绝并填写原因，`T` 确认重试，`C` 明确取消整个任务，`?` 展开中文帮助，`Esc` 放弃当前输入或确认；原有 `a/r/R/c/d/q` 按键继续兼容。answer 绑定 question ID 与 expected Attempt，scalar 或多问题 JSON answers 由 Engine 最终校验。操作模式继续按 `nodeId/kind/duplicateRisk` 固定目标；结果待确认的重试会明确提示重复副作用风险，并只在确认后提交风险确认。`D`、`Q` 或 `Ctrl+C` 只退出观察，不会暂停或取消 Run。
-
-非 TTY 或 CI 环境继续输出可流式处理的逐行纯文本；这些环境中的 `status --watch` 会返回诊断并建议使用普通 `status`，不会进入无限输出。`--watch --json` 会被拒绝，`fishyume status --json` 对当前 Run 输出一个 `run.get` Application response；只有 protocol-v1 历史 Run 回退为只读 compatibility status。`NO_COLOR` 会保留 TUI 结构并关闭颜色，TrueColor 不可用时自动降级到 256/16 色或单色；`TERM=dumb` 或 `FISHYUME_ASCII=1` 使用 ASCII 状态与 Divider fallback。实现与验收矩阵见 [`docs/fishyume-m3-tui-productization.md`](./docs/fishyume-m3-tui-productization.md)、[`docs/fishyume-m3.2-interactive-run-console.md`](./docs/fishyume-m3.2-interactive-run-console.md) 与 [`docs/fishyume-m3.3-calm-operator-console.md`](./docs/fishyume-m3.3-calm-operator-console.md)。六个确定性场景的可审阅输出见 [`docs/fishyume-m3.3-canonical-gallery.txt`](./docs/fishyume-m3.3-canonical-gallery.txt)。
-
-默认状态目录：
-
-- Windows：`%LOCALAPPDATA%\fishyume`
-- Linux：`$XDG_STATE_HOME/fishyume` 或 `~/.local/state/fishyume`
-- macOS：`~/Library/Application Support/fishyume`
-
-M5.8 将 TUI 收敛为 topology-first operator console：120 列以上显示拓扑/详情双栏，80 列显示垂直阶段图，并在节点行标出依赖与并行阶段。具体边界与验收见 [`docs/fishyume-m5.8-topology-first-operator-console.md`](./docs/fishyume-m5.8-topology-first-operator-console.md)。
+- Agent、Approval、依赖、条件分支和并行调度
+- 持久化 Run、Node、Attempt、事件和动作回执
+- 崩溃恢复、Control Plane 重启对账和跨客户端共享状态
+- 有界输出、稳定事件分页、幂等 `clientRequestId` 和带版本前置条件的 `run.action`
+- Context、Memory 绑定和受限上下文预算
+- 确定性能力目录、路由预检、成本预算和保守 fallback
+- 中文 topology-first Operator Console，以及非 TTY 的 JSON/纯文本输出
+- Windows Named Pipe、Unix Domain Socket；默认不开放 TCP
 
 ## 当前边界
 
-当前仍不支持通用 Shell/HTTP/容器节点、模型回退或动态节点。M4.4 不包含 Web/Desktop、Memory、模型路由、Prompt Library、Native Harness、Claude Driver 或第三方 Driver SDK；动态发现和运行时热加载也不在本阶段范围。真实 Provider 调用只作为显式本地 gate，不进入公共 CI。
+当前不包含通用 Shell/HTTP/容器节点、动态 Driver 发现、Web/Desktop 客户端、内置 Harness 或 Claude/第三方 Driver。真实 Provider smoke 是显式本地 gate，不是公共 CI 的前置条件。
 
-## M4：Agent-Native Control Plane
+## 文档
 
-M4.0-M4.4 已完成合同冻结、Codex Driver、Context Compiler、CC-Panes 新 Run 退役、常驻服务/IPC、Agent-native Application API、产品迁移表面与发布验证。真实 Host/PTY、并行 Driver Workflow、Host/TUI stale-action conflict、crash/restart、独立审查和 Windows/Ubuntu CI 均已通过。M4 已作为技术基线收口；真实 Provider crash 记录仍可作为补充证据，但不再阻塞 M4。
+- [文档总览](./docs/README.md)
+- [M6 核心合同冻结](./docs/fishyume-m6-core-contract-freeze.md)
+- [核心稳定化与就绪状态](./docs/fishyume-core-stabilization.md)
+- [首次使用与安装说明](./docs/fishyume-distribution-first-run.md)
+- [开发与验证](./docs/fishyume-development.md)
+- [Live Provider smoke](./docs/fishyume-m4-live-smoke.md)
 
-- 本地常驻 Control Plane 与 Named Pipe/Unix Domain Socket；
-- Headless Agent Process Protocol v1；
-- Codex Agent Driver 的真实 headless 执行；
-- 确定性 Context Compiler 骨架；
-- `capabilities`、Workflow validate/explain、Run list/get/events/action（含 answer）/result；
-- 有界事件读取、持久化幂等调用、跨进程动作和崩溃恢复；
-- MCP、Machine CLI、`fishyume attach` 与 TUI 共享同一 Application Service。
+## 从源码验证
 
-正式架构见 [`docs/fishyume-m4-agent-native-control-plane.md`](./docs/fishyume-m4-agent-native-control-plane.md)，分批实施与门禁见 [`docs/fishyume-m4-implementation-plan.md`](./docs/fishyume-m4-implementation-plan.md)。
-最终自动化、live、审查与 CI 证据见 [`docs/fishyume-release-readiness.md`](./docs/fishyume-release-readiness.md)。M5.0-M5.6 已完成 Context contracts、Source Registry、Memory ledger、Attention Budget Compiler、生产 Run 集成、`fishyume/v2` Context Policy、exactly-once Memory usage 与 Agent-native authoring golden path，并通过 Windows/Ubuntu 公共 CI。M5.7 在不引入内置 Harness 的前提下，为 Host Agent 和中文 TUI 增加安全、有限的 Node Agent 活动可观测性。总体计划见 [`docs/fishyume-m5-context-engineering-plan.md`](./docs/fishyume-m5-context-engineering-plan.md)，活动边界见 [`docs/fishyume-m5.7-agent-activity-observability.md`](./docs/fishyume-m5.7-agent-activity-observability.md)。
+```powershell
+go test ./wf-engine/...
+go vet ./wf-engine/...
+npm --prefix wf ci
+npm --prefix wf run verify
+npm --prefix wf run smoke:install
+```
 
-更完整的需求、架构和里程碑说明见 [`docs/`](./docs/)。
+跨提交状态恢复演练是独立本地 gate：
+
+```powershell
+npm --prefix wf run smoke:downgrade
+```
+
+它需要完整 Git 历史，不属于公共 CI。
+
+## License
+
+Fishyume 使用 [Apache-2.0](./LICENSE) 许可证。
