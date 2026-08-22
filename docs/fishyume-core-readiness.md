@@ -39,11 +39,24 @@ go vet ./wf-engine/...
 npm --prefix wf run verify
 ```
 
+The steady-state growth gate runs 64 unchanged reconciliation cycles and
+requires the durable event count to remain constant until the Driver reports
+new terminal evidence:
+
+```powershell
+go test ./wf-engine/internal/run -run M69SteadyStateReconciliationDoesNotGrowEventLog
+```
+
 Still separate from this gate:
 
 - authenticated real Codex Provider smoke;
-- long-running event, output, journal, and state-growth soak;
+- long-running event, output, journal, and state-growth soak beyond the
+  Provider-independent 64-cycle steady-state gate;
 - install, upgrade, rollback, and historical-state migration drills.
+
+The event log is currently an append-only audit history. Retention or
+compaction would change pagination semantics and therefore requires an explicit
+future contract decision; this batch does not silently prune historical events.
 
 Those are the next readiness batches and must not be made prerequisites for
 Provider-independent public CI.
