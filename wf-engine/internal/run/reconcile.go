@@ -110,7 +110,12 @@ func (s *Service) reconcileAttempts(ctx context.Context, runID string, generatio
 			progressed = true
 		case backend.ObservationActive:
 		default:
-			return progressed, false, fmt.Errorf("Backend returned unsupported observation state %q", observation.State)
+			// An unrecognized state is an incomplete Driver observation, not
+			// proof that the Controller itself failed. Persist the Attempt as
+			// retryable so recovery cannot leave Run and Attempt phases split.
+			if err := recordWaiting(result.ref, ReasonCompletionMissing, fmt.Sprintf("Backend returned unsupported observation state %q", observation.State)); err != nil {
+				return progressed, false, err
+			}
 		}
 	}
 	_, nodes, err := s.loadRun(runID)

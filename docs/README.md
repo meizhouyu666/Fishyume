@@ -10,6 +10,8 @@ links and review evidence stay stable.
   contracts and compatibility policy after M6.7.
 - [Core stabilization record](fishyume-core-stabilization.md): repository
   cleanup changes, verification evidence, and remaining stabilization work.
+- [Core readiness](fishyume-core-readiness.md): Provider-independent failure
+  evidence matrix and the next stabilization gates.
 - [M6 capability and routing](fishyume-m6-capability-model-routing-plan.md):
   completed deterministic routing design and delivery record.
 - [M6.7 routing preflight](fishyume-m6.7-routing-preflight.md): pre-Run routing
