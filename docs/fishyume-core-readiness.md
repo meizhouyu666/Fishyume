@@ -71,3 +71,6 @@ become prerequisites for Provider-independent public CI.
 Rollback safety now also fails closed on a future `stateSchemaVersion`: an old
 reader may continue reading known historical schemas and omitted schema fields,
 but it will not mutate a snapshot whose required semantics it cannot know.
+Control Plane handshakes reject future state schemas and incompatible RPC
+protocols, and Application journal recovery rejects future journal versions
+without rewriting the original record.

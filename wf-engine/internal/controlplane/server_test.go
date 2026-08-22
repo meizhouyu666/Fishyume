@@ -71,6 +71,18 @@ func TestPlatformTransportOwnerAndHandshake(t *testing.T) {
 		connection.Close()
 		t.Fatal("handshake accepted the wrong owner identity")
 	}
+	futureSchema := record
+	futureSchema.StateSchema++
+	if connection, err := Dial(futureSchema, time.Second); err == nil {
+		connection.Close()
+		t.Fatal("handshake accepted a future state schema")
+	}
+	wrongProtocol := record
+	wrongProtocol.RPCProtocolVersion++
+	if connection, err := Dial(wrongProtocol, time.Second); err == nil {
+		connection.Close()
+		t.Fatal("handshake accepted an incompatible RPC protocol")
+	}
 
 	connection, err := Dial(record, time.Second)
 	if err != nil {

@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"testing"
 	"time"
 )
@@ -99,5 +100,44 @@ func TestApplicationJournalFaultStagesRemainRecoverable(t *testing.T) {
 				t.Fatalf("committed = %+v, error = %v", committed, commitErr)
 			}
 		})
+	}
+}
+
+func TestApplicationJournalFutureVersionFailsClosedWithoutMutation(t *testing.T) {
+	state := New(t.TempDir())
+	now := time.Unix(30, 0).UTC()
+	request := json.RawMessage(`{"project":"p"}`)
+	if _, err := state.BeginApplicationJournal("start", "future-version", "hash", request, "run-future", now); err != nil {
+		t.Fatal(err)
+	}
+	path := state.applicationJournalPath("start", "future-version")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	record["version"] = 2
+	future, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, future, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.ReadApplicationJournal("start", "future-version"); err == nil {
+		t.Fatal("future journal version was accepted")
+	}
+	if _, err := state.ListPendingApplicationJournals(); err == nil {
+		t.Fatal("future journal version was accepted during recovery listing")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(future) {
+		t.Fatal("future journal version failure rewrote the journal")
 	}
 }
