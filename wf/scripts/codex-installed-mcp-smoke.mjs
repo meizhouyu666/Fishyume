@@ -3,7 +3,7 @@ import {spawn} from 'node:child_process';
 import {existsSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {collectHostEvents, terminateAndWait} from './codex-host-mcp-smoke.mjs';
+import {collectHostEvents, hasCompletedAgentMarker, terminateAndWait} from './codex-host-mcp-smoke.mjs';
 
 const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 
@@ -37,19 +37,38 @@ async function main() {
     'If the tool is unavailable, requires interactive approval, or fails, reply with exactly INSTALLED_MCP_SMOKE failed.',
   ].join(' ');
   const invocation = codexInvocation(['exec', '--ephemeral', '--json', '--color', 'never', '--sandbox', 'read-only', '--cd', repoRoot, prompt]);
-  const child = spawn(invocation.command, invocation.args, {cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32'});
+  const child = spawn(invocation.command, invocation.args, {cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32'});
+  // An explicit EOF prevents Codex from waiting for an unintended stdin prompt on Windows.
+  child.stdin.end();
   let stdout = '';
   let stderr = '';
-  child.stdout.on('data', chunk => {stdout += chunk.toString('utf8')});
+  let hostMarkerResolve;
+  const hostMarker = new Promise(resolveMarker => {hostMarkerResolve = resolveMarker});
+  child.stdout.on('data', chunk => {
+    stdout += chunk.toString('utf8');
+    if (hostMarkerResolve && hasCompletedAgentMarker(stdout, /^INSTALLED_MCP_SMOKE (?:succeeded|failed)\.?$/)) {
+      const resolveMarker = hostMarkerResolve;
+      hostMarkerResolve = undefined;
+      resolveMarker();
+    }
+  });
   child.stderr.on('data', chunk => {stderr += chunk.toString('utf8')});
-  let exit = await waitForExit(child, 120_000);
+  const outcome = await Promise.race([
+    waitForExit(child, 120_000).then(exit => ({exit, completedByMarker: false})),
+    hostMarker.then(async () => {
+      await new Promise(resolveFlush => setTimeout(resolveFlush, 250));
+      return {exit: await terminateAndWait(child, 'installed Codex MCP completion'), completedByMarker: true};
+    }),
+  ]);
+  const {exit, completedByMarker} = outcome;
   if (!exit) {
     await terminateAndWait(child, 'installed Codex MCP smoke');
     throw new Error('installed Codex MCP smoke timed out');
   }
   const observed = collectHostEvents(stdout);
   const calls = observed.calls.filter(call => call.name === 'system.capabilities');
-  const valid = exit.code === 0 && observed.errors.length === 0 && observed.tools.length === 1 && observed.tools[0] === 'system.capabilities' && calls.length === 1 && calls[0].status === 'completed' && calls[0].payload?.apiVersion === 'fishyume.application/v1';
+  const succeeded = hasCompletedAgentMarker(stdout, /^INSTALLED_MCP_SMOKE succeeded\.?$/);
+  const valid = (completedByMarker || exit.code === 0) && succeeded && observed.errors.length === 0 && observed.tools.length === 1 && observed.tools[0] === 'system.capabilities' && calls.length === 1 && calls[0].status === 'completed' && calls[0].payload?.apiVersion === 'fishyume.application/v1';
   if (!valid) {
     const error = observed.errors.at(-1) || stderr || observed.messages.at(-1) || `exit ${exit.code ?? exit.signal ?? 'unknown'}`;
     throw new Error(`installed MCP contract failed; exit=${exit.code ?? exit.signal ?? 'unknown'}; tools=${observed.tools.join(',') || 'none'}; events=${observed.eventKinds.join(',') || 'none'}; diagnostic=${redact(error).slice(-400)}`);

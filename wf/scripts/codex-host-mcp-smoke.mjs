@@ -184,12 +184,22 @@ function collectHostEvents(stdout) {
     const text = (item?.type === 'message' || item?.type === 'agent_message') && Array.isArray(item.content)
       ? item.content.filter(part => part?.type === 'output_text').map(part => part.text || '').join(' ')
       : '';
-    const combined = `${text} ${item?.text || ''}`;
-    const success = combined.match(/HOST_MCP_(?:SMOKE|PTY) succeeded run=([^\s]+)/);
+    const combined = `${text} ${item?.text || ''}`.trim();
+    const success = combined.match(/^HOST_MCP_(?:SMOKE|PTY) succeeded run=([^\s]+)(?: tools=[^\r\n]+| conflict=host)?\.?$/);
     if (success) {conclusion = 'succeeded'; runId = success[1]}
-    if (combined.includes('HOST_MCP_SMOKE failed') || combined.includes('HOST_MCP_PTY failed')) conclusion = 'failed';
+    if (/^HOST_MCP_(?:SMOKE|PTY) failed\b/.test(combined)) conclusion = 'failed';
   }
   return {tools, calls, conclusion, runId, errors, messages, eventKinds};
+}
+
+function hasCompletedAgentMarker(stdout, marker) {
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let event;
+    try {event = JSON.parse(line)} catch {continue}
+    if (event.type === 'item.completed' && event.item?.type === 'agent_message' && typeof event.item.text === 'string' && marker.test(event.item.text.trim())) return true;
+  }
+  return false;
 }
 
 function requireEvidence(condition, message) {
@@ -348,6 +358,8 @@ async function main() {
   let attachChild;
   let stdout = '';
   let stderr = '';
+  let hostMarkerResolve;
+  const hostMarker = new Promise(resolveMarker => {hostMarkerResolve = resolveMarker});
   let primaryError;
   let successSummary;
   try {
@@ -359,9 +371,19 @@ async function main() {
     const invocation = codexInvocation([
       'exec', '--ephemeral', '--json', '--color', 'never', '--sandbox', 'read-only', '--cd', repoRoot, prompt,
     ]);
-    child = spawn(invocation.command, invocation.args, {cwd: repoRoot, env: environment, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32'});
+    child = spawn(invocation.command, invocation.args, {cwd: repoRoot, env: environment, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32'});
+    // An explicit EOF prevents Codex from waiting for an unintended stdin prompt on Windows.
+    child.stdin.end();
     child.stdout.on('data', chunk => {
       stdout += chunk.toString('utf8');
+      const completedMarker = ptyHandoff
+        ? /^(?:HOST_MCP_PTY succeeded run=[^\s]+ conflict=host\.?|HOST_MCP_PTY failed\b.*)$/
+        : /^(?:HOST_MCP_SMOKE succeeded run=[^\s]+ tools=system\.capabilities,workflow\.validate,workflow\.explain,run\.start,run\.events,run\.action,run\.result\.?|HOST_MCP_SMOKE failed\b.*)$/;
+      if (hostMarkerResolve && hasCompletedAgentMarker(stdout, completedMarker)) {
+        const resolveMarker = hostMarkerResolve;
+        hostMarkerResolve = undefined;
+        resolveMarker();
+      }
       if (!ptyHandoff || attachChild) return;
       const runId = stdout.match(/run-[a-z0-9]+/gi)?.at(-1);
       if (!runId) return;
@@ -371,12 +393,19 @@ async function main() {
       });
     });
     child.stderr.on('data', chunk => {stderr += chunk.toString('utf8')});
-    const exit = await waitOrTerminate(child, 180000, 'Codex Host');
+    const outcome = await Promise.race([
+      waitOrTerminate(child, 180000, 'Codex Host').then(exit => ({exit, completedByMarker: false})),
+      hostMarker.then(async () => {
+        await new Promise(resolveFlush => setTimeout(resolveFlush, 250));
+        return {exit: await terminateAndWait(child, 'Codex Host completion'), completedByMarker: true};
+      }),
+    ]);
+    const {exit, completedByMarker} = outcome;
     const observed = collectHostEvents(stdout);
     let evidence;
     let evidenceError;
     try {evidence = validateHostEvidence(observed, ptyHandoff)} catch (error) {evidenceError = error}
-    if (exit.code !== 0 || observed.conclusion !== 'succeeded' || evidenceError) {
+    if ((!completedByMarker && exit.code !== 0) || observed.conclusion !== 'succeeded' || evidenceError) {
       const reason = exit.signal === 'timeout' ? 'timeout' : observed.conclusion === 'failed' ? 'host-agent-reported-failure' : `exit-${exit.code ?? exit.signal ?? 'unknown'}`;
       const hostError = observed.errors.at(-1) ? `; host=${redact(observed.errors.at(-1))}` : '';
       const agentMessage = observed.messages.at(-1) ? `; agent=${redact(observed.messages.at(-1)).slice(-500)}` : '';
@@ -418,4 +447,4 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   });
 }
 
-export {collectHostEvents, terminateAndWait, validateHostEvidence};
+export {collectHostEvents, hasCompletedAgentMarker, terminateAndWait, validateHostEvidence};

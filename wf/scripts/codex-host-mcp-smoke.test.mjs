@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import test from 'node:test';
-import {collectHostEvents, terminateAndWait, validateHostEvidence} from './codex-host-mcp-smoke.mjs';
+import {collectHostEvents, hasCompletedAgentMarker, terminateAndWait, validateHostEvidence} from './codex-host-mcp-smoke.mjs';
 
 function completed(tool, args, payload, status = 'completed') {
   const result = payload?.error
@@ -55,6 +55,19 @@ test('PTY evidence rejects retargeted Runs and non-retained state versions', () 
 
   const wrongVersion = validPtyStream().replace('"expectedStateVersion":5,"nodeId"', '"expectedStateVersion":6,"nodeId"');
   assert.throws(() => validateHostEvidence(collectHostEvents(wrongVersion), true), /retain the waiting stateVersion/);
+});
+
+test('completion marker ignores prompt text and requires a completed agent message', () => {
+  const marker = /^HOST_MCP_SMOKE succeeded run=[^\s]+ tools=system\.capabilities,workflow\.validate,workflow\.explain,run\.start,run\.events,run\.action,run\.result\.?$/;
+  const promptEvent = JSON.stringify({type: 'thread.started', prompt: 'Reply HOST_MCP_SMOKE succeeded only after all tools complete.'});
+  const startedMessage = JSON.stringify({type: 'item.started', item: {type: 'agent_message', text: 'HOST_MCP_SMOKE succeeded run=run-early'}});
+  assert.equal(hasCompletedAgentMarker(`${promptEvent}\n${startedMessage}`, marker), false);
+
+  const mentionedMarker = JSON.stringify({type: 'item.completed', item: {type: 'agent_message', text: 'I will later reply HOST_MCP_SMOKE succeeded run=run-early tools=system.capabilities,workflow.validate,workflow.explain,run.start,run.events,run.action,run.result.'}});
+  assert.equal(hasCompletedAgentMarker(`${promptEvent}\n${mentionedMarker}`, marker), false);
+
+  const completedMessage = JSON.stringify({type: 'item.completed', item: {type: 'agent_message', text: 'HOST_MCP_SMOKE succeeded run=run-complete tools=system.capabilities,workflow.validate,workflow.explain,run.start,run.events,run.action,run.result.'}});
+  assert.equal(hasCompletedAgentMarker(`${promptEvent}\n${completedMessage}`, marker), true);
 });
 
 test('cleanup terminates and joins the spawned process tree', {timeout: 10_000}, async () => {
