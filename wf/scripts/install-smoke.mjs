@@ -11,6 +11,7 @@ const root = await mkdtemp(join(tmpdir(), 'fishyume-install-smoke-'));
 const packs = join(root, 'packs');
 const installRoot = join(root, 'install');
 const stateRoot = join(root, 'state');
+const rollbackSnapshot = join(root, 'rollback-snapshot');
 const stagedPlatform = join(root, 'platform-package');
 const platformDirectory = process.platform === 'win32' && process.arch === 'x64'
   ? join(process.cwd(), 'packages', 'fishyume-engine-win32-x64')
@@ -52,6 +53,47 @@ function invoke(cli, args, allowed = [0]) {
   });
   if (!allowed.includes(result.status)) throw new Error(`fishyume ${args.join(' ')} failed (${result.status}): ${result.stderr || result.stdout}`);
   return `${result.stdout ?? ''}${result.stderr ?? ''}`;
+}
+
+function applicationCall(cli, method, params) {
+  const output = invoke(cli, ['machine', method, '--params', JSON.stringify(params)]);
+  let response;
+  try {response = JSON.parse(output)} catch {throw new Error(`fishyume ${method} returned invalid JSON: ${output}`)}
+  if (response?.error) throw new Error(`fishyume ${method} failed: ${response.error.code}: ${response.error.message}`);
+  return response;
+}
+
+function waitForRun(cli, runId, predicate, label) {
+  const deadline = Date.now() + 15_000;
+  let latest;
+  while (Date.now() < deadline) {
+    latest = applicationCall(cli, 'run.get', {runId}).run;
+    if (predicate(latest)) return latest;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  }
+  throw new Error(`${label} did not converge: ${JSON.stringify(latest)}`);
+}
+
+function runEvidence(runId) {
+  const runDirectory = join(stateRoot, 'runs', runId);
+  return {
+    run: readFileSync(join(runDirectory, 'run.json')),
+    events: readFileSync(join(runDirectory, 'events.jsonl')),
+  };
+}
+
+function assertSameEvidence(actual, expected, label) {
+  if (!actual.run.equals(expected.run) || !actual.events.equals(expected.events)) {
+    throw new Error(`${label} changed the durable Run snapshot or event log`);
+  }
+}
+
+function assertWaitingApproval(run, expected) {
+  const approval = run.nodes?.find(node => node.nodeId === 'approve');
+  if (run.runId !== expected.runId || run.phase !== 'waiting' || approval?.phase !== 'waiting' || approval?.type !== 'approval') {
+    throw new Error(`rollback drill did not restore the waiting Approval: ${JSON.stringify(run)}`);
+  }
+  if (run.stateVersion !== expected.stateVersion) throw new Error(`rollback drill stateVersion changed from ${expected.stateVersion} to ${run.stateVersion}`);
 }
 
 function stopControlPlane() {
@@ -97,21 +139,68 @@ try {
   const doctor = invoke(cli, ['doctor'], [0, 1]);
   if (!/ok engine 0\.2\.1-alpha\.1 started/.test(doctor) || !/ok protocol 2 compatible/.test(doctor) || !/(?:ok|fail) codex-mcp/.test(doctor)) throw new Error(`installed Doctor output is incomplete: ${doctor}`);
 
-  // Simulate an in-place upgrade while the installed Control Plane is idle.
-  // The state directory is external to npm and must survive replacement of
-  // both the CLI and platform Engine packages.
+  const rollbackWorkflow = {
+    apiVersion: 'fishyume/v2',
+    name: 'install-rollback-drill',
+    defaults: {agent: {driver: 'codex', target: 'local'}},
+    execution: {maxConcurrency: 1},
+    nodes: {approve: {type: 'approval', prompt: 'Approve the rollback drill?'}},
+  };
+  const startRequest = {project: process.cwd(), workflow: {document: rollbackWorkflow}, clientRequestId: 'install-rollback-drill-1'};
+  const started = applicationCall(cli, 'run.start', startRequest);
+  const waiting = waitForRun(cli, started.runId, run => run.phase === 'waiting', 'pre-upgrade Approval');
+  const waitingEvents = applicationCall(cli, 'run.events', {runId: started.runId, afterSequence: 0, limit: 100});
+  if (waitingEvents.events.length < 1 || waitingEvents.nextAfterSequence < 1) throw new Error('rollback drill has no durable waiting events');
+
+  // Snapshot only after the Control Plane is idle. The external state must
+  // survive package replacement and remain usable after an explicit restore.
   stopControlPlane();
   const upgradeMarker = join(stateRoot, 'upgrade-marker.txt');
   mkdirSync(stateRoot, {recursive: true});
   const marker = 'state-survives-package-upgrade';
   writeFileSync(upgradeMarker, marker, 'utf8');
+  const waitingEvidence = runEvidence(started.runId);
+  cpSync(stateRoot, rollbackSnapshot, {recursive: true});
+
   npm(['install', '--prefix', installRoot, cliTarball, engineTarball, '--ignore-scripts', '--no-audit', '--no-fund']);
   if (readFileSync(upgradeMarker, 'utf8') !== marker) throw new Error('in-place package upgrade touched external state');
   const upgradedCli = join(installRoot, 'node_modules', 'fishyume', 'dist', 'cli.js');
   if (!existsSync(upgradedCli)) throw new Error('upgraded CLI is missing');
   const upgradedHelp = invoke(upgradedCli, ['--help']);
   if (!/Fishyume/.test(upgradedHelp) || !/dashboard/.test(upgradedHelp)) throw new Error('upgraded CLI help is incomplete');
-  process.stdout.write('Verified packed Fishyume install, Dashboard, setup, offline demo, and Doctor recovery surface\n');
+
+  const replayed = applicationCall(upgradedCli, 'run.start', startRequest);
+  if (replayed.runId !== started.runId) throw new Error('in-place upgrade lost the idempotent run.start receipt');
+  const upgradedWaiting = waitForRun(upgradedCli, started.runId, run => run.phase === 'waiting', 'post-upgrade Approval');
+  assertWaitingApproval(upgradedWaiting, waiting);
+  assertSameEvidence(runEvidence(started.runId), waitingEvidence, 'post-upgrade observation');
+  const upgradedEvents = applicationCall(upgradedCli, 'run.events', {runId: started.runId, afterSequence: 0, limit: 100});
+  if (upgradedEvents.nextAfterSequence !== waitingEvents.nextAfterSequence) throw new Error('in-place upgrade changed the waiting event sequence');
+
+  applicationCall(upgradedCli, 'run.action', {actionId: 'install-upgrade-approve-1', runId: started.runId, type: 'approve', expectedStateVersion: upgradedWaiting.stateVersion, nodeId: 'approve'});
+  const upgradedTerminal = waitForRun(upgradedCli, started.runId, run => run.phase === 'completed', 'post-upgrade completion');
+  const upgradedResult = applicationCall(upgradedCli, 'run.result', {runId: started.runId});
+  if (upgradedTerminal.conclusion !== 'succeeded' || upgradedResult.conclusion !== 'succeeded') throw new Error('upgraded package did not complete the restored Approval Run');
+
+  stopControlPlane();
+  rmSync(stateRoot, {recursive: true, force: true});
+  cpSync(rollbackSnapshot, stateRoot, {recursive: true});
+  if (readFileSync(upgradeMarker, 'utf8') !== marker) throw new Error('rollback restore lost external state');
+  assertSameEvidence(runEvidence(started.runId), waitingEvidence, 'rollback restore');
+
+  const restoredWaiting = waitForRun(upgradedCli, started.runId, run => run.phase === 'waiting', 'restored Approval');
+  assertWaitingApproval(restoredWaiting, waiting);
+  assertSameEvidence(runEvidence(started.runId), waitingEvidence, 'read-only restored observation');
+  const restoredReplay = applicationCall(upgradedCli, 'run.start', startRequest);
+  if (restoredReplay.runId !== started.runId) throw new Error('rollback restore lost the idempotent run.start receipt');
+  applicationCall(upgradedCli, 'run.action', {actionId: 'install-rollback-approve-1', runId: started.runId, type: 'approve', expectedStateVersion: restoredWaiting.stateVersion, nodeId: 'approve'});
+  const restoredTerminal = waitForRun(upgradedCli, started.runId, run => run.phase === 'completed', 'restored completion');
+  const restoredResult = applicationCall(upgradedCli, 'run.result', {runId: started.runId});
+  if (restoredTerminal.stateVersion !== upgradedTerminal.stateVersion || restoredTerminal.conclusion !== 'succeeded' || restoredResult.conclusion !== 'succeeded') {
+    throw new Error('restored package state did not converge to the same terminal contract');
+  }
+
+  process.stdout.write('Verified packed install, in-place upgrade, durable Run snapshot restore, and terminal reconvergence\n');
 } finally {
   stopControlPlane();
   rmSync(root, {recursive: true, force: true});

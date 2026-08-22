@@ -52,8 +52,8 @@ Still separate from this gate:
 - authenticated real Codex Provider smoke;
 - long-running event, output, journal, and state-growth soak beyond the
   Provider-independent 64-cycle steady-state gate;
-- rollback and historical-state migration drills beyond the state-schema-v1
-  retry and same-prefix package-upgrade checks recorded below.
+- downgrade rehearsal using an archived prior-version package, and rollback of
+  Workflows that may already have produced external side effects.
 
 The event log is currently an append-only audit history. Retention or
 compaction would change pagination semantics and therefore requires an explicit
@@ -61,12 +61,25 @@ future contract decision; this batch does not silently prune historical events.
 
 The upgrade compatibility gate also verifies that a retry against a historical
 state-schema-v1 Run preserves the old Attempt byte-for-byte while the new
-Attempt is written with the current state/context schema. The packed install
-smoke repeats installation into the same prefix after stopping an idle Control
-Plane and verifies that the external state directory survives replacement.
+Attempt is written with the current state/context schema.
 
-The remaining live and rollback gates are intentionally separate and must not
-become prerequisites for Provider-independent public CI.
+The packed install smoke now performs a Provider-independent state rollback
+drill around an Approval-only Run. It waits for durable Approval state, stops
+the Control Plane, snapshots the external state directory, reinstalls both
+packages into the same prefix, and proves that `run.start` idempotency, the Run
+snapshot, and the event sequence remain unchanged. It then completes the Run,
+restores the waiting snapshot, verifies that observation is byte-preserving,
+and completes the restored Run again with a new action ID and the same terminal
+state contract. The Approval-only workflow deliberately has no Provider or
+external side effect, so the restore cannot duplicate business execution.
+
+This drill proves that the current package can restore and reconcile a stopped
+current-schema snapshot. It does not claim that an arbitrary older executable
+can read state created by a newer release. That downgrade claim requires an
+archived prior-version package and remains a separate release gate.
+
+The remaining live and cross-version downgrade gates are intentionally
+separate and must not become prerequisites for Provider-independent public CI.
 
 Rollback safety now also fails closed on a future `stateSchemaVersion`: an old
 reader may continue reading known historical schemas and omitted schema fields,

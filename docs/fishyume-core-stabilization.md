@@ -43,8 +43,10 @@ release gate documented in
 
 ## Remaining stabilization work
 
-This pass does not claim that product stabilization is finished. The next work
-should focus on real business Workflow acceptance, long-running state growth,
-Provider failure drills, install/upgrade compatibility, and operator-facing
-diagnostics. The third-party Driver SDK, dynamic discovery, Web/Desktop UI, and
-Native Harness remain outside the frozen core.
+This pass does not claim that product stabilization is finished. The packed
+install gate now covers same-prefix replacement and an Approval-only durable
+state snapshot/restore with terminal reconvergence. The next work should focus
+on real business Workflow acceptance, longer state growth, Provider failure
+drills, archived-package downgrade rehearsal, and operator-facing diagnostics.
+The third-party Driver SDK, dynamic discovery, Web/Desktop UI, and Native
+Harness remain outside the frozen core.

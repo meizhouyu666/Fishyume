@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { parseArgs as parsePreflight, selectSteps } from './preflight.mjs';
 import { commandFor, commandsFor, parseArgs as parseStress, STRESS_PACKAGES } from './stress.mjs';
 
@@ -20,4 +21,14 @@ test('stress rejects unsafe repetition and timeout values', () => {
   assert.throws(() => parseStress(['--count', '0']), /positive integer/);
   assert.throws(() => parseStress(['--count', '1.5']), /positive integer/);
   assert.throws(() => parseStress(['--timeout', 'forever']), /Go duration/);
+});
+
+test('packed install gate retains the durable rollback rehearsal', () => {
+  const source = readFileSync(new URL('./install-smoke.mjs', import.meta.url), 'utf8');
+  assert.match(source, /name: 'install-rollback-drill'/);
+  assert.match(source, /cpSync\(stateRoot, rollbackSnapshot/);
+  assert.match(source, /assertSameEvidence\(runEvidence\(started\.runId\), waitingEvidence, 'rollback restore'\)/);
+  assert.match(source, /actionId: 'install-upgrade-approve-1'/);
+  assert.match(source, /actionId: 'install-rollback-approve-1'/);
+  assert.match(source, /restoredTerminal\.stateVersion !== upgradedTerminal\.stateVersion/);
 });
