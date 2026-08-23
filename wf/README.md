@@ -39,7 +39,7 @@ fishyume mcp
 fishyume machine system.capabilities --params '{}'
 ```
 
-`fishyume setup codex` 是 `fishyume setup` 的兼容写法。详细的 Workflow 示例、Application API 和产品边界见仓库根目录 [README](../README.md) 与 [文档总览](../docs/README.md)。
+`fishyume setup codex` 是 `fishyume setup` 的兼容写法。一个 Agent Node Attempt 会启动一个独立的 one-shot Codex 进程，因此实际 Workflow 应按完整工作包划分 Node。详细原则和长程任务模板见 [Workflow 编排指南](../docs/fishyume-workflow-authoring.md) 与 [示例目录](../docs/examples/README.md)；Application API 和产品边界见仓库根目录 [README](../README.md)。
 
 ## 支持范围
 

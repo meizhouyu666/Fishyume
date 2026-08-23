@@ -98,8 +98,30 @@ fishyume machine run.get --params '{"runId":"<run-id>"}'
 
 标准 `fishyume/v2` Workflow 示例和 Host 请求集合见：
 
-- [`docs/examples/fishyume-v2-host.yaml`](./docs/examples/fishyume-v2-host.yaml)
-- [`docs/examples/fishyume-v2-host-requests.json`](./docs/examples/fishyume-v2-host-requests.json)
+- [Workflow 编排指南](./docs/fishyume-workflow-authoring.md)
+- [真实仓库长程任务模板](./docs/examples/repository-hardening.yaml)
+- [全部示例及用途分级](./docs/examples/README.md)
+
+## 如何划分 Workflow Node
+
+一个 Agent Node Attempt 会启动一个独立的 one-shot Codex 进程。Node 应表示有独立
+交付物、审批边界、并行价值或恢复价值的完整工作包；读取文件、列计划、执行命令、
+修改代码、运行聚焦测试和整理摘要通常应留在同一个 Node 内部。
+
+推荐结构：
+
+```text
+并行领域审计 -> 汇总实施方案 -> 人工审批 -> 集中实施 -> 独立验证 -> 最终验收
+```
+
+不推荐把一次实现机械拆成：
+
+```text
+read -> plan -> edit -> test -> summarize
+```
+
+现有 `fishyume-smoke.yaml`、`fishyume-topology-demo.yaml` 和 Host golden path 是协议、
+生命周期或界面验证夹具，不代表实际任务的推荐 Node 粒度。
 
 ## 核心特性
 
@@ -119,6 +141,7 @@ fishyume machine run.get --params '{"runId":"<run-id>"}'
 ## 文档
 
 - [文档总览](./docs/README.md)
+- [Workflow 编排指南](./docs/fishyume-workflow-authoring.md)
 - [M6 核心合同冻结](./docs/fishyume-m6-core-contract-freeze.md)
 - [核心稳定化与就绪状态](./docs/fishyume-core-stabilization.md)
 - [首次使用与安装说明](./docs/fishyume-distribution-first-run.md)

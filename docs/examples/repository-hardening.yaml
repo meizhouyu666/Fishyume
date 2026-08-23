@@ -1,0 +1,92 @@
+apiVersion: fishyume/v2
+name: repository-hardening
+defaults:
+  agent:
+    driver: codex
+    target: local
+execution:
+  maxConcurrency: 3
+nodes:
+  architecture-audit:
+    type: agent
+    task: >-
+      Perform a read-only architecture and implementation audit of the repository.
+      Trace the main runtime paths and cross-layer contracts, identify concrete
+      correctness or maintainability risks, and return a prioritized report with
+      file references, evidence, affected behavior, and bounded remediation options.
+      Do not modify files. Do not stop at a directory listing or generic summary.
+    context:
+      dependencies: []
+
+  test-build-audit:
+    type: agent
+    task: >-
+      Perform a read-only test, build, and release-gate audit. Discover and run the
+      project-appropriate non-destructive checks, inspect coverage of critical
+      behavior and recovery paths, and return the commands, outcomes, gaps, and
+      prioritized recommendations. Do not modify files or install new dependencies.
+    context:
+      dependencies: []
+
+  product-docs-audit:
+    type: agent
+    task: >-
+      Perform a read-only product and documentation audit. Compare the implemented
+      command surface and current contracts with the README, first-run guide, examples,
+      and product boundaries. Return concrete inconsistencies, usability friction,
+      and scoped documentation or product recommendations with file references.
+      Do not modify files.
+    context:
+      dependencies: []
+
+  synthesis:
+    type: agent
+    dependsOn: [architecture-audit, test-build-audit, product-docs-audit]
+    task: >-
+      Synthesize the three audit reports into one bounded implementation proposal.
+      Reconcile duplicate or conflicting findings, separate verified defects from
+      optional improvements, define the exact files and behavior allowed to change,
+      list acceptance checks, and call out deferred work. Do not modify files.
+    context:
+      dependencies: [architecture-audit, test-build-audit, product-docs-audit]
+
+  approve-implementation:
+    type: approval
+    dependsOn: [synthesis]
+    prompt: >-
+      Review the synthesized findings and bounded implementation proposal. Approve
+      only if its change scope, risk boundaries, and acceptance checks are acceptable.
+
+  implementation:
+    type: agent
+    dependsOn: [approve-implementation]
+    when:
+      node: approve-implementation
+      field: result.decision
+      equals: approved
+    task: >-
+      Implement only the approved proposal. Preserve unrelated user changes, keep
+      edits within the approved file and behavior boundaries, add focused regression
+      coverage where required, run the proposal's checks, and return a structured
+      summary of changed files, behavior, tests, residual risks, and any deviation.
+    context:
+      dependencies: [synthesis]
+
+  independent-verification:
+    type: agent
+    dependsOn: [implementation]
+    task: >-
+      Independently verify the approved implementation. Inspect the actual diff and
+      repository status, compare it with the proposal, run the relevant checks, and
+      look for regressions, scope creep, missing tests, and documentation drift.
+      Do not make corrective edits. Return an evidence-backed pass/fail verdict and
+      list any remaining findings by severity.
+    context:
+      dependencies: [synthesis, implementation]
+
+  accept-result:
+    type: approval
+    dependsOn: [independent-verification]
+    prompt: >-
+      Review the independent verification verdict and decide whether to accept the
+      repository-hardening result as complete.

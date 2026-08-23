@@ -25,12 +25,13 @@ links and review evidence stay stable.
 
 ## Operator and developer guides
 
+- [Workflow authoring and Node granularity](fishyume-workflow-authoring.md)
 - [Development and verification](fishyume-development.md)
 - [Distribution and first run](fishyume-distribution-first-run.md)
 - [Developer preview](fishyume-m4.5-developer-preview.md)
 - [Agent selection migration](fishyume-m4-migration-guide.md)
 - [Live Provider smoke](fishyume-m4-live-smoke.md)
-- [Workflow examples](examples/)
+- [Workflow examples and purpose labels](examples/README.md)
 
 ## Milestone evidence
 
