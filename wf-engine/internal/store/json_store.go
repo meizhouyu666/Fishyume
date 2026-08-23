@@ -228,11 +228,61 @@ func (s *Store) WriteWorkflow(runID string, document any) error {
 	return s.writeJSON(path, document)
 }
 
+// EnsureWorkflow creates the normalized workflow once and otherwise verifies
+// that a retry is bound to the same durable initialization.
+func (s *Store) EnsureWorkflow(runID string, document any) error {
+	if err := validateID("run", runID); err != nil {
+		return err
+	}
+	return s.ensureJSON(s.WorkflowPath(runID), document, fmt.Sprintf("normalized workflow for run %q", runID))
+}
+
 func (s *Store) WriteNode(runID, nodeID string, snapshot any) error {
 	if err := validateRunNode(runID, nodeID); err != nil {
 		return err
 	}
 	return s.writeJSON(s.NodePath(runID, nodeID), snapshot)
+}
+
+// EnsureNode creates an initial Node snapshot once and never overwrites
+// residual state from an interrupted start.
+func (s *Store) EnsureNode(runID, nodeID string, snapshot any) error {
+	if err := validateRunNode(runID, nodeID); err != nil {
+		return err
+	}
+	return s.ensureJSON(s.NodePath(runID, nodeID), snapshot, fmt.Sprintf("initial snapshot for node %q", nodeID))
+}
+
+// EnsureSnapshot creates an initial Run snapshot once and otherwise verifies
+// exact initial content. Callers must only use this before the Run can advance.
+func (s *Store) EnsureSnapshot(runID string, snapshot any) error {
+	if err := validateID("run", runID); err != nil {
+		return err
+	}
+	return s.ensureJSON(s.SnapshotPath(runID), snapshot, fmt.Sprintf("initial snapshot for run %q", runID))
+}
+
+func (s *Store) ensureJSON(path string, value any, description string) error {
+	expected, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("encode %s: %w", description, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create snapshot directory %q: %w", filepath.Dir(path), err)
+	}
+	return withLeaseGuard(path, func() error {
+		existing, readErr := os.ReadFile(path)
+		if readErr == nil {
+			if !equalJSON(existing, expected) {
+				return fmt.Errorf("%s does not match requested initialization", description)
+			}
+			return nil
+		}
+		if !os.IsNotExist(readErr) {
+			return fmt.Errorf("inspect %s: %w", description, readErr)
+		}
+		return s.writeJSON(path, value)
+	})
 }
 
 func (s *Store) WriteAttempt(runID, nodeID string, number int, snapshot any) error {
@@ -329,6 +379,53 @@ func (s *Store) AppendEvent(runID string, event any) error {
 		return fmt.Errorf("append event log %q: %w", path, err)
 	}
 	return nil
+}
+
+// EnsureInitialEvent appends the first event exactly once. Existing event
+// history is never rewritten; its first record must match the requested start.
+func (s *Store) EnsureInitialEvent(runID string, event any) (bool, error) {
+	if err := validateID("run", runID); err != nil {
+		return false, err
+	}
+	path := s.EventsPath(runID)
+	expected, err := json.Marshal(event)
+	if err != nil {
+		return false, fmt.Errorf("encode initial event for %q: %w", path, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return false, fmt.Errorf("create event directory %q: %w", filepath.Dir(path), err)
+	}
+	created := false
+	err = withLeaseGuard(path, func() error {
+		file, openErr := os.Open(path)
+		if openErr == nil {
+			scanner := bufio.NewScanner(file)
+			hasFirst := scanner.Scan()
+			first := append([]byte(nil), scanner.Bytes()...)
+			scanErr := scanner.Err()
+			closeErr := file.Close()
+			if scanErr != nil {
+				return fmt.Errorf("read initial event for run %q: %w", runID, scanErr)
+			}
+			if closeErr != nil {
+				return fmt.Errorf("close event log for run %q: %w", runID, closeErr)
+			}
+			if hasFirst {
+				if !equalJSON(first, expected) {
+					return fmt.Errorf("initial event for run %q does not match requested initialization", runID)
+				}
+				return nil
+			}
+		} else if !os.IsNotExist(openErr) {
+			return fmt.Errorf("open events for run %q: %w", runID, openErr)
+		}
+		if err := s.AppendEvent(runID, event); err != nil {
+			return err
+		}
+		created = true
+		return nil
+	})
+	return created, err
 }
 
 func (s *Store) WriteOutput(runID, output string) error {

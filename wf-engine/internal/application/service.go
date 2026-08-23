@@ -306,10 +306,6 @@ func (s *Service) runStartNormalized(ctx context.Context, request RunStartReques
 		if record.State == store.JournalMutated || record.State == store.JournalCommitted {
 			return replayJournalResponse[RunStartResponse](s, record)
 		}
-		if view, statusErr := s.core.Status(record.PlannedRunID); statusErr == nil && !view.Legacy && view.Run != nil {
-			response := startResponse(*view.Run)
-			return persistJournalResponse(s, "start", request.ClientRequestID, requestHash, response)
-		}
 	} else if !errors.Is(readErr, os.ErrNotExist) {
 		return RunStartResponse{}, internalError(readErr)
 	}
@@ -326,7 +322,7 @@ func (s *Service) runStartNormalized(ctx context.Context, request RunStartReques
 			return RunStartResponse{}, mapJournalError(err, request.ClientRequestID)
 		}
 	}
-	snapshot, err := s.core.StartWorkflow(ctx, run.StartWorkflowRequest{RunID: record.PlannedRunID, Project: project, Driver: strings.TrimSpace(request.Driver), Target: strings.TrimSpace(request.Target), Normalized: &normalized, Inputs: request.Inputs, ContextBindings: request.ContextBindings})
+	snapshot, err := s.core.StartWorkflow(ctx, run.StartWorkflowRequest{RunID: record.PlannedRunID, InitializationTime: record.CreatedAt, Project: project, Driver: strings.TrimSpace(request.Driver), Target: strings.TrimSpace(request.Target), Normalized: &normalized, Inputs: request.Inputs, ContextBindings: request.ContextBindings})
 	if err != nil {
 		return RunStartResponse{}, mapCoreError(err, "could not start run")
 	}

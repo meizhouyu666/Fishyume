@@ -98,6 +98,9 @@ func (m *LeaseManager) acquire(runID, command string, recovery bool) (*Lease, er
 		} else if !errors.Is(readErr, os.ErrNotExist) {
 			return fmt.Errorf("read existing control lease: %w", readErr)
 		}
+		if faultErr := m.store.injectFault("lease_acquire", path); faultErr != nil {
+			return faultErr
+		}
 		if createErr := createLeaseExclusive(path, record); createErr != nil {
 			return fmt.Errorf("create control lease: %w", createErr)
 		}

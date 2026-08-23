@@ -1,6 +1,7 @@
 package run
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -46,16 +47,17 @@ type StartRequest struct {
 }
 
 type StartWorkflowRequest struct {
-	RunID           string                   `json:"-"`
-	Project         string                   `json:"project"`
-	Driver          string                   `json:"driver,omitempty"`
-	Target          string                   `json:"target,omitempty"`
-	Backend         string                   `json:"backend,omitempty"`
-	Filename        string                   `json:"filename"`
-	Content         string                   `json:"content"`
-	Inputs          map[string]any           `json:"inputs,omitempty"`
-	Normalized      *workflow.Normalized     `json:"normalized,omitempty"`
-	ContextBindings workflow.ContextBindings `json:"contextBindings,omitempty"`
+	RunID              string                   `json:"-"`
+	InitializationTime time.Time                `json:"-"`
+	Project            string                   `json:"project"`
+	Driver             string                   `json:"driver,omitempty"`
+	Target             string                   `json:"target,omitempty"`
+	Backend            string                   `json:"backend,omitempty"`
+	Filename           string                   `json:"filename"`
+	Content            string                   `json:"content"`
+	Inputs             map[string]any           `json:"inputs,omitempty"`
+	Normalized         *workflow.Normalized     `json:"normalized,omitempty"`
+	ContextBindings    workflow.ContextBindings `json:"contextBindings,omitempty"`
 }
 
 type ResumeAction struct {
@@ -164,6 +166,7 @@ type Service struct {
 	mu             sync.RWMutex
 	controllers    map[string]*controller
 	nextGeneration uint64
+	startMu        sync.Mutex
 	persistMu      sync.Mutex
 	sinkMu         sync.RWMutex
 	eventSinks     map[uint64]EventSink
@@ -348,7 +351,7 @@ func (s *Service) Start(ctx context.Context, request StartRequest) (WorkflowSnap
 	if err := ensureBackendReady(ctx, candidate, request.Project); err != nil {
 		return WorkflowSnapshot{}, err
 	}
-	return s.startNormalized(ctx, request.Project, normalized, "run", backendName, "")
+	return s.startNormalized(ctx, request.Project, normalized, "run", backendName, "", time.Time{})
 }
 
 func (s *Service) StartWorkflow(ctx context.Context, request StartWorkflowRequest) (WorkflowSnapshot, error) {
@@ -417,7 +420,7 @@ func (s *Service) StartWorkflow(ctx context.Context, request StartWorkflowReques
 	if err := ensureBackendReady(ctx, candidate, request.Project); err != nil {
 		return WorkflowSnapshot{}, err
 	}
-	return s.startNormalized(ctx, request.Project, normalized, "run", backendName, request.RunID)
+	return s.startNormalized(ctx, request.Project, normalized, "run", backendName, request.RunID, request.InitializationTime)
 }
 
 func ensureBackendReady(ctx context.Context, candidate backend.AgentBackend, project string) error {
@@ -515,10 +518,12 @@ func agentResultContractSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","additionalProperties":false,"required":["status","summary","artifacts","warnings","checks","questions"],"properties":{"status":{"type":"string","enum":["succeeded","failed","needs_input","indeterminate"]},"summary":{"type":"string","minLength":1,"maxLength":16384},"artifacts":{"type":"array","items":{"type":"string"},"maxItems":256},"warnings":{"type":"array","items":{"type":"string"},"maxItems":256},"checks":{"type":"array","items":{"type":"string"},"maxItems":256},"questions":{"type":"array","maxItems":32,"items":{"type":"object","additionalProperties":false,"required":["id","prompt","choices","required"],"properties":{"id":{"type":"string"},"prompt":{"type":"string"},"choices":{"type":"array","items":{"type":"string"},"maxItems":256},"required":{"type":"boolean"}}}}}}`)
 }
 
-func (s *Service) startNormalized(_ context.Context, project string, normalized workflow.Normalized, command, backendName, requestedRunID string) (WorkflowSnapshot, error) {
+func (s *Service) startNormalized(_ context.Context, project string, normalized workflow.Normalized, command, backendName, requestedRunID string, initializationTime time.Time) (WorkflowSnapshot, error) {
 	if s.store == nil || s.leases == nil {
 		return WorkflowSnapshot{}, errors.New("workflow state directory is unavailable")
 	}
+	s.startMu.Lock()
+	defer s.startMu.Unlock()
 	id := strings.TrimSpace(requestedRunID)
 	if id == "" {
 		var err error
@@ -530,7 +535,7 @@ func (s *Service) startNormalized(_ context.Context, project string, normalized 
 	if err := s.store.InitWorkflowRun(id); err != nil {
 		return WorkflowSnapshot{}, err
 	}
-	if err := s.store.WriteWorkflow(id, normalized); err != nil {
+	if err := s.store.EnsureWorkflow(id, normalized); err != nil {
 		return WorkflowSnapshot{}, err
 	}
 	candidate, err := s.registry.Get(backendName)
@@ -542,13 +547,13 @@ func (s *Service) startNormalized(_ context.Context, project string, normalized 
 		return WorkflowSnapshot{}, err
 	}
 	now := s.now().UTC()
+	if !initializationTime.IsZero() {
+		now = initializationTime.UTC()
+	}
 	nodeSummaries := make(map[string]NodeSummary, len(normalized.Document.Nodes))
 	for _, nodeID := range normalized.TopologicalOrder {
 		definition := normalized.Document.Nodes[nodeID]
 		node := NodeSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: id, ID: nodeID, Type: definition.Type, Phase: NodePhasePending, CreatedAt: now, UpdatedAt: now}
-		if err := s.store.WriteNode(id, nodeID, node); err != nil {
-			return WorkflowSnapshot{}, err
-		}
 		nodeSummaries[nodeID] = summarizeNode(node)
 	}
 	_, target, err := workflow.ResolveAgent(normalized.Document.Defaults, workflow.Node{})
@@ -558,15 +563,180 @@ func (s *Service) startNormalized(_ context.Context, project string, normalized 
 	run := WorkflowSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, ID: id, WorkflowName: normalized.Document.Name, Project: project,
 		ResolvedDriver: backendName, ResolvedTarget: target, Backend: backendName, DeprecationWarnings: append([]string(nil), normalized.Warnings...), EffectiveConcurrency: effectiveConcurrency, Phase: PhaseCreated, Inputs: normalized.Inputs, TopologicalOrder: normalized.TopologicalOrder,
 		Nodes: nodeSummaries, StateDir: s.store.RunDir(id), CreatedAt: now, UpdatedAt: now}
-	if err := s.persistRun(&run, nil, "run.created", "workflow run created"); err != nil {
+	run.StateVersion = 1
+	if err := ValidateWorkflowSnapshot(run); err != nil {
 		return WorkflowSnapshot{}, err
 	}
-	lease, err := s.leases.Acquire(id, command)
+	initialEvent := WorkflowEvent{ProtocolVersion: protocolVersion, RunID: id, Sequence: 1, Type: "run.created", Phase: PhaseCreated, Message: "workflow run created", Timestamp: now}
+	existing, initialized, err := s.inspectStartedRun(run, initialEvent)
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	if !initialized {
+		for _, nodeID := range normalized.TopologicalOrder {
+			definition := normalized.Document.Nodes[nodeID]
+			node := NodeSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: id, ID: nodeID, Type: definition.Type, Phase: NodePhasePending, CreatedAt: now, UpdatedAt: now}
+			if err := s.store.EnsureNode(id, nodeID, node); err != nil {
+				return WorkflowSnapshot{}, err
+			}
+		}
+		if err := s.store.EnsureSnapshot(id, run); err != nil {
+			return WorkflowSnapshot{}, err
+		}
+		created, err := s.store.EnsureInitialEvent(id, initialEvent)
+		if err != nil {
+			return WorkflowSnapshot{}, err
+		}
+		if created {
+			s.publishEvent(initialEvent)
+		}
+		existing = run
+	}
+	needsController, err := s.runNeedsController(existing)
+	if err != nil {
+		return WorkflowSnapshot{}, err
+	}
+	if s.controller(id) != nil || !needsController {
+		return run, nil
+	}
+	lease, err := s.leases.AcquireRecovery(id, command)
 	if err != nil {
 		return WorkflowSnapshot{}, err
 	}
 	s.startController(id, lease, func(ctx context.Context, generation uint64) { s.control(ctx, id, generation) })
 	return run, nil
+}
+
+func (s *Service) inspectStartedRun(initial WorkflowSnapshot, initialEvent WorkflowEvent) (WorkflowSnapshot, bool, error) {
+	var existing WorkflowSnapshot
+	err := s.store.ReadSnapshot(initial.ID, &existing)
+	if errors.Is(err, os.ErrNotExist) {
+		var found bool
+		if eventErr := s.store.ReadEvents(initial.ID, func(json.RawMessage) error { found = true; return nil }); eventErr != nil {
+			return existing, false, eventErr
+		}
+		if found {
+			return existing, false, fmt.Errorf("run %q has events without an initial snapshot", initial.ID)
+		}
+		return initial, false, nil
+	}
+	if err != nil {
+		return existing, false, err
+	}
+	first, count, err := s.readFirstEvent(initial.ID)
+	if err != nil {
+		return existing, false, err
+	}
+	if count == 0 {
+		if !equalDurableJSON(existing, initial) {
+			return existing, false, fmt.Errorf("initial snapshot for run %q does not match requested initialization", initial.ID)
+		}
+		for nodeID, summary := range initial.Nodes {
+			var node NodeSnapshot
+			if readErr := s.store.ReadNode(initial.ID, nodeID, &node); readErr != nil {
+				return existing, false, readErr
+			}
+			expected := NodeSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: initial.ID, ID: nodeID, Type: summary.Type, Phase: NodePhasePending, CreatedAt: initial.CreatedAt, UpdatedAt: initial.CreatedAt}
+			if !equalDurableJSON(node, expected) {
+				return existing, false, fmt.Errorf("initial snapshot for node %q does not match requested initialization", nodeID)
+			}
+		}
+		created, err := s.store.EnsureInitialEvent(initial.ID, initialEvent)
+		if err != nil {
+			return existing, false, err
+		}
+		if created {
+			s.publishEvent(initialEvent)
+		}
+		return existing, true, nil
+	}
+	if !reflect.DeepEqual(first, initialEvent) {
+		return existing, false, fmt.Errorf("initial event for run %q does not match requested initialization", initial.ID)
+	}
+	if err := validateStartedRunIdentity(existing, initial); err != nil {
+		return existing, false, err
+	}
+	if err := s.validateStartedNodes(existing, initial); err != nil {
+		return existing, false, err
+	}
+	return existing, true, nil
+}
+
+func (s *Service) readFirstEvent(runID string) (WorkflowEvent, int, error) {
+	var first WorkflowEvent
+	count := 0
+	err := s.store.ReadEvents(runID, func(raw json.RawMessage) error {
+		count++
+		if count == 1 {
+			return json.Unmarshal(raw, &first)
+		}
+		return nil
+	})
+	return first, count, err
+}
+
+func validateStartedRunIdentity(existing, initial WorkflowSnapshot) error {
+	type identity struct {
+		ProtocolVersion      int            `json:"protocolVersion"`
+		StateSchemaVersion   int            `json:"stateSchemaVersion"`
+		ID                   string         `json:"id"`
+		WorkflowName         string         `json:"workflowName"`
+		Project              string         `json:"project"`
+		ResolvedDriver       string         `json:"resolvedDriver"`
+		ResolvedTarget       string         `json:"resolvedTarget"`
+		DeprecationWarnings  []string       `json:"deprecationWarnings,omitempty"`
+		EffectiveConcurrency int            `json:"effectiveConcurrency,omitempty"`
+		Inputs               map[string]any `json:"inputs,omitempty"`
+		TopologicalOrder     []string       `json:"topologicalOrder"`
+		StateDir             string         `json:"stateDir"`
+		CreatedAt            time.Time      `json:"createdAt"`
+	}
+	project := func(snapshot WorkflowSnapshot) identity {
+		return identity{ProtocolVersion: snapshot.ProtocolVersion, StateSchemaVersion: snapshot.StateSchemaVersion, ID: snapshot.ID, WorkflowName: snapshot.WorkflowName, Project: snapshot.Project, ResolvedDriver: snapshot.ResolvedDriver, ResolvedTarget: snapshot.ResolvedTarget, DeprecationWarnings: snapshot.DeprecationWarnings, EffectiveConcurrency: snapshot.EffectiveConcurrency, Inputs: snapshot.Inputs, TopologicalOrder: snapshot.TopologicalOrder, StateDir: snapshot.StateDir, CreatedAt: snapshot.CreatedAt}
+	}
+	if !equalDurableJSON(project(existing), project(initial)) {
+		return fmt.Errorf("run %q does not match requested initialization", initial.ID)
+	}
+	return nil
+}
+
+func (s *Service) validateStartedNodes(existing, initial WorkflowSnapshot) error {
+	for _, nodeID := range initial.TopologicalOrder {
+		var node NodeSnapshot
+		if err := s.store.ReadNode(initial.ID, nodeID, &node); err != nil {
+			return err
+		}
+		if err := ValidateNodeSnapshot(node); err != nil {
+			return fmt.Errorf("invalid node %q: %w", nodeID, err)
+		}
+		expected := initial.Nodes[nodeID]
+		summary, found := existing.Nodes[nodeID]
+		if node.RunID != initial.ID || node.ID != nodeID || node.Type != expected.Type || !node.CreatedAt.Equal(initial.CreatedAt) || !found || summary.ID != nodeID || summary.Type != expected.Type {
+			return fmt.Errorf("node %q does not match requested initialization", nodeID)
+		}
+	}
+	return nil
+}
+
+func equalDurableJSON(left, right any) bool {
+	leftJSON, leftErr := json.Marshal(left)
+	rightJSON, rightErr := json.Marshal(right)
+	return leftErr == nil && rightErr == nil && bytes.Equal(leftJSON, rightJSON)
+}
+
+func (s *Service) runNeedsController(run WorkflowSnapshot) (bool, error) {
+	if run.Phase == PhaseCompleted || run.Phase == PhaseWaiting && run.Reason == ReasonApprovalRequired {
+		return false, nil
+	}
+	if run.Phase == PhaseWaiting && run.Reason == ReasonAgentWaitingInput {
+		_, nodes, err := s.loadRun(run.ID)
+		if err != nil {
+			return false, err
+		}
+		settled, err := s.hasSettledNeedsInput(nodes)
+		return !settled, err
+	}
+	return true, nil
 }
 
 func (s *Service) startController(runID string, lease *store.Lease, control func(context.Context, uint64)) {
@@ -2390,6 +2560,11 @@ func (s *Service) persistRun(run *WorkflowSnapshot, node *NodeSnapshot, eventTyp
 	if err := s.store.AppendEvent(run.ID, event); err != nil {
 		return err
 	}
+	s.publishEvent(event)
+	return nil
+}
+
+func (s *Service) publishEvent(event WorkflowEvent) {
 	s.sinkMu.RLock()
 	sinks := make([]EventSink, 0, len(s.eventSinks))
 	for _, sink := range s.eventSinks {
@@ -2399,7 +2574,6 @@ func (s *Service) persistRun(run *WorkflowSnapshot, node *NodeSnapshot, eventTyp
 	for _, sink := range sinks {
 		sink(event)
 	}
-	return nil
 }
 
 func (s *Service) writeAttempt(attempt AttemptSnapshot, create bool) error {

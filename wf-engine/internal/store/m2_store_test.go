@@ -1,8 +1,10 @@
 package store
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -57,6 +59,71 @@ func TestM2StoreRoundTripAndAttemptPreservation(t *testing.T) {
 	kind, err := state.DetectSnapshot("run-safe_1")
 	if err != nil || kind != SnapshotM2 {
 		t.Fatalf("kind=%s err=%v", kind, err)
+	}
+}
+
+func TestInitializationEnsureMethodsReuseMatchesAndRejectMismatches(t *testing.T) {
+	state := New(t.TempDir())
+	if err := state.InitWorkflowRun("run-ensure"); err != nil {
+		t.Fatal(err)
+	}
+	workflow := map[string]any{"document": map[string]any{"name": "same"}}
+	node := map[string]any{"id": "node", "phase": "pending"}
+	run := map[string]any{"id": "run-ensure", "phase": "created"}
+	for index := 0; index < 2; index++ {
+		if err := state.EnsureWorkflow("run-ensure", workflow); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.EnsureNode("run-ensure", "node", node); err != nil {
+			t.Fatal(err)
+		}
+		if err := state.EnsureSnapshot("run-ensure", run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := state.EnsureWorkflow("run-ensure", map[string]any{"document": map[string]any{"name": "other"}}); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("workflow mismatch error = %v", err)
+	}
+	if err := state.EnsureNode("run-ensure", "node", map[string]any{"id": "node", "phase": "ready"}); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("node mismatch error = %v", err)
+	}
+	if err := state.EnsureSnapshot("run-ensure", map[string]any{"id": "run-ensure", "phase": "running"}); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("run mismatch error = %v", err)
+	}
+}
+
+func TestEnsureInitialEventIsAtomicAcrossConcurrentRetries(t *testing.T) {
+	state := New(t.TempDir())
+	if err := state.InitWorkflowRun("run-event"); err != nil {
+		t.Fatal(err)
+	}
+	event := map[string]any{"runId": "run-event", "sequence": 1, "type": "run.created"}
+	var wg sync.WaitGroup
+	errors := make(chan error, 16)
+	for index := 0; index < cap(errors); index++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := state.EnsureInitialEvent("run-event", event)
+			errors <- err
+		}()
+	}
+	wg.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := 0
+	if err := state.ReadEvents("run-event", func(json.RawMessage) error { count++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("event count = %d, want 1", count)
+	}
+	if _, err := state.EnsureInitialEvent("run-event", map[string]any{"runId": "run-event", "sequence": 1, "type": "other"}); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("event mismatch error = %v", err)
 	}
 }
 

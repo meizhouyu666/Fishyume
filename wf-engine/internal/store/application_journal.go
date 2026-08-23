@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"time"
 )
@@ -92,16 +94,20 @@ func (s *Store) MarkApplicationJournalMutated(kind, id, requestHash string, resp
 }
 
 func equalJSON(left, right json.RawMessage) bool {
-	var leftCompact, rightCompact []byte
-	leftBuffer := bytes.NewBuffer(leftCompact)
-	rightBuffer := bytes.NewBuffer(rightCompact)
-	if err := json.Compact(leftBuffer, left); err != nil {
-		return false
+	leftValue, leftOK := decodeSingleJSON(left)
+	rightValue, rightOK := decodeSingleJSON(right)
+	return leftOK && rightOK && reflect.DeepEqual(leftValue, rightValue)
+}
+
+func decodeSingleJSON(data []byte) (any, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, false
 	}
-	if err := json.Compact(rightBuffer, right); err != nil {
-		return false
-	}
-	return bytes.Equal(leftBuffer.Bytes(), rightBuffer.Bytes())
+	var extra any
+	return value, decoder.Decode(&extra) == io.EOF
 }
 
 func (s *Store) CommitApplicationJournal(kind, id, requestHash string, now time.Time) (ApplicationJournalRecord, error) {

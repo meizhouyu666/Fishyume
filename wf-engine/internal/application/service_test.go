@@ -31,6 +31,7 @@ type fakeCore struct {
 	sinks                    map[int]run.EventSink
 	nextSink                 int
 	started                  run.StartWorkflowRequest
+	startCalls               int
 	startCount               int
 	resumed                  run.ResumeRequest
 	resumeCount              int
@@ -45,8 +46,15 @@ func (f *fakeCore) StartWorkflow(_ context.Context, request run.StartWorkflowReq
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.started = request
+	f.startCalls++
+	if existing, ok := f.views[request.RunID]; ok && existing.Run != nil {
+		return *existing.Run, nil
+	}
 	f.startCount++
-	now := time.Unix(100, 0).UTC()
+	now := request.InitializationTime.UTC()
+	if now.IsZero() {
+		now = time.Unix(100, 0).UTC()
+	}
 	snapshot := run.WorkflowSnapshot{ID: request.RunID, WorkflowName: request.Normalized.Document.Name, Project: request.Project, ResolvedDriver: "codex", ResolvedTarget: "local", StateVersion: 1, Phase: run.PhaseCreated, TopologicalOrder: append([]string(nil), request.Normalized.TopologicalOrder...), Nodes: map[string]run.NodeSummary{}, CreatedAt: now, UpdatedAt: now}
 	if f.views == nil {
 		f.views = map[string]run.StatusView{}
@@ -528,6 +536,7 @@ func TestDurableStartIdempotencyAcrossRestartAndFaultWindows(t *testing.T) {
 				t.Fatalf("first error = %v", appErr)
 			}
 			startsAfterFault := core.startCount
+			callsAfterFault := core.startCalls
 			state.SetFaultInjectorForTest(nil)
 			secondService := NewService(core, "codex", state)
 			if faultPoint != "journal_intent" {
@@ -545,6 +554,13 @@ func TestDurableStartIdempotencyAcrossRestartAndFaultWindows(t *testing.T) {
 			}
 			if core.startCount != wantStarts {
 				t.Fatalf("start count = %d, want %d", core.startCount, wantStarts)
+			}
+			wantCalls := callsAfterFault + 1
+			if faultPoint == "journal_commit" {
+				wantCalls = callsAfterFault
+			}
+			if core.startCalls != wantCalls {
+				t.Fatalf("core start calls = %d, want %d", core.startCalls, wantCalls)
 			}
 			replayed, appErr := NewService(core, "codex", state).RunStart(context.Background(), request)
 			if appErr != nil || !reflect.DeepEqual(replayed, response) || core.startCount != wantStarts {
