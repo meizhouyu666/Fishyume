@@ -91,6 +91,13 @@ func PlanSchedule(normalized workflow.Normalized, run WorkflowSnapshot, nodes []
 		if definition.When != nil {
 			matches, err := workflow.Evaluate(*definition.When, results)
 			if err != nil {
+				// A skipped failed ancestor has no result to evaluate. Propagate the
+				// upstream failure instead of turning the Run into completion_missing.
+				// Evaluate first so all/any retain their short-circuit semantics.
+				if upstreamFailed && conditionResultMissing(*definition.When, results) {
+					decision.SkipUpstream = append(decision.SkipUpstream, nodeID)
+					continue
+				}
 				return SchedulingDecision{}, fmt.Errorf("node %q condition: %w", nodeID, err)
 			}
 			if !matches {
@@ -123,6 +130,24 @@ func PlanSchedule(normalized workflow.Normalized, run WorkflowSnapshot, nodes []
 		}
 	}
 	return decision, nil
+}
+
+func conditionResultMissing(condition workflow.Condition, results map[string]workflow.Result) bool {
+	if condition.Node != "" {
+		_, exists := results[condition.Node]
+		return !exists
+	}
+	for _, child := range condition.All {
+		if conditionResultMissing(child, results) {
+			return true
+		}
+	}
+	for _, child := range condition.Any {
+		if conditionResultMissing(child, results) {
+			return true
+		}
+	}
+	return condition.Not != nil && conditionResultMissing(*condition.Not, results)
 }
 
 func backendConcurrencyLimit(candidate backend.AgentBackend) (int, error) {

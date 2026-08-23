@@ -113,6 +113,62 @@ func TestPlanScheduleAllowsExplicitEligibleFailureBranch(t *testing.T) {
 	}
 }
 
+func TestPlanSchedulePropagatesFailureWhenConditionResultWasSkipped(t *testing.T) {
+	doc := workflow.Document{APIVersion: workflow.APIVersion, Name: "skipped-condition-source", Execution: workflow.Execution{MaxConcurrency: 1}, Nodes: map[string]workflow.Node{
+		"failed":    {Type: "agent", Task: "fail"},
+		"proposal":  {Type: "agent", DependsOn: []string{"failed"}, Task: "proposal"},
+		"approval":  {Type: "approval", DependsOn: []string{"proposal"}, Prompt: "approve"},
+		"implement": {Type: "agent", DependsOn: []string{"approval"}, When: &workflow.Condition{Node: "approval", Field: "result.decision", Equals: "approved"}, Task: "implement"},
+	}}
+	order, err := workflow.Validate(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := PlanSchedule(workflow.Normalized{Document: doc, TopologicalOrder: order}, WorkflowSnapshot{}, []NodeSnapshot{
+		{ID: "failed", Type: "agent", Phase: NodePhaseCompleted, Conclusion: ConclusionFailed, Result: &workflow.Result{Reason: "failed"}},
+		{ID: "proposal", Type: "agent", Phase: NodePhaseSkipped, Reason: ReasonUpstreamFailed},
+		{ID: "approval", Type: "approval", Phase: NodePhaseSkipped, Reason: ReasonUpstreamFailed},
+		{ID: "implement", Type: "agent", Phase: NodePhasePending},
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.StopScheduling || !reflect.DeepEqual(decision.SkipUpstream, []string{"implement"}) {
+		t.Fatalf("decision=%+v", decision)
+	}
+}
+
+func TestPlanScheduleKeepsShortCircuitedFailureBranchEligible(t *testing.T) {
+	doc := workflow.Document{APIVersion: workflow.APIVersion, Name: "short-circuited-failure-branch", Execution: workflow.Execution{MaxConcurrency: 1}, Nodes: map[string]workflow.Node{
+		"failed":   {Type: "agent", Task: "fail"},
+		"approval": {Type: "approval", DependsOn: []string{"failed"}, Prompt: "approve"},
+		"handler": {
+			Type:      "agent",
+			DependsOn: []string{"failed", "approval"},
+			When: &workflow.Condition{Any: []workflow.Condition{
+				{Node: "failed", Field: "result.reason", Equals: "failed"},
+				{Node: "approval", Field: "result.decision", Equals: "approved"},
+			}},
+			Task: "handle failure",
+		},
+	}}
+	order, err := workflow.Validate(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := PlanSchedule(workflow.Normalized{Document: doc, TopologicalOrder: order}, WorkflowSnapshot{}, []NodeSnapshot{
+		{ID: "failed", Type: "agent", Phase: NodePhaseCompleted, Conclusion: ConclusionFailed, Result: &workflow.Result{Reason: "failed"}},
+		{ID: "approval", Type: "approval", Phase: NodePhaseSkipped, Reason: ReasonUpstreamFailed},
+		{ID: "handler", Type: "agent", Phase: NodePhasePending},
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !decision.StopScheduling || !reflect.DeepEqual(decision.ReadyAgents, []string{"handler"}) {
+		t.Fatalf("decision=%+v", decision)
+	}
+}
+
 func TestPlanScheduleRejectsInvalidBackendLimit(t *testing.T) {
 	doc := workflow.Document{APIVersion: workflow.APIVersion, Name: "invalid", Execution: workflow.Execution{MaxConcurrency: 1}, Nodes: map[string]workflow.Node{"a": {Type: "agent", Task: "a"}}}
 	if _, err := PlanSchedule(workflow.Normalized{Document: doc, TopologicalOrder: []string{"a"}}, WorkflowSnapshot{}, []NodeSnapshot{{ID: "a", Type: "agent", Phase: NodePhasePending}}, -1); err == nil {

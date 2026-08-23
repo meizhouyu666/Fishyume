@@ -141,6 +141,7 @@ parallel domain audits -> bounded proposal -> approval -> implementation -> inde
 - `context.dependencies` 是否只包含真正需要注入的祖先结果；
 - 某个 Node 重试时，重复副作用是否可接受并被明确控制；
 - Node task 是否写清目标、范围、约束、产物和验证要求；
+- 审计 Node 是否区分“发现问题”和“审计执行失败”，并声明有界停止条件；
 - 最终是否有独立验证，而不是只依赖实现 Agent 自报成功。
 
 ## 示例分级

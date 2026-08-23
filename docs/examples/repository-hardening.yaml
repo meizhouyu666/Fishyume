@@ -14,7 +14,10 @@ nodes:
       Trace the main runtime paths and cross-layer contracts, identify concrete
       correctness or maintainability risks, and return a prioritized report with
       file references, evidence, affected behavior, and bounded remediation options.
-      Do not modify files. Do not stop at a directory listing or generic summary.
+      Do not modify files or run the full test suite. Return at most six findings and
+      stop once the main runtime path and highest risks have evidence. The audit itself
+      succeeds even when it discovers defects: report them as findings or warnings and
+      return failed only if the audit cannot be completed.
     context:
       dependencies: []
 
@@ -25,6 +28,10 @@ nodes:
       project-appropriate non-destructive checks, inspect coverage of critical
       behavior and recovery paths, and return the commands, outcomes, gaps, and
       prioritized recommendations. Do not modify files or install new dependencies.
+      Keep execution bounded: do not run stress, race, live-Provider, install,
+      downgrade, network-dependent, or repeated gates; inspect their existing CI and
+      documentation evidence instead. A failed check is an audit finding, not an audit
+      failure. Return failed only if the audit itself cannot be completed.
     context:
       dependencies: []
 
@@ -35,7 +42,10 @@ nodes:
       command surface and current contracts with the README, first-run guide, examples,
       and product boundaries. Return concrete inconsistencies, usability friction,
       and scoped documentation or product recommendations with file references.
-      Do not modify files.
+      Do not modify files or run the full test suite. Return at most six findings and
+      stop after the documented product entry points and their implemented commands
+      have been checked. Discovered drift is a successful audit result; return failed
+      only if the audit cannot be completed.
     context:
       dependencies: []
 

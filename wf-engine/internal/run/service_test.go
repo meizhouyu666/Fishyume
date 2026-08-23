@@ -228,6 +228,50 @@ nodes:
 `
 }
 
+func TestFailedAuditSkipsConditionalDescendantsAndCompletes(t *testing.T) {
+	b := &fakeWorkflowBackend{waitResults: []backend.BackendResult{{Status: "failed", Summary: "audit found a blocked gate"}}, observations: map[string][]backend.Observation{}}
+	service := NewService(b, store.New(t.TempDir()))
+	content := `apiVersion: fishyume/v2
+name: failed-audit
+defaults: {agent: {driver: codex, target: local}}
+execution: {maxConcurrency: 1}
+nodes:
+  audit: {type: agent, task: audit}
+  synthesis: {type: agent, dependsOn: [audit], task: synthesize}
+  approve: {type: approval, dependsOn: [synthesis], prompt: approve}
+  implement:
+    type: agent
+    dependsOn: [approve]
+    when: {node: approve, field: result.decision, equals: approved}
+    task: implement
+  verify: {type: agent, dependsOn: [implement], task: verify}
+`
+	started, err := service.StartWorkflow(context.Background(), StartWorkflowRequest{Project: "p", Content: content})
+	if err != nil {
+		t.Fatal(err)
+	}
+	final := waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	if final.Conclusion != ConclusionFailed {
+		t.Fatalf("final=%+v", final)
+	}
+	view, err := service.Status(final.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"synthesis", "approve", "implement", "verify"} {
+		var node *NodeSnapshot
+		for index := range view.Nodes {
+			if view.Nodes[index].ID == id {
+				node = &view.Nodes[index]
+				break
+			}
+		}
+		if node == nil || node.Phase != NodePhaseSkipped || node.Reason != ReasonUpstreamFailed {
+			t.Fatalf("node %s = %+v", id, node)
+		}
+	}
+}
+
 func TestStatusDerivesMultipleActiveNodesAndAttempts(t *testing.T) {
 	state := store.New(t.TempDir())
 	runID := "run-parallel-status"
