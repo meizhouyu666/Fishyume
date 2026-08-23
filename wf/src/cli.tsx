@@ -11,6 +11,7 @@ import {MCPCommand} from './commands/mcp.js';
 import {DashboardCommand} from './commands/dashboard.js';
 import {SetupProductCommand} from './commands/setup-product.js';
 import {DemoCommand} from './commands/demo.js';
+import {ExamplesListCommand, ExamplesShowCommand} from './commands/examples.js';
 import {MemoryCreateCommand, MemoryDeleteCommand, MemoryGetCommand, MemoryListCommand, MemorySupersedeCommand} from './commands/memory.js';
 
 const cli = new Cli({binaryLabel: 'Fishyume', binaryName: 'fishyume', binaryVersion: '0.2.1-alpha.1'});
@@ -18,6 +19,8 @@ cli.register(Builtins.HelpCommand);
 cli.register(Builtins.VersionCommand);
 cli.register(DashboardCommand);
 cli.register(DemoCommand);
+cli.register(ExamplesListCommand);
+cli.register(ExamplesShowCommand);
 cli.register(SetupProductCommand);
 cli.register(DoctorCommand);
 cli.register(RunCommand);

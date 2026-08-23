@@ -24,6 +24,7 @@ fishyume doctor
 ```text
 fishyume                 打开 Run Dashboard
 fishyume demo            离线预览拓扑控制台
+fishyume examples list   查看推荐 Workflow 模板
 fishyume run             创建单 Agent Run
 fishyume attach <id>     接管已有 Run
 fishyume status <id>     查看状态

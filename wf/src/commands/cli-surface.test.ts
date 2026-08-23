@@ -49,6 +49,12 @@ test('command help remains available', () => {
   const demo = invoke('demo', '--help');
   assert.equal(demo.status, 0, demo.stderr);
   assert.match(demo.stdout, /--width/);
+  const exampleShow = invoke('examples', 'show', '--help');
+  assert.equal(exampleShow.status, 0, exampleShow.stderr);
+  assert.match(exampleShow.stdout, /fishyume examples show/);
+  const exampleList = invoke('examples', 'list', '--help');
+  assert.equal(exampleList.status, 0, exampleList.stderr);
+  assert.match(exampleList.stdout, /fishyume examples list/);
 });
 
 test('memory file content rejects oversized and invalid UTF-8 input before starting the Engine', () => {
@@ -85,6 +91,8 @@ test('command help describes the Agent-facing control-plane surface', () => {
     ['setup codex', /Connect Fishyume to Codex as a local stdio MCP server/],
     ['setup', /Set up Fishyume for the local Codex Host/],
     ['demo', /Preview the Chinese topology console/],
+    ['examples list', /List bundled product Workflow examples/],
+    ['examples show', /Print one bundled Workflow YAML/],
   ]);
   for (const [command, description] of expected) {
     const result = invoke(...command.split(' '), '--help');

@@ -124,7 +124,7 @@ try {
   if (!existsSync(cli)) throw new Error(`installed CLI is missing: ${cli}`);
 
   const help = invoke(cli, ['--help']);
-  if (!/Fishyume/.test(help) || !/dashboard/.test(help) || !/demo/.test(help) || !/setup/.test(help)) throw new Error('installed top-level help is incomplete');
+  if (!/Fishyume/.test(help) || !/dashboard/.test(help) || !/demo/.test(help) || !/examples/.test(help) || !/setup/.test(help)) throw new Error('installed top-level help is incomplete');
   if (!/Operator Dashboard/.test(invoke(cli, ['dashboard', '--help']))) throw new Error('installed Dashboard help is incomplete');
   const setup = invoke(cli, ['setup', '--print']);
   if (!setup.includes('codex mcp add fishyume --') || !setup.includes(process.execPath) || !setup.includes(cli) || !setup.trim().endsWith('"mcp"')) throw new Error('installed Codex setup command is not canonical and copyable');
@@ -134,6 +134,11 @@ try {
   if (routing.apiVersion !== 'fishyume.application/v1' || routing.dynamicAvailability !== false || !routing.catalogHash || !Array.isArray(routing.catalog?.models) || routing.catalog.models.length < 1) throw new Error('installed routing catalog Application surface is incomplete');
   const demo = invoke(cli, ['demo', '--width', '80', '--ascii']);
   if (!/阶段 2 · 并行 2/.test(demo) || !/依赖 plan/.test(demo) || !/需要人工审批/.test(demo)) throw new Error(`installed offline topology demo is incomplete: ${demo}`);
+  const exampleList = invoke(cli, ['examples', 'list']);
+  if (!/repository-hardening/.test(exampleList) || !/fishyume examples show <name>/.test(exampleList)) throw new Error(`installed example catalog is incomplete: ${exampleList}`);
+  const example = invoke(cli, ['examples', 'show', 'repository-hardening']);
+  const documentedExample = readFileSync(join(process.cwd(), '..', 'docs', 'examples', 'repository-hardening.yaml'), 'utf8');
+  if (example !== documentedExample) throw new Error('installed repository-hardening example differs from the documented Workflow');
   const dashboard = invoke(cli, []);
   if (!/目前没有可显示的任务。/.test(dashboard) || !/检查运行环境：fishyume doctor/.test(dashboard)) throw new Error(`installed zero-argument Dashboard empty state is incomplete: ${dashboard}`);
   const doctor = invoke(cli, ['doctor'], [0, 1]);

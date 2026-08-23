@@ -71,6 +71,16 @@ fishyume cancel <run-id>
 
 `fishyume demo` 不需要 Engine、Provider 登录或网络，可直接预览终端工作流界面。
 
+查看并导出推荐的长程 Workflow 模板：
+
+```powershell
+fishyume examples list
+fishyume examples show repository-hardening
+fishyume examples show repository-hardening > repository-hardening.yaml
+```
+
+这些命令只读取安装包内的静态示例，不启动 Engine，也不调用模型。
+
 ## Agent 集成
 
 Fishyume MCP 和 Machine CLI 暴露同一套 Application API。Host Agent 的典型顺序是：

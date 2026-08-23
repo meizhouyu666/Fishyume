@@ -10,6 +10,14 @@ one-shot Codex 进程；实际 Workflow 应按完整工作包划分 Node，而�
   模板。它并行执行三个只读领域审计，汇总实施方案，经人工审批后集中修改，再由独立
   Agent 验证并等待最终验收。
 
+安装 Fishyume 后可以直接查看或导出该模板：
+
+```powershell
+fishyume examples list
+fishyume examples show repository-hardening
+fishyume examples show repository-hardening > repository-hardening.yaml
+```
+
 ## Protocol and UI fixtures
 
 - [`fishyume-v2-host.yaml`](fishyume-v2-host.yaml)：展示 `fishyume/v2`、Context 依赖和
@@ -23,4 +31,3 @@ one-shot Codex 进程；实际 Workflow 应按完整工作包划分 Node，而�
 
 编排原则、反例和检查表见
 [`../fishyume-workflow-authoring.md`](../fishyume-workflow-authoring.md)。
-
