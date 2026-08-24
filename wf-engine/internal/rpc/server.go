@@ -8,11 +8,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"wf.local/wf-engine/internal/application"
 	"wf.local/wf-engine/internal/run"
+	"wf.local/wf-engine/internal/team"
+	"wf.local/wf-engine/internal/teamcontract"
 )
 
 const (
@@ -20,13 +24,14 @@ const (
 	MaxMessageSize = 1 << 20
 )
 
-var supportedMethods = append([]string{"engine.hello"}, application.StableMethods...)
+var supportedMethods = append(append([]string{"engine.hello"}, application.StableMethods...), teamcontract.StableMethods...)
 
 type Server struct {
 	reader               *bufio.Reader
 	writer               io.Writer
 	service              *run.Service
 	application          *application.Service
+	teams                *team.Service
 	writeMu              sync.Mutex
 	mutationMu           *sync.Mutex
 	requestWG            sync.WaitGroup
@@ -38,11 +43,19 @@ type Server struct {
 }
 
 func NewServer(input io.Reader, output io.Writer, service *run.Service, applications ...*application.Service) *Server {
-	return newServer(input, output, service, selectApplication(service, applications), nil, true)
+	return newServer(input, output, service, selectApplication(service, applications), nil, nil, true)
 }
 
-func NewConnectionServer(input io.Reader, output io.Writer, service *run.Service, applicationService *application.Service, mutationMu *sync.Mutex) *Server {
-	return newServer(input, output, service, applicationService, mutationMu, false)
+func NewServerWithTeam(input io.Reader, output io.Writer, service *run.Service, applicationService *application.Service, teamService *team.Service) *Server {
+	return newServer(input, output, service, applicationService, teamService, nil, true)
+}
+
+func NewConnectionServer(input io.Reader, output io.Writer, service *run.Service, applicationService *application.Service, mutationMu *sync.Mutex, teams ...*team.Service) *Server {
+	var teamService *team.Service
+	if len(teams) > 0 {
+		teamService = teams[0]
+	}
+	return newServer(input, output, service, applicationService, teamService, mutationMu, false)
 }
 
 func selectApplication(service *run.Service, applications []*application.Service) *application.Service {
@@ -52,8 +65,8 @@ func selectApplication(service *run.Service, applications []*application.Service
 	return application.NewService(service, "codex", service.ApplicationJournal())
 }
 
-func newServer(input io.Reader, output io.Writer, service *run.Service, applicationService *application.Service, mutationMu *sync.Mutex, waitControllersOnEOF bool) *Server {
-	server := &Server{reader: bufio.NewReaderSize(input, 64*1024), writer: output, service: service, application: applicationService, mutationMu: mutationMu, waitControllersOnEOF: waitControllersOnEOF}
+func newServer(input io.Reader, output io.Writer, service *run.Service, applicationService *application.Service, teamService *team.Service, mutationMu *sync.Mutex, waitControllersOnEOF bool) *Server {
+	server := &Server{reader: bufio.NewReaderSize(input, 64*1024), writer: output, service: service, application: applicationService, teams: teamService, mutationMu: mutationMu, waitControllersOnEOF: waitControllersOnEOF}
 	sink := func(event run.WorkflowEvent) {
 		_ = server.write(Notification{JSONRPC: "2.0", ProtocolVersion: ProtocolVersion, Method: "run.event", Params: event})
 	}
@@ -96,6 +109,11 @@ func (s *Server) Serve(ctx context.Context) error {
 				waitContext, cancel := context.WithTimeout(context.Background(), time.Second)
 				_ = s.application.CompatibilityWaitControllers(waitContext)
 				cancel()
+				if s.teams != nil {
+					teamWaitContext, cancelTeamWait := context.WithTimeout(context.Background(), time.Second)
+					_ = s.teams.Wait(teamWaitContext)
+					cancelTeamWait()
+				}
 			}
 			return nil
 		}
@@ -203,6 +221,39 @@ func (s *Server) handle(ctx context.Context, request Request) {
 		invokeApplication(ctx, s, id, request.Params, application.MemorySupersedeRequest{}, s.application.MemorySupersedeHost)
 	case "memory.host.delete":
 		invokeApplication(ctx, s, id, request.Params, application.MemoryDeleteRequest{}, s.application.MemoryDeleteHost)
+	case "team.capabilities":
+		invokeTeam(ctx, s, id, request.Params, teamcontract.TeamCapabilitiesRequestV1{}, func(context.Context, teamcontract.TeamCapabilitiesRequestV1) (teamcontract.TeamCapabilitiesV1, error) {
+			return s.teams.Capabilities()
+		})
+	case "team.start":
+		invokeTeam(ctx, s, id, request.Params, teamcontract.TeamStartRequestV1{}, func(ctx context.Context, value teamcontract.TeamStartRequestV1) (teamcontract.TeamStartResponseV1, error) {
+			result, err := s.teams.Begin(ctx, value)
+			return teamcontract.TeamStartResponseV1{SchemaVersion: teamcontract.SchemaVersion, Team: result.Team, Replayed: result.Replayed}, err
+		})
+	case "team.list":
+		invokeTeam(ctx, s, id, request.Params, teamcontract.TeamListRequestV1{}, func(_ context.Context, value teamcontract.TeamListRequestV1) (teamcontract.TeamListResponseV1, error) {
+			return s.teams.List(value)
+		})
+	case "team.get":
+		invokeTeam(ctx, s, id, request.Params, teamcontract.TeamGetRequestV1{}, func(_ context.Context, value teamcontract.TeamGetRequestV1) (teamcontract.TeamGetResponseV1, error) {
+			return s.teams.GetView(value)
+		})
+	case "team.events":
+		invokeTeam(ctx, s, id, request.Params, teamcontract.TeamEventsRequestV1{}, s.teams.Events)
+	case "team.messages":
+		invokeTeam(ctx, s, id, request.Params, teamcontract.TeamMessagesRequestV1{}, func(_ context.Context, value teamcontract.TeamMessagesRequestV1) (teamcontract.TeamMessagesResponseV1, error) {
+			return s.teams.Messages(value)
+		})
+	case "team.action":
+		invokeTeam(ctx, s, id, request.Params, teamcontract.TeamActionV1{}, s.teams.Action)
+	case "team.handoff.create":
+		invokeUnavailableTeam(s, id, request.Params, teamcontract.HandoffCreateRequestV1{})
+	case "team.handoff.get":
+		invokeUnavailableTeam(s, id, request.Params, teamcontract.HandoffGetRequestV1{})
+	case "team.handoff.list":
+		invokeUnavailableTeam(s, id, request.Params, teamcontract.HandoffListRequestV1{})
+	case "team.handoff.bindRun":
+		invokeUnavailableTeam(s, id, request.Params, teamcontract.HandoffBindRunRequestV1{})
 	case "run.status":
 		params, ok := s.parseRunID(id, request.Params)
 		if !ok {
@@ -221,11 +272,124 @@ func (s *Server) handle(ctx context.Context, request Request) {
 
 func isMutation(method string) bool {
 	switch method {
-	case "run.start", "run.action", "memory.create", "memory.supersede", "memory.delete", "memory.host.create", "memory.host.supersede", "memory.host.delete":
+	case "run.start", "run.action", "memory.create", "memory.supersede", "memory.delete", "memory.host.create", "memory.host.supersede", "memory.host.delete", "team.start", "team.action", "team.handoff.create", "team.handoff.bindRun":
 		return true
 	default:
 		return false
 	}
+}
+
+func invokeTeam[Request any, Response any](ctx context.Context, s *Server, id any, raw json.RawMessage, request Request, call func(context.Context, Request) (Response, error)) {
+	if s.teams == nil {
+		s.writeTeamError(id, teamcontract.ErrorCapabilityUnavailable, "Team service is unavailable")
+		return
+	}
+	if err := decodeParams(raw, &request); err != nil {
+		s.writeTeamError(id, teamcontract.ErrorInvalidArgument, "invalid Team request: "+err.Error())
+		return
+	}
+	if err := validateTeamRequest(request); err != nil {
+		s.writeTeamError(id, teamcontract.ErrorInvalidArgument, err.Error())
+		return
+	}
+	response, err := call(ctx, request)
+	if err != nil {
+		s.writeMappedTeamError(id, err)
+		return
+	}
+	s.writeResult(id, response)
+}
+
+func invokeUnavailableTeam[Request any](s *Server, id any, raw json.RawMessage, request Request) {
+	if err := decodeParams(raw, &request); err != nil {
+		s.writeTeamError(id, teamcontract.ErrorInvalidArgument, "invalid Team request: "+err.Error())
+		return
+	}
+	if err := validateTeamRequest(request); err != nil {
+		s.writeTeamError(id, teamcontract.ErrorInvalidArgument, err.Error())
+		return
+	}
+	s.writeTeamError(id, teamcontract.ErrorCapabilityUnavailable, "Team capability is unavailable in M7.1")
+}
+
+func validateTeamRequest(value any) error {
+	switch request := value.(type) {
+	case teamcontract.TeamCapabilitiesRequestV1:
+		return teamcontract.ValidateCapabilitiesRequest(request)
+	case teamcontract.TeamStartRequestV1:
+		return teamcontract.ValidateStartRequest(request)
+	case teamcontract.TeamListRequestV1:
+		return teamcontract.ValidateListRequest(request)
+	case teamcontract.TeamGetRequestV1:
+		return teamcontract.ValidateGetRequest(request)
+	case teamcontract.TeamEventsRequestV1:
+		return teamcontract.ValidateEventsRequest(request)
+	case teamcontract.TeamMessagesRequestV1:
+		return teamcontract.ValidateMessagesRequest(request)
+	case teamcontract.TeamActionV1:
+		return teamcontract.ValidateActionRequest(request)
+	case teamcontract.HandoffCreateRequestV1:
+		return teamcontract.ValidateHandoffCreateRequest(request)
+	case teamcontract.HandoffGetRequestV1:
+		return teamcontract.ValidateHandoffGetRequest(request)
+	case teamcontract.HandoffListRequestV1:
+		return teamcontract.ValidateHandoffListRequest(request)
+	case teamcontract.HandoffBindRunRequestV1:
+		return teamcontract.ValidateHandoffBindRunRequest(request)
+	default:
+		return fmt.Errorf("unsupported Team request type")
+	}
+}
+
+func (s *Server) writeMappedTeamError(id any, err error) {
+	code := teamcontract.ErrorInternal
+	switch {
+	case errors.Is(err, team.ErrInvalidArgument):
+		code = teamcontract.ErrorInvalidArgument
+	case errors.Is(err, team.ErrConflict):
+		code = teamcontract.ErrorConflict
+	case errors.Is(err, team.ErrCapabilityUnavailable):
+		code = teamcontract.ErrorCapabilityUnavailable
+	case errors.Is(err, team.ErrQuotaExceeded):
+		code = teamcontract.ErrorQuotaExceeded
+	case errors.Is(err, os.ErrNotExist):
+		code = teamcontract.ErrorNotFound
+	}
+	s.writeTeamError(id, code, err.Error())
+}
+
+func (s *Server) writeTeamError(id any, code teamcontract.ErrorCode, message string) {
+	message = boundedTeamError(message)
+	rpcCode := -32603
+	switch code {
+	case teamcontract.ErrorInvalidArgument:
+		rpcCode = -32602
+	case teamcontract.ErrorNotFound:
+		rpcCode = -32004
+	case teamcontract.ErrorConflict:
+		rpcCode = -32009
+	case teamcontract.ErrorCapabilityUnavailable:
+		rpcCode = -32010
+	case teamcontract.ErrorQuotaExceeded:
+		rpcCode = -32013
+	case teamcontract.ErrorNotReady:
+		rpcCode = -32011
+	case teamcontract.ErrorProtocolMismatch:
+		rpcCode = -32012
+	}
+	s.writeError(id, rpcCode, message, teamcontract.TeamErrorV1{Code: code, Message: message})
+}
+
+func boundedTeamError(value string) string {
+	data := []byte(value)
+	if len(data) <= teamcontract.MaxMessageBytes {
+		return value
+	}
+	data = data[:teamcontract.MaxMessageBytes]
+	for !utf8.Valid(data) {
+		data = data[:len(data)-1]
+	}
+	return string(data)
 }
 
 func invokeApplication[Request any, Response any](ctx context.Context, s *Server, id any, raw json.RawMessage, request Request, call func(context.Context, Request) (Response, *application.Error)) {

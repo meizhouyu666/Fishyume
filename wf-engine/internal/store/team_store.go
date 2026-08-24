@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"wf.local/wf-engine/internal/teamcontract"
 )
@@ -356,6 +357,59 @@ func (s *Store) ReadTeamActionIntent(teamID, actionID string, target any) error 
 		return err
 	}
 	return readJSON(s.TeamActionIntentPath(teamID, actionID), target)
+}
+
+func (s *Store) ListTeamActionIntents(teamID string) ([]json.RawMessage, error) {
+	if err := validateID("team", teamID); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(filepath.Join(s.TeamDir(teamID), "action-intents"))
+	if errors.Is(err, os.ErrNotExist) {
+		return []json.RawMessage{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) > teamcontract.MaxMutationReceipts {
+		return nil, fmt.Errorf("team action intent quota exceeded")
+	}
+	values := make([]json.RawMessage, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		var raw json.RawMessage
+		if err := readJSON(filepath.Join(s.TeamDir(teamID), "action-intents", entry.Name()), &raw); err != nil {
+			return nil, err
+		}
+		values = append(values, raw)
+	}
+	return values, nil
+}
+
+func (s *Store) ListTeamHandoffIDs(teamID string) ([]string, error) {
+	if err := validateID("team", teamID); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(filepath.Join(s.TeamDir(teamID), "handoffs"))
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		if safeID.MatchString(id) {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
 
 func (s *Store) ListTeamIDs() ([]string, error) {

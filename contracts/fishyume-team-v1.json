@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "fishyume.team-contract-freeze/v1",
+  "status": "frozen",
+  "apiVersion": "fishyume.team/v1",
+  "methods": [
+    "team.capabilities",
+    "team.start",
+    "team.list",
+    "team.get",
+    "team.events",
+    "team.messages",
+    "team.action",
+    "team.handoff.create",
+    "team.handoff.get",
+    "team.handoff.list",
+    "team.handoff.bindRun"
+  ],
+  "actions": ["follow_up", "cancel_turn", "close", "cancel"],
+  "errorCodes": [
+    "invalid_argument",
+    "not_found",
+    "conflict",
+    "capability_unavailable",
+    "quota_exceeded",
+    "not_ready",
+    "session_lost",
+    "protocol_mismatch",
+    "internal"
+  ],
+  "limits": {
+    "minParticipants": 2,
+    "maxParticipants": 4,
+    "maxProjectBytes": 4096,
+    "maxTopicBytes": 16384,
+    "maxInstructionsBytes": 16384,
+    "maxMessageBytes": 32768,
+    "maxRetainedMessages": 256,
+    "maxRetainedMessageBytes": 2097152,
+    "maxParticipantTurns": 64,
+    "maxActiveTurns": 4,
+    "maxMutationReceipts": 256,
+    "defaultCostGrant": 1000,
+    "maxCostGrant": 6400,
+    "maxHandoffSelectedMessages": 32,
+    "maxHandoffBytes": 131072,
+    "maxEventPageSize": 100,
+    "boundedWaitSeconds": 30
+  }
+}

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"wf.local/wf-engine/internal/explorationdriver"
 	"wf.local/wf-engine/internal/routing"
@@ -24,6 +25,7 @@ import (
 )
 
 var (
+	ErrInvalidArgument       = errors.New("team request contains an invalid argument")
 	ErrConflict              = errors.New("team request conflicts with an existing request")
 	ErrCapabilityUnavailable = errors.New("team capability is unavailable")
 	ErrQuotaExceeded         = errors.New("team quota exceeded")
@@ -35,14 +37,23 @@ type StartResult struct {
 }
 
 type Service struct {
-	state   *store.Store
-	now     func() time.Time
-	drivers map[string]explorationdriver.Driver
-	mu      sync.Mutex
+	state             *store.Store
+	now               func() time.Time
+	drivers           map[string]explorationdriver.Driver
+	driverLimits      map[string]chan struct{}
+	activeControllers map[string]struct{}
+	mu                sync.Mutex
+	controllerWG      sync.WaitGroup
 }
 
 func NewService(state *store.Store) *Service {
-	return &Service{state: state, now: time.Now, drivers: make(map[string]explorationdriver.Driver)}
+	return &Service{
+		state:             state,
+		now:               time.Now,
+		drivers:           make(map[string]explorationdriver.Driver),
+		driverLimits:      make(map[string]chan struct{}),
+		activeControllers: make(map[string]struct{}),
+	}
 }
 
 func (s *Service) SetDriver(driver explorationdriver.Driver) error {
@@ -62,6 +73,11 @@ func (s *Service) SetDriver(driver explorationdriver.Driver) error {
 		return fmt.Errorf("exploration driver %q is already registered", name)
 	}
 	s.drivers[name] = driver
+	maximum := driver.Capabilities().MaxConcurrentTurns
+	if maximum <= 0 || maximum > teamcontract.MaxActiveTurns {
+		maximum = teamcontract.MaxActiveTurns
+	}
+	s.driverLimits[name] = make(chan struct{}, maximum)
 	return nil
 }
 
@@ -88,7 +104,7 @@ func (s *Service) Start(ctx context.Context, request teamcontract.TeamStartReque
 	}
 	project, err := canonicalProject(request.Project)
 	if err != nil {
-		return StartResult{}, err
+		return StartResult{}, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
 	normalized, participants, catalogHash, err := normalizeStart(request, project)
 	if err != nil {
@@ -197,8 +213,10 @@ func (s *Service) DispatchInitial(ctx context.Context, teamID string) (teamcontr
 		return teamcontract.TeamSessionV1{}, err
 	}
 	drivers := make(map[string]explorationdriver.Driver, len(s.drivers))
+	limits := make(map[string]chan struct{}, len(s.driverLimits))
 	for name, driver := range s.drivers {
 		drivers[name] = driver
+		limits[name] = s.driverLimits[name]
 	}
 	s.mu.Unlock()
 	var wait sync.WaitGroup
@@ -209,6 +227,29 @@ func (s *Service) DispatchInitial(ctx context.Context, teamID string) (teamcontr
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
+			var turn teamcontract.ParticipantTurnV1
+			if err := s.state.ReadTeamTurn(teamID, turnID, &turn); err != nil {
+				errorMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				errorMu.Unlock()
+				return
+			}
+			limit := limits[turn.Driver]
+			if limit != nil {
+				select {
+				case limit <- struct{}{}:
+					defer func() { <-limit }()
+				case <-ctx.Done():
+					errorMu.Lock()
+					if firstErr == nil {
+						firstErr = ctx.Err()
+					}
+					errorMu.Unlock()
+					return
+				}
+			}
 			if err := s.dispatchTurn(ctx, teamID, turnID, drivers); err != nil {
 				errorMu.Lock()
 				if firstErr == nil {
@@ -372,10 +413,29 @@ func (s *Service) dispatchTurn(ctx context.Context, teamID, turnID string, drive
 		return err
 	}
 	s.mu.Lock()
+	var current teamcontract.ParticipantTurnV1
+	if err := s.state.ReadTeamTurn(teamID, turnID, &current); err != nil {
+		s.mu.Unlock()
+		return err
+	}
 	if err := s.state.WriteTeamExecution(teamID, turnID, encodedHandle); err != nil {
 		s.mu.Unlock()
 		return err
 	}
+	if current.State != teamcontract.TurnDispatching {
+		s.mu.Unlock()
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		result, cancelErr := driver.Cancel(cleanupCtx, *handle)
+		if cancelErr != nil {
+			return cancelErr
+		}
+		if result == nil || result.State != explorationdriver.CancelConfirmed {
+			return fmt.Errorf("late exploration execution cancellation was not confirmed")
+		}
+		return nil
+	}
+	turn = current
 	turn.State, turn.UpdatedAt = teamcontract.TurnActive, s.now().UTC()
 	if err := s.state.WriteTeamTurn(turn); err != nil {
 		s.mu.Unlock()
@@ -459,6 +519,14 @@ func (s *Service) commitContribution(teamID string, turn teamcontract.Participan
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var current teamcontract.ParticipantTurnV1
+	if err := s.state.ReadTeamTurn(teamID, turn.TurnID, &current); err != nil {
+		return err
+	}
+	if current.State != teamcontract.TurnActive {
+		return nil
+	}
+	turn = current
 	messages, err := s.state.ReadTeamMessages(teamID)
 	if err != nil {
 		return err
@@ -521,6 +589,16 @@ func (s *Service) commitContribution(teamID string, turn teamcontract.Participan
 }
 
 func (s *Service) markTurnFailureLocked(teamID string, turn teamcontract.ParticipantTurnV1, state teamcontract.TurnState, diagnostic string) error {
+	var current teamcontract.ParticipantTurnV1
+	if err := s.state.ReadTeamTurn(teamID, turn.TurnID, &current); err != nil {
+		return err
+	}
+	switch current.State {
+	case teamcontract.TurnPrepared, teamcontract.TurnDispatching, teamcontract.TurnActive:
+	default:
+		return nil
+	}
+	turn = current
 	turn.State, turn.Diagnostic, turn.UpdatedAt = state, boundedDiagnostic(diagnostic), s.now().UTC()
 	if err := s.state.WriteTeamTurn(turn); err != nil {
 		return err
@@ -604,7 +682,11 @@ func (s *Service) turnPrompt(teamID, participantID string) string {
 func boundedDiagnostic(value string) string {
 	data := []byte(value)
 	if len(data) > teamcontract.MaxWarningBytes {
-		return string(data[:teamcontract.MaxWarningBytes])
+		data = data[:teamcontract.MaxWarningBytes]
+		for !utf8.Valid(data) {
+			data = data[:len(data)-1]
+		}
+		return string(data)
 	}
 	return value
 }
@@ -645,10 +727,10 @@ func normalizeStart(request teamcontract.TeamStartRequestV1, project string) (te
 			}
 		}
 		if !found {
-			return teamcontract.TeamStartRequestV1{}, nil, "", fmt.Errorf("participant model %q is absent from trusted catalog", spec.ModelID)
+			return teamcontract.TeamStartRequestV1{}, nil, "", fmt.Errorf("%w: participant model %q is absent from trusted catalog", ErrInvalidArgument, spec.ModelID)
 		}
 		if _, exists := seenModels[model.ID]; exists {
-			return teamcontract.TeamStartRequestV1{}, nil, "", fmt.Errorf("participant model %q is duplicated", model.ID)
+			return teamcontract.TeamStartRequestV1{}, nil, "", fmt.Errorf("%w: participant model %q is duplicated", ErrInvalidArgument, model.ID)
 		}
 		seenModels[model.ID] = struct{}{}
 		participantID := fmt.Sprintf("participant-%d", index+1)

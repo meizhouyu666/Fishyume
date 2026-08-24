@@ -17,6 +17,7 @@ import (
 	"wf.local/wf-engine/internal/application"
 	"wf.local/wf-engine/internal/rpc"
 	"wf.local/wf-engine/internal/run"
+	"wf.local/wf-engine/internal/team"
 )
 
 const (
@@ -29,6 +30,7 @@ type Server struct {
 	listener    net.Listener
 	service     *run.Service
 	application *application.Service
+	teams       *team.Service
 	mutationMu  sync.Mutex
 	connections atomic.Int64
 	closed      chan struct{}
@@ -36,6 +38,21 @@ type Server struct {
 }
 
 func NewServer(owner *Owner, service *run.Service, applications ...*application.Service) (*Server, error) {
+	return newServer(owner, service, selectApplication(service, applications), nil)
+}
+
+func NewServerWithTeam(owner *Owner, service *run.Service, applicationService *application.Service, teamService *team.Service) (*Server, error) {
+	return newServer(owner, service, applicationService, teamService)
+}
+
+func selectApplication(service *run.Service, applications []*application.Service) *application.Service {
+	if len(applications) > 0 && applications[0] != nil {
+		return applications[0]
+	}
+	return application.NewService(service, "codex", service.ApplicationJournal())
+}
+
+func newServer(owner *Owner, service *run.Service, applicationService *application.Service, teamService *team.Service) (*Server, error) {
 	if owner == nil || service == nil {
 		return nil, errors.New("control plane owner and Run service are required")
 	}
@@ -48,11 +65,7 @@ func NewServer(owner *Owner, service *run.Service, applications ...*application.
 		_ = cleanupEndpoint(owner.Record())
 		return nil, fmt.Errorf("publish control plane owner: %w", err)
 	}
-	applicationService := application.NewService(service, "codex", service.ApplicationJournal())
-	if len(applications) > 0 && applications[0] != nil {
-		applicationService = applications[0]
-	}
-	return &Server{owner: owner, listener: listener, service: service, application: applicationService, closed: make(chan struct{})}, nil
+	return &Server{owner: owner, listener: listener, service: service, application: applicationService, teams: teamService, closed: make(chan struct{})}, nil
 }
 
 func (s *Server) Serve(ctx context.Context) error {
@@ -80,7 +93,7 @@ func (s *Server) Serve(ctx context.Context) error {
 			if err := s.handshake(connection); err != nil {
 				return
 			}
-			server := rpc.NewConnectionServer(connection, connection, s.service, s.application, &s.mutationMu)
+			server := rpc.NewConnectionServer(connection, connection, s.service, s.application, &s.mutationMu, s.teams)
 			_ = server.Serve(context.Background())
 		}()
 	}

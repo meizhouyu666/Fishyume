@@ -123,7 +123,7 @@ func TestExplorationAdapterUsesTeamArtifactsAndRecoversOutput(t *testing.T) {
 		t.Fatalf("recovered observation=%+v err=%v", observation, err)
 	}
 	output, err := recovered.Output(context.Background(), handle, 32*1024)
-	if err != nil || !strings.Contains(output, `"contentMarkdown":"fixture contribution"`) {
+	if err != nil || !strings.Contains(output, `"contentMarkdown":"fixture contribution from gpt-5.6-luna"`) {
 		t.Fatalf("recovered output=%q err=%v", output, err)
 	}
 	content, err := os.ReadFile(sentinel)

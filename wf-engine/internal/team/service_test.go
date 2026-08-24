@@ -20,6 +20,7 @@ import (
 type immediateDriver struct {
 	mu          sync.Mutex
 	starts      []explorationdriver.StartRequest
+	cancels     int
 	output      string
 	activeFirst bool
 }
@@ -51,6 +52,9 @@ func (d *immediateDriver) Output(context.Context, explorationdriver.ExecutionHan
 	return d.output, nil
 }
 func (d *immediateDriver) Cancel(context.Context, explorationdriver.ExecutionHandle) (*explorationdriver.CancelResult, error) {
+	d.mu.Lock()
+	d.cancels++
+	d.mu.Unlock()
 	return &explorationdriver.CancelResult{State: explorationdriver.CancelConfirmed}, nil
 }
 
@@ -262,9 +266,14 @@ func TestDispatchReconcilesActiveHandleWithoutLaunchingAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { <-time.After(50 * time.Millisecond); cancel() }()
-	_, _ = first.DispatchInitial(ctx, started.Team.TeamID)
+	dispatched := make(chan struct{})
+	go func() {
+		defer close(dispatched)
+		_, _ = first.DispatchInitial(ctx, started.Team.TeamID)
+	}()
+	awaitAllTurnsState(t, first, started.Team.TeamID, teamcontract.TurnActive)
 	cancel()
+	<-dispatched
 	turnIDs, err := state.ListTeamTurnIDs(started.Team.TeamID)
 	if err != nil || len(turnIDs) == 0 {
 		t.Fatalf("turns=%v err=%v", turnIDs, err)
@@ -291,6 +300,37 @@ func TestDispatchReconcilesActiveHandleWithoutLaunchingAgain(t *testing.T) {
 	recoveryDriver.mu.Unlock()
 	if launches != 0 {
 		t.Fatalf("active recovery relaunched external turn: %d", launches)
+	}
+}
+
+func awaitAllTurnsState(t *testing.T, service *Service, teamID string, want teamcontract.TurnState) []string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		view, err := service.GetView(teamcontract.TeamGetRequestV1{SchemaVersion: teamcontract.SchemaVersion, TeamID: teamID})
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			t.Fatal(err)
+		}
+		turnIDs := make([]string, 0, len(view.Turns))
+		all := len(view.Turns) > 0
+		for _, turn := range view.Turns {
+			turnIDs = append(turnIDs, turn.TurnID)
+			if turn.State != want {
+				all = false
+				break
+			}
+		}
+		if all && len(view.Turns) == len(view.Team.Participants) {
+			return turnIDs
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Team turns did not all reach %q", want)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

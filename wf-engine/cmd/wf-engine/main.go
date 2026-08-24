@@ -15,6 +15,7 @@ import (
 	"wf.local/wf-engine/internal/rpc"
 	"wf.local/wf-engine/internal/run"
 	"wf.local/wf-engine/internal/store"
+	"wf.local/wf-engine/internal/team"
 )
 
 func main() {
@@ -27,14 +28,20 @@ func main() {
 		os.Exit(1)
 	}
 	registry := backend.NewRegistry()
-	if err := registry.Register(scheduleradapter.New(codex.New(codex.Config{StateRoot: state.Root()}))); err != nil {
+	codexDriver := codex.New(codex.Config{StateRoot: state.Root()})
+	if err := registry.Register(scheduleradapter.New(codexDriver)); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	service := run.NewServiceWithRegistry(registry, "codex", state)
 	applicationService := application.NewService(service, "codex", state)
+	teamService := team.NewService(state)
+	if err := teamService.SetDriver(codexDriver.Exploration()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if len(os.Args) == 2 && os.Args[1] == "serve" {
-		if err := serveControlPlane(state, service, applicationService); err != nil {
+		if err := serveControlPlane(state, service, applicationService, teamService); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -44,20 +51,24 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: wf-engine [serve]")
 		os.Exit(2)
 	}
-	server := rpc.NewServer(os.Stdin, os.Stdout, service, applicationService)
+	if err := teamService.Recover(context.Background()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	server := rpc.NewServerWithTeam(os.Stdin, os.Stdout, service, applicationService, teamService)
 	if err := server.Serve(context.Background()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func serveControlPlane(state *store.Store, service *run.Service, applicationService *application.Service) error {
+func serveControlPlane(state *store.Store, service *run.Service, applicationService *application.Service, teamService *team.Service) error {
 	owner, err := controlplane.AcquireOwner(state.Root(), rpc.EngineVersion, rpc.ProtocolVersion)
 	if err != nil {
 		return err
 	}
 	defer owner.Close()
-	server, err := controlplane.NewServer(owner, service, applicationService)
+	server, err := controlplane.NewServerWithTeam(owner, service, applicationService, teamService)
 	if err != nil {
 		return err
 	}
@@ -67,6 +78,9 @@ func serveControlPlane(state *store.Store, service *run.Service, applicationServ
 	}
 	if err := service.Recover(context.Background()); err != nil {
 		return fmt.Errorf("recover durable Runs: %w", err)
+	}
+	if err := teamService.Recover(context.Background()); err != nil {
+		return fmt.Errorf("recover durable Teams: %w", err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
