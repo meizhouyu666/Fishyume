@@ -118,6 +118,9 @@ func (s *Service) Start(ctx context.Context, request teamcontract.TeamStartReque
 		if existing.RequestHash != requestHash {
 			return StartResult{}, ErrConflict
 		}
+		if err := s.repairPreparedTeamLocked(existing); err != nil {
+			return StartResult{}, err
+		}
 		return StartResult{Team: existing, Replayed: true}, nil
 	}
 	teamID, err := newID("team")
@@ -135,24 +138,32 @@ func (s *Service) Start(ctx context.Context, request teamcontract.TeamStartReque
 	if err := s.state.EnsureTeamSnapshot(teamSnapshot); err != nil {
 		return StartResult{}, err
 	}
-	for _, participant := range participants {
-		if err := s.state.WriteTeamParticipant(participant, teamID); err != nil {
-			return StartResult{}, err
-		}
-	}
-	events, err := s.state.ReadTeamEvents(teamID)
-	if err != nil {
+	if err := s.repairPreparedTeamLocked(teamSnapshot); err != nil {
 		return StartResult{}, err
 	}
-	if len(events) == 0 {
-		event := teamcontract.TeamEventV1{SchemaVersion: teamcontract.SchemaVersion, TeamID: teamID, Sequence: 1, Type: teamcontract.EventTeamCreated, StateVersion: teamSnapshot.StateVersion, Summary: "team prepared", CreatedAt: now}
-		if err := s.state.AppendTeamEvent(event); err != nil {
-			return StartResult{}, err
-		}
-	} else if events[0].Type != teamcontract.EventTeamCreated {
-		return StartResult{}, fmt.Errorf("Team %q has an invalid creation journal", teamID)
-	}
 	return StartResult{Team: teamSnapshot}, nil
+}
+
+func (s *Service) repairPreparedTeamLocked(snapshot teamcontract.TeamSessionV1) error {
+	if err := s.state.InitTeam(snapshot.TeamID); err != nil {
+		return err
+	}
+	for _, participant := range snapshot.Participants {
+		if err := s.state.WriteTeamParticipant(participant, snapshot.TeamID); err != nil {
+			return err
+		}
+	}
+	events, err := s.state.ReadTeamEvents(snapshot.TeamID)
+	if err != nil {
+		return err
+	}
+	if len(events) == 0 {
+		return s.state.AppendTeamEvent(teamcontract.TeamEventV1{SchemaVersion: teamcontract.SchemaVersion, TeamID: snapshot.TeamID, Sequence: 1, Type: teamcontract.EventTeamCreated, StateVersion: snapshot.StateVersion, Summary: "team prepared", CreatedAt: snapshot.CreatedAt})
+	}
+	if events[0].Type != teamcontract.EventTeamCreated {
+		return fmt.Errorf("Team %q has an invalid creation journal", snapshot.TeamID)
+	}
+	return nil
 }
 
 func (s *Service) Get(teamID string) (teamcontract.TeamSessionV1, error) {
@@ -284,15 +295,36 @@ func (s *Service) dispatchTurn(ctx context.Context, teamID, turnID string, drive
 		s.mu.Unlock()
 		return err
 	}
-	if turn.State != teamcontract.TurnPrepared {
-		s.mu.Unlock()
-		return nil
-	}
 	driver := drivers[turn.Driver]
 	if driver == nil {
 		s.markTurnFailureLocked(teamID, turn, teamcontract.TurnFailed, "exploration driver is unavailable")
 		s.mu.Unlock()
 		return ErrCapabilityUnavailable
+	}
+	if turn.State == teamcontract.TurnActive {
+		handleData, err := s.state.ReadTeamExecution(teamID, turnID)
+		if err != nil {
+			s.markTurnFailureLocked(teamID, turn, teamcontract.TurnIndeterminate, "active turn handle is unavailable")
+			s.mu.Unlock()
+			return err
+		}
+		var handle explorationdriver.ExecutionHandle
+		if err := json.Unmarshal(handleData, &handle); err != nil {
+			s.markTurnFailureLocked(teamID, turn, teamcontract.TurnIndeterminate, "active turn handle is invalid")
+			s.mu.Unlock()
+			return err
+		}
+		s.mu.Unlock()
+		return s.observeTurn(ctx, driver, teamID, turn, handle)
+	}
+	if turn.State == teamcontract.TurnDispatching {
+		s.markTurnFailureLocked(teamID, turn, teamcontract.TurnIndeterminate, "dispatching turn has no confirmed execution handle")
+		s.mu.Unlock()
+		return nil
+	}
+	if turn.State != teamcontract.TurnPrepared {
+		s.mu.Unlock()
+		return nil
 	}
 	turn.State, turn.UpdatedAt = teamcontract.TurnDispatching, s.now().UTC()
 	if err := s.state.WriteTeamTurn(turn); err != nil {

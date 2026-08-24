@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"wf.local/wf-engine/internal/explorationdriver"
 	"wf.local/wf-engine/internal/routing"
@@ -17,10 +18,10 @@ import (
 )
 
 type immediateDriver struct {
-	mu       sync.Mutex
-	starts   []explorationdriver.StartRequest
-	output   string
-	terminal bool
+	mu          sync.Mutex
+	starts      []explorationdriver.StartRequest
+	output      string
+	activeFirst bool
 }
 
 func (d *immediateDriver) Name() string { return "codex" }
@@ -36,7 +37,14 @@ func (d *immediateDriver) Start(_ context.Context, request explorationdriver.Sta
 	d.mu.Unlock()
 	return &explorationdriver.ExecutionHandle{Driver: d.Name(), Target: request.Target, SchemaVersion: 1, ID: request.Identity.TurnID, Data: json.RawMessage(`{"turnId":"` + request.Identity.TurnID + `"}`)}, nil
 }
+
 func (d *immediateDriver) Observe(context.Context, explorationdriver.ExecutionHandle) (*explorationdriver.Observation, error) {
+	d.mu.Lock()
+	if d.activeFirst {
+		d.mu.Unlock()
+		return &explorationdriver.Observation{State: explorationdriver.ObservationActive}, nil
+	}
+	d.mu.Unlock()
 	return &explorationdriver.Observation{State: explorationdriver.ObservationTerminal}, nil
 }
 func (d *immediateDriver) Output(context.Context, explorationdriver.ExecutionHandle, int) (string, error) {
@@ -211,6 +219,78 @@ func TestDispatchInvalidContributionFailsTurnAndClosesPanelWithoutMessage(t *tes
 	messages, err := state.ReadTeamMessages(finished.TeamID)
 	if err != nil || len(messages) != 0 {
 		t.Fatalf("invalid output created messages=%+v err=%v", messages, err)
+	}
+}
+
+func TestStartReplayRepairsPreparedParticipantAndCreationEvent(t *testing.T) {
+	project := t.TempDir()
+	state := store.New(t.TempDir())
+	service := NewService(state)
+	request := startRequest(project, "repair-start")
+	started, err := service.Start(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(state.TeamParticipantPath(started.Team.TeamID, "participant-1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(state.TeamEventsPath(started.Team.TeamID)); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := service.Start(context.Background(), request)
+	if err != nil || !replayed.Replayed {
+		t.Fatalf("replayed=%+v err=%v", replayed, err)
+	}
+	if err := state.ReadTeamParticipant(started.Team.TeamID, "participant-1", &teamcontract.ParticipantV1{}); err != nil {
+		t.Fatal(err)
+	}
+	events, err := state.ReadTeamEvents(started.Team.TeamID)
+	if err != nil || len(events) != 1 || events[0].Type != teamcontract.EventTeamCreated {
+		t.Fatalf("events=%+v err=%v", events, err)
+	}
+}
+
+func TestDispatchReconcilesActiveHandleWithoutLaunchingAgain(t *testing.T) {
+	driver := &immediateDriver{output: `{"schemaVersion":"fishyume.team/v1","status":"completed","contentMarkdown":"recovered"}`, activeFirst: true}
+	state := store.New(t.TempDir())
+	first := NewService(state)
+	if err := first.SetDriver(driver); err != nil {
+		t.Fatal(err)
+	}
+	started, err := first.Start(context.Background(), startRequest(t.TempDir(), "active-recovery"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-time.After(50 * time.Millisecond); cancel() }()
+	_, _ = first.DispatchInitial(ctx, started.Team.TeamID)
+	cancel()
+	turnIDs, err := state.ListTeamTurnIDs(started.Team.TeamID)
+	if err != nil || len(turnIDs) == 0 {
+		t.Fatalf("turns=%v err=%v", turnIDs, err)
+	}
+	turn, err := readTurn(state, started.Team.TeamID, turnIDs[0])
+	if err != nil || turn.State != teamcontract.TurnActive {
+		t.Fatalf("active turn=%+v err=%v", turn, err)
+	}
+
+	recoveryDriver := &immediateDriver{output: `{"schemaVersion":"fishyume.team/v1","status":"completed","contentMarkdown":"recovered"}`}
+	recovered := NewService(state)
+	if err := recovered.SetDriver(recoveryDriver); err != nil {
+		t.Fatal(err)
+	}
+	finished, err := recovered.DispatchInitial(context.Background(), started.Team.TeamID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.State != teamcontract.LifecycleClosed {
+		t.Fatalf("recovered Team=%+v", finished)
+	}
+	recoveryDriver.mu.Lock()
+	launches := len(recoveryDriver.starts)
+	recoveryDriver.mu.Unlock()
+	if launches != 0 {
+		t.Fatalf("active recovery relaunched external turn: %d", launches)
 	}
 }
 
