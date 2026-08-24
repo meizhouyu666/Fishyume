@@ -7,14 +7,17 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"wf.local/wf-engine/internal/explorationdriver"
 	"wf.local/wf-engine/internal/routing"
 	"wf.local/wf-engine/internal/store"
 	"wf.local/wf-engine/internal/teamcontract"
@@ -32,13 +35,45 @@ type StartResult struct {
 }
 
 type Service struct {
-	state *store.Store
-	now   func() time.Time
-	mu    sync.Mutex
+	state   *store.Store
+	now     func() time.Time
+	drivers map[string]explorationdriver.Driver
+	mu      sync.Mutex
 }
 
 func NewService(state *store.Store) *Service {
-	return &Service{state: state, now: time.Now}
+	return &Service{state: state, now: time.Now, drivers: make(map[string]explorationdriver.Driver)}
+}
+
+func (s *Service) SetDriver(driver explorationdriver.Driver) error {
+	if driver == nil {
+		return fmt.Errorf("exploration driver is required")
+	}
+	if err := explorationdriver.ValidateCapabilities(driver.Capabilities()); err != nil {
+		return err
+	}
+	name := strings.TrimSpace(driver.Name())
+	if name == "" || name != driver.Name() {
+		return fmt.Errorf("exploration driver name is invalid")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.drivers[name]; exists {
+		return fmt.Errorf("exploration driver %q is already registered", name)
+	}
+	s.drivers[name] = driver
+	return nil
+}
+
+func (s *Service) Drivers() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	names := make([]string, 0, len(s.drivers))
+	for name := range s.drivers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (s *Service) Start(ctx context.Context, request teamcontract.TeamStartRequestV1) (StartResult, error) {
@@ -130,6 +165,419 @@ func (s *Service) Get(teamID string) (teamcontract.TeamSessionV1, error) {
 	}
 	return snapshot, nil
 }
+
+// DispatchInitial prepares and runs every initial participant turn. A caller
+// may safely retry this method after a process restart: prepared turns have a
+// stable identity and dispatching turns without a durable handle are never
+// relaunched automatically.
+func (s *Service) DispatchInitial(ctx context.Context, teamID string) (teamcontract.TeamSessionV1, error) {
+	if s == nil || s.state == nil {
+		return teamcontract.TeamSessionV1{}, fmt.Errorf("team state store is unavailable")
+	}
+	s.mu.Lock()
+	_, err := s.prepareInitialTurnsLocked(teamID)
+	if err != nil {
+		s.mu.Unlock()
+		return teamcontract.TeamSessionV1{}, err
+	}
+	turnIDs, err := s.state.ListTeamTurnIDs(teamID)
+	if err != nil {
+		s.mu.Unlock()
+		return teamcontract.TeamSessionV1{}, err
+	}
+	drivers := make(map[string]explorationdriver.Driver, len(s.drivers))
+	for name, driver := range s.drivers {
+		drivers[name] = driver
+	}
+	s.mu.Unlock()
+	var wait sync.WaitGroup
+	var errorMu sync.Mutex
+	var firstErr error
+	for _, turnID := range turnIDs {
+		turnID := turnID
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			if err := s.dispatchTurn(ctx, teamID, turnID, drivers); err != nil {
+				errorMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				errorMu.Unlock()
+			}
+		}()
+	}
+	wait.Wait()
+	current, err := s.Get(teamID)
+	if err != nil {
+		return teamcontract.TeamSessionV1{}, err
+	}
+	return current, firstErr
+}
+
+func (s *Service) prepareInitialTurnsLocked(teamID string) (teamcontract.TeamSessionV1, error) {
+	var snapshot teamcontract.TeamSessionV1
+	if err := s.state.ReadTeamSnapshot(teamID, &snapshot); err != nil {
+		return snapshot, err
+	}
+	if snapshot.State == teamcontract.LifecycleClosed {
+		return snapshot, nil
+	}
+	catalog := routing.BuiltinCatalogV1()
+	now := s.now().UTC()
+	changed := false
+	cumulative := 0
+	for index := range snapshot.Participants {
+		participant := &snapshot.Participants[index]
+		if participant.CurrentTurnID != "" {
+			var existing teamcontract.ParticipantTurnV1
+			if err := s.state.ReadTeamTurn(teamID, participant.CurrentTurnID, &existing); err != nil {
+				return snapshot, err
+			}
+			cumulative = existing.Usage.CumulativeCostUnits
+			continue
+		}
+		var target routing.Target
+		var found bool
+		for _, model := range catalog.Models {
+			if model.ID == participant.ModelID {
+				target, found = model.Target, true
+				break
+			}
+		}
+		if !found {
+			return snapshot, fmt.Errorf("participant model %q is absent from trusted catalog", participant.ModelID)
+		}
+		cost, err := routing.CostUnitsForTarget(catalog, target)
+		if err != nil {
+			return snapshot, err
+		}
+		cumulative += cost
+		turnID := fmt.Sprintf("turn-%s-%d", participant.ParticipantID, 1)
+		turn := teamcontract.ParticipantTurnV1{SchemaVersion: teamcontract.SchemaVersion, TeamID: teamID, ParticipantID: participant.ParticipantID, TurnID: turnID, Number: 1, State: teamcontract.TurnPrepared, Driver: participant.Driver, Target: participant.Target, ModelID: participant.ModelID, Usage: teamcontract.TeamTurnUsageV1{Target: participant.Target, CatalogHash: snapshot.CatalogHash, CostUnits: cost, CumulativeCostUnits: cumulative}, CreatedAt: now, UpdatedAt: now}
+		if err := s.state.WriteTeamTurn(turn); err != nil {
+			return snapshot, err
+		}
+		participant.CurrentTurnID, participant.State = turnID, teamcontract.ParticipantRunning
+		if err := s.state.WriteTeamParticipant(*participant, teamID); err != nil {
+			return snapshot, err
+		}
+		if err := s.appendTeamEventLocked(snapshot, teamcontract.EventParticipantPrepared, "turn prepared", "", turnID); err != nil {
+			return snapshot, err
+		}
+		changed = true
+	}
+	if !changed {
+		return snapshot, nil
+	}
+	snapshot.State, snapshot.StateVersion, snapshot.UpdatedAt = teamcontract.LifecycleRunning, snapshot.StateVersion+1, now
+	if err := s.state.WriteTeamSnapshot(snapshot); err != nil {
+		return snapshot, err
+	}
+	return snapshot, nil
+}
+
+func (s *Service) dispatchTurn(ctx context.Context, teamID, turnID string, drivers map[string]explorationdriver.Driver) error {
+	s.mu.Lock()
+	var turn teamcontract.ParticipantTurnV1
+	if err := s.state.ReadTeamTurn(teamID, turnID, &turn); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	if turn.State != teamcontract.TurnPrepared {
+		s.mu.Unlock()
+		return nil
+	}
+	driver := drivers[turn.Driver]
+	if driver == nil {
+		s.markTurnFailureLocked(teamID, turn, teamcontract.TurnFailed, "exploration driver is unavailable")
+		s.mu.Unlock()
+		return ErrCapabilityUnavailable
+	}
+	turn.State, turn.UpdatedAt = teamcontract.TurnDispatching, s.now().UTC()
+	if err := s.state.WriteTeamTurn(turn); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	if err := s.appendTeamEventLockedFromTurn(teamID, turn, teamcontract.EventParticipantEvent, "turn dispatching"); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Unlock()
+
+	request := explorationdriver.StartRequest{ProtocolVersion: explorationdriver.ProtocolVersion, Identity: explorationdriver.ExecutionIdentity{TeamID: teamID, ParticipantID: turn.ParticipantID, TurnID: turn.TurnID}, Workspace: "", Target: turn.Target, ModelID: turn.ModelID, Prompt: s.turnPrompt(teamID, turn.ParticipantID), Sandbox: explorationdriver.SandboxReadOnly, ResultContract: explorationdriver.ResultContract{MaxBytes: teamcontract.MaxMessageBytes}}
+	// Workspace is loaded from the durable Team snapshot so a retry never uses
+	// caller-controlled process state.
+	snapshot, err := s.Get(teamID)
+	if err != nil {
+		return err
+	}
+	request.Workspace = snapshot.Project
+	if err := explorationdriver.ValidateStartRequest(request); err != nil {
+		return err
+	}
+	handle, err := driver.Start(ctx, request)
+	if err != nil {
+		s.mu.Lock()
+		s.markTurnFailureLocked(teamID, turn, teamcontract.TurnFailed, boundedDiagnostic(err.Error()))
+		s.mu.Unlock()
+		return err
+	}
+	if handle == nil || handle.Driver != driver.Name() {
+		s.mu.Lock()
+		s.markTurnFailureLocked(teamID, turn, teamcontract.TurnIndeterminate, "driver returned an invalid execution handle")
+		s.mu.Unlock()
+		return fmt.Errorf("invalid exploration execution handle")
+	}
+	if err := explorationdriver.ValidateExecutionHandle(*handle); err != nil {
+		s.mu.Lock()
+		s.markTurnFailureLocked(teamID, turn, teamcontract.TurnIndeterminate, boundedDiagnostic(err.Error()))
+		s.mu.Unlock()
+		return err
+	}
+	encodedHandle, err := json.Marshal(handle)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if err := s.state.WriteTeamExecution(teamID, turnID, encodedHandle); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	turn.State, turn.UpdatedAt = teamcontract.TurnActive, s.now().UTC()
+	if err := s.state.WriteTeamTurn(turn); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	if err := s.appendTeamEventLockedFromTurn(teamID, turn, teamcontract.EventParticipantActive, "turn active"); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Unlock()
+	return s.observeTurn(ctx, driver, teamID, turn, *handle)
+}
+
+func (s *Service) observeTurn(ctx context.Context, driver explorationdriver.Driver, teamID string, turn teamcontract.ParticipantTurnV1, handle explorationdriver.ExecutionHandle) error {
+	for {
+		observation, err := driver.Observe(ctx, handle)
+		if err != nil {
+			s.mu.Lock()
+			s.markTurnFailureLocked(teamID, turn, teamcontract.TurnIndeterminate, boundedDiagnostic(err.Error()))
+			s.mu.Unlock()
+			return err
+		}
+		if observation == nil {
+			s.mu.Lock()
+			s.markTurnFailureLocked(teamID, turn, teamcontract.TurnIndeterminate, "driver returned no observation")
+			s.mu.Unlock()
+			return fmt.Errorf("driver returned no observation")
+		}
+		if err := explorationdriver.ValidateObservation(*observation); err != nil {
+			s.mu.Lock()
+			s.markTurnFailureLocked(teamID, turn, teamcontract.TurnIndeterminate, boundedDiagnostic(err.Error()))
+			s.mu.Unlock()
+			return err
+		}
+		switch observation.State {
+		case explorationdriver.ObservationActive:
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(25 * time.Millisecond):
+			}
+		case explorationdriver.ObservationLost:
+			s.mu.Lock()
+			s.markTurnFailureLocked(teamID, turn, teamcontract.TurnIndeterminate, observation.Diagnostic)
+			s.mu.Unlock()
+			return fmt.Errorf("exploration execution was lost")
+		case explorationdriver.ObservationTerminal:
+			output, err := driver.Output(ctx, handle, teamcontract.MaxMessageBytes)
+			if err != nil {
+				s.mu.Lock()
+				s.markTurnFailureLocked(teamID, turn, teamcontract.TurnFailed, boundedDiagnostic(err.Error()))
+				s.mu.Unlock()
+				return err
+			}
+			return s.commitContribution(teamID, turn, output)
+		}
+	}
+}
+
+func (s *Service) commitContribution(teamID string, turn teamcontract.ParticipantTurnV1, output string) error {
+	var contribution teamcontract.ContributionV1
+	if err := teamcontract.DecodeStrict([]byte(output), &contribution); err != nil {
+		s.mu.Lock()
+		s.markTurnFailureLocked(teamID, turn, teamcontract.TurnFailed, boundedDiagnostic(err.Error()))
+		s.mu.Unlock()
+		return err
+	}
+	if err := teamcontract.ValidateContribution(contribution); err != nil {
+		s.mu.Lock()
+		s.markTurnFailureLocked(teamID, turn, teamcontract.TurnFailed, boundedDiagnostic(err.Error()))
+		s.mu.Unlock()
+		return err
+	}
+	canonical, err := teamcontract.CanonicalJSON(contribution)
+	if err != nil {
+		return err
+	}
+	hash, _, err := teamcontract.CanonicalHash(contribution)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	messages, err := s.state.ReadTeamMessages(teamID)
+	if err != nil {
+		return err
+	}
+	messageID := fmt.Sprintf("message-%s", turn.TurnID)
+	foundMessage := false
+	for _, message := range messages {
+		if message.TurnID == turn.TurnID {
+			messageID = message.MessageID
+			foundMessage = true
+			break
+		}
+	}
+	if !foundMessage {
+		message := teamcontract.TeamMessageV1{SchemaVersion: teamcontract.SchemaVersion, MessageID: messageID, TeamID: teamID, Sequence: uint64(len(messages) + 1), Kind: teamcontract.MessageContribution, Actor: turn.ParticipantID, TurnID: turn.TurnID, Content: string(canonical), CreatedAt: s.now().UTC(), ContentHash: hash}
+		if err := s.state.AppendTeamMessage(message); err != nil {
+			return err
+		}
+	}
+	turn.State, turn.ContributionMessage, turn.CompletedAt, turn.UpdatedAt = teamcontract.TurnResponded, messageID, ptrTime(s.now().UTC()), s.now().UTC()
+	if err := s.state.WriteTeamTurn(turn); err != nil {
+		return err
+	}
+	var snapshot teamcontract.TeamSessionV1
+	if err := s.state.ReadTeamSnapshot(teamID, &snapshot); err != nil {
+		return err
+	}
+	for index := range snapshot.Participants {
+		if snapshot.Participants[index].ParticipantID == turn.ParticipantID {
+			snapshot.Participants[index].State = teamcontract.ParticipantResponded
+			snapshot.Participants[index].CurrentTurnID = turn.TurnID
+			if err := s.state.WriteTeamParticipant(snapshot.Participants[index], teamID); err != nil {
+				return err
+			}
+		}
+	}
+	allTerminal := true
+	for _, participant := range snapshot.Participants {
+		if participant.State == teamcontract.ParticipantPending || participant.State == teamcontract.ParticipantRunning {
+			allTerminal = false
+			break
+		}
+	}
+	snapshot.StateVersion, snapshot.UpdatedAt = snapshot.StateVersion+1, s.now().UTC()
+	if allTerminal {
+		snapshot.State, snapshot.CloseReason = teamcontract.LifecycleClosed, teamcontract.ClosePanelSettled
+	}
+	if err := s.state.WriteTeamSnapshot(snapshot); err != nil {
+		return err
+	}
+	if err := s.appendTeamEventLockedFromTurn(teamID, turn, teamcontract.EventParticipantEvent, "turn responded"); err != nil {
+		return err
+	}
+	if allTerminal {
+		if err := s.appendTeamEventLocked(snapshot, teamcontract.EventTeamClosed, "panel settled", "", ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) markTurnFailureLocked(teamID string, turn teamcontract.ParticipantTurnV1, state teamcontract.TurnState, diagnostic string) error {
+	turn.State, turn.Diagnostic, turn.UpdatedAt = state, boundedDiagnostic(diagnostic), s.now().UTC()
+	if err := s.state.WriteTeamTurn(turn); err != nil {
+		return err
+	}
+	var snapshot teamcontract.TeamSessionV1
+	if err := s.state.ReadTeamSnapshot(teamID, &snapshot); err != nil {
+		return err
+	}
+	for index := range snapshot.Participants {
+		if snapshot.Participants[index].ParticipantID == turn.ParticipantID {
+			if state == teamcontract.TurnCancelled {
+				snapshot.Participants[index].State = teamcontract.ParticipantCancelled
+			} else if state == teamcontract.TurnIndeterminate {
+				snapshot.Participants[index].State = teamcontract.ParticipantIndeterminate
+			} else {
+				snapshot.Participants[index].State = teamcontract.ParticipantFailed
+			}
+			if err := s.state.WriteTeamParticipant(snapshot.Participants[index], teamID); err != nil {
+				return err
+			}
+		}
+	}
+	snapshot.StateVersion, snapshot.UpdatedAt = snapshot.StateVersion+1, s.now().UTC()
+	allTerminal := true
+	for _, participant := range snapshot.Participants {
+		if participant.State == teamcontract.ParticipantPending || participant.State == teamcontract.ParticipantRunning {
+			allTerminal = false
+			break
+		}
+	}
+	if allTerminal {
+		snapshot.State, snapshot.CloseReason = teamcontract.LifecycleClosed, teamcontract.ClosePanelSettled
+	}
+	if err := s.state.WriteTeamSnapshot(snapshot); err != nil {
+		return err
+	}
+	if err := s.appendTeamEventLockedFromTurn(teamID, turn, teamcontract.EventParticipantEvent, turn.Diagnostic); err != nil {
+		return err
+	}
+	if allTerminal {
+		return s.appendTeamEventLocked(snapshot, teamcontract.EventTeamClosed, "panel settled", "", "")
+	}
+	return nil
+}
+
+func (s *Service) appendTeamEventLocked(snapshot teamcontract.TeamSessionV1, eventType teamcontract.EventType, summary, messageID, turnID string) error {
+	events, err := s.state.ReadTeamEvents(snapshot.TeamID)
+	if err != nil {
+		return err
+	}
+	for _, existing := range events {
+		if existing.Type == eventType && existing.TurnID == turnID && existing.MessageID == messageID {
+			return nil
+		}
+	}
+	event := teamcontract.TeamEventV1{SchemaVersion: teamcontract.SchemaVersion, TeamID: snapshot.TeamID, Sequence: uint64(len(events) + 1), Type: eventType, StateVersion: snapshot.StateVersion, Summary: boundedDiagnostic(summary), MessageID: messageID, TurnID: turnID, CreatedAt: s.now().UTC()}
+	return s.state.AppendTeamEvent(event)
+}
+
+func (s *Service) appendTeamEventLockedFromTurn(teamID string, turn teamcontract.ParticipantTurnV1, eventType teamcontract.EventType, summary string) error {
+	var snapshot teamcontract.TeamSessionV1
+	if err := s.state.ReadTeamSnapshot(teamID, &snapshot); err != nil {
+		return err
+	}
+	return s.appendTeamEventLocked(snapshot, eventType, summary, turn.ContributionMessage, turn.TurnID)
+}
+
+func (s *Service) turnPrompt(teamID, participantID string) string {
+	snapshot, err := s.Get(teamID)
+	if err != nil {
+		return ""
+	}
+	for _, participant := range snapshot.Participants {
+		if participant.ParticipantID == participantID {
+			return snapshot.Topic + "\n\n" + snapshot.Instructions + "\n\nRole: " + participant.Role
+		}
+	}
+	return snapshot.Topic
+}
+
+func boundedDiagnostic(value string) string {
+	data := []byte(value)
+	if len(data) > teamcontract.MaxWarningBytes {
+		return string(data[:teamcontract.MaxWarningBytes])
+	}
+	return value
+}
+
+func ptrTime(value time.Time) *time.Time { return &value }
 
 func normalizeStart(request teamcontract.TeamStartRequestV1, project string) (teamcontract.TeamStartRequestV1, []teamcontract.ParticipantV1, string, error) {
 	catalog := routing.BuiltinCatalogV1()
