@@ -1,6 +1,7 @@
 # Fishyume M6 Core Contract Freeze
 
-Status: frozen after M6.7. The machine-readable baseline is
+Status: frozen after M6.7; M6 closed on 2026-08-24 after the post-freeze
+stabilization pass. The machine-readable baseline is
 [`../contracts/fishyume-core-v1.json`](../contracts/fishyume-core-v1.json).
 
 ## Scope

@@ -5,10 +5,17 @@ Fishyume remains an orchestration engine: it does not become a conversational
 harness, embed a model loop, or replace the Driver that launches a headless
 Agent process.
 
-> Status: M6.0 contract freeze, M6.1 trusted capability catalog, M6.2
-> declarative Node routing requirements, M6.3 deterministic resolver, M6.4
-> Driver/Attempt propagation, M6.5 fallback/accounting, and M6.6
-> operator/release gates, and M6.7 routing preflight are complete.
+> Status: closed on 2026-08-24. M6.0 contract freeze, M6.1 trusted
+> capability catalog, M6.2 declarative Node routing requirements, M6.3
+> deterministic resolver, M6.4 Driver/Attempt propagation, M6.5
+> fallback/accounting, M6.6 operator/release gates, and M6.7 routing
+> preflight are complete. Post-M6.7 stabilization did not add another public
+> capability increment or change the frozen contracts.
+
+M6 is not held open for authenticated Provider smoke, long-running soak,
+dogfooding, or downgrade against a future published artifact. Those remain
+useful validation and release activities, but they are not prerequisites for
+starting M7.
 
 ## M6.0 Contract Freeze
 

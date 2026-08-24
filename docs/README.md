@@ -7,13 +7,13 @@ links and review evidence stay stable.
 ## Current baseline
 
 - [Core contract freeze](fishyume-m6-core-contract-freeze.md): frozen public
-  contracts and compatibility policy after M6.7.
-- [Core stabilization record](fishyume-core-stabilization.md): repository
-  cleanup changes, verification evidence, and remaining stabilization work.
+  contracts and compatibility policy for the closed M6 baseline.
+- [Core stabilization record](fishyume-core-stabilization.md): M6 closure,
+  repository cleanup, verification evidence, and deferred validation work.
 - [Core readiness](fishyume-core-readiness.md): Provider-independent failure
-  evidence matrix and the next stabilization gates.
+  evidence accepted for M6 closure and separately deferred live gates.
 - [M6 capability and routing](fishyume-m6-capability-model-routing-plan.md):
-  completed deterministic routing design and delivery record.
+  closed deterministic routing milestone and delivery record.
 - [M6.7 routing preflight](fishyume-m6.7-routing-preflight.md): pre-Run routing
   explainability contract.
 - [M5 context engineering](fishyume-m5-context-engineering-plan.md): completed

@@ -1,8 +1,14 @@
 # Fishyume Core Readiness
 
-Status: the first Provider-independent failure matrix was added after the M6
-core contract freeze. This is an acceptance record for failure evidence, not a
-claim that live Provider smoke or long-running production soak is complete.
+Status: accepted as the Provider-independent M6 closing baseline on 2026-08-24.
+This is an acceptance record for failure evidence, not a claim that live
+Provider smoke or long-running production soak is complete.
+
+## Milestone disposition
+
+M6 is closed. Authenticated Provider smoke, long-running production soak, and
+published-artifact downgrade remain deferred validation or release activities;
+they do not block M7 development and do not expand the frozen M6 contracts.
 
 ## Failure matrix
 
