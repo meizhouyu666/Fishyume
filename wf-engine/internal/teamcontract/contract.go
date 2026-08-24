@@ -147,6 +147,7 @@ type TeamSessionV1 struct {
 	SchemaVersion   string          `json:"schemaVersion"`
 	TeamID          string          `json:"teamId"`
 	ClientRequestID string          `json:"clientRequestId"`
+	RequestHash     string          `json:"requestHash"`
 	Project         string          `json:"project"`
 	Mode            Mode            `json:"mode"`
 	Topic           string          `json:"topic"`
@@ -160,6 +161,23 @@ type TeamSessionV1 struct {
 	CloseReason     CloseReason     `json:"closeReason,omitempty"`
 	CreatedAt       time.Time       `json:"createdAt"`
 	UpdatedAt       time.Time       `json:"updatedAt"`
+}
+
+type ParticipantSpecV1 struct {
+	Label   string `json:"label"`
+	Role    string `json:"role"`
+	ModelID string `json:"modelId"`
+}
+
+type TeamStartRequestV1 struct {
+	SchemaVersion   string              `json:"schemaVersion"`
+	ClientRequestID string              `json:"clientRequestId"`
+	Project         string              `json:"project"`
+	Mode            Mode                `json:"mode"`
+	Topic           string              `json:"topic"`
+	Instructions    string              `json:"instructions,omitempty"`
+	Participants    []ParticipantSpecV1 `json:"participants,omitempty"`
+	CostGrant       int                 `json:"costGrant,omitempty"`
 }
 
 type ParticipantV1 struct {
@@ -398,6 +416,9 @@ func ValidateTeamSession(value TeamSessionV1) error {
 	if err := validateID(value.ClientRequestID, "clientRequestId"); err != nil {
 		return err
 	}
+	if !validHash(value.RequestHash) {
+		return fmt.Errorf("requestHash must be a SHA-256 hex digest")
+	}
 	if err := validateBounded(value.Project, MaxProjectBytes, "project"); err != nil {
 		return err
 	}
@@ -444,6 +465,54 @@ func ValidateTeamSession(value TeamSessionV1) error {
 		}
 		seenIDs[participant.ParticipantID] = struct{}{}
 		seenModels[participant.ModelID] = struct{}{}
+	}
+	return nil
+}
+
+func ValidateStartRequest(value TeamStartRequestV1) error {
+	if value.SchemaVersion != SchemaVersion {
+		return fmt.Errorf("unsupported team schema version %q", value.SchemaVersion)
+	}
+	if err := validateID(value.ClientRequestID, "clientRequestId"); err != nil {
+		return err
+	}
+	if err := validateBounded(value.Project, MaxProjectBytes, "project"); err != nil {
+		return err
+	}
+	if strings.TrimSpace(value.Project) == "" {
+		return fmt.Errorf("project is required")
+	}
+	if err := validateMode(value.Mode); err != nil {
+		return err
+	}
+	if strings.TrimSpace(value.Topic) == "" {
+		return fmt.Errorf("topic is required")
+	}
+	if err := validateBounded(value.Topic, MaxTopicBytes, "topic"); err != nil {
+		return err
+	}
+	if err := validateBounded(value.Instructions, MaxInstructionsBytes, "instructions"); err != nil {
+		return err
+	}
+	if len(value.Participants) != 0 && (len(value.Participants) < MinParticipants || len(value.Participants) > MaxParticipants) {
+		return fmt.Errorf("explicit participants must contain %d-%d entries", MinParticipants, MaxParticipants)
+	}
+	for _, participant := range value.Participants {
+		if err := validateBounded(participant.Label, MaxParticipantLabelBytes, "participant label"); err != nil {
+			return err
+		}
+		if err := validateBounded(participant.Role, MaxParticipantRoleBytes, "participant role"); err != nil {
+			return err
+		}
+		if strings.TrimSpace(participant.Label) == "" || strings.TrimSpace(participant.Role) == "" || strings.TrimSpace(participant.ModelID) == "" {
+			return fmt.Errorf("participant label, role, and modelId are required")
+		}
+		if participant.Label != strings.TrimSpace(participant.Label) || participant.Role != strings.TrimSpace(participant.Role) || participant.ModelID != strings.TrimSpace(participant.ModelID) {
+			return fmt.Errorf("participant fields cannot contain surrounding whitespace")
+		}
+	}
+	if value.CostGrant < 0 || value.CostGrant > MaxCostGrant {
+		return fmt.Errorf("costGrant is out of bounds")
 	}
 	return nil
 }

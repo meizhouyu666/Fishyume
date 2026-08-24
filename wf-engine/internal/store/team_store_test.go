@@ -15,7 +15,7 @@ import (
 func testTeamSnapshot() teamcontract.TeamSessionV1 {
 	now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
 	return teamcontract.TeamSessionV1{
-		SchemaVersion: teamcontract.SchemaVersion, TeamID: "team-store-1", ClientRequestID: "request-1", Project: `C:\project`, Mode: teamcontract.ModePanel,
+		SchemaVersion: teamcontract.SchemaVersion, TeamID: "team-store-1", ClientRequestID: "request-1", RequestHash: strings.Repeat("c", 64), Project: `C:\project`, Mode: teamcontract.ModePanel,
 		Topic: "compare", CatalogHash: strings.Repeat("a", 64), State: teamcontract.LifecycleRunning, StateVersion: 1, CostGrant: teamcontract.DefaultCostGrant, CreatedAt: now, UpdatedAt: now,
 		Participants: []teamcontract.ParticipantV1{
 			{ParticipantID: "participant-1", Label: "architect", Role: "design", ModelID: "codex/local/gpt-5.6", Driver: "codex", Target: "local", State: teamcontract.ParticipantPending},

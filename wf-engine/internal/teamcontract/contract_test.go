@@ -13,7 +13,7 @@ var contractHash = strings.Repeat("a", 64)
 func validTeam() TeamSessionV1 {
 	now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
 	return TeamSessionV1{
-		SchemaVersion: SchemaVersion, TeamID: "team-1", ClientRequestID: "request-1", Project: `C:\project`, Mode: ModePanel,
+		SchemaVersion: SchemaVersion, TeamID: "team-1", ClientRequestID: "request-1", RequestHash: contractHash, Project: `C:\project`, Mode: ModePanel,
 		Topic: "比较两个实现方案", CatalogHash: contractHash, State: LifecycleRunning, StateVersion: 1, CostGrant: DefaultCostGrant, CreatedAt: now, UpdatedAt: now,
 		Participants: []ParticipantV1{
 			{ParticipantID: "participant-1", Label: "architect", Role: "propose a coherent architecture", ModelID: "codex/local/gpt-5.6", Driver: "codex", Target: "local", State: ParticipantRunning, CurrentTurnID: "turn-1"},
