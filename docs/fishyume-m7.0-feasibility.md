@@ -56,6 +56,15 @@ identity and artifact-location primitive plus a separate one-shot
 `ExplorationDriver`. Team code must not call the Workflow Driver with a fake
 Attempt envelope or synthetic Run.
 
+The first M7.0 code increment now records this boundary in the pure internal
+`internal/explorationdriver` package. Its `StartRequest` accepts only
+`TeamID/ParticipantID/TurnID`, normalized workspace/target/model identity, a
+bounded prompt supplied in memory, and the mandatory `read-only` sandbox. It
+has no import path to Workflow Agent, Run, Node, Attempt, Context, or Result
+contracts. Contract tests cover unsafe sandbox values, incomplete identity,
+handle/diagnostic bounds, cancellation capability claims, and prompt
+non-serialization.
+
 The existing process layer already supports explicit model selection by passing
 `--model <model>` to `codex exec`, and the existing test
 `TestCodexExecArgsPropagateSelectedModel` verifies that argument propagation.
@@ -138,4 +147,3 @@ If the next live probe remains unavailable, the evidence must be recorded as an
 environment block and the Team implementation should proceed only behind fake
 Exploration Drivers. Fishyume must not claim multi-model live support from
 catalog metadata alone.
-
