@@ -1,6 +1,6 @@
 # Fishyume M7: Lightweight Team Exploration and Explicit Workflow Promotion
 
-> Status: approved development plan; M7.0 feasibility gate passed
+> Status: M7.1 one-round Panel complete; M7.2 Handoff is next
 >
 > Date: 2026-08-24
 >
@@ -665,6 +665,10 @@ Fishyume must not emulate resume by silently injecting an expanding transcript
 into new one-shot processes.
 
 ### M7.1: One-round Multi-model Panel MVP
+
+Status: completed on 2026-08-25. Contract, persistence, process-backed
+execution, recovery, cancellation, MCP/Machine parity, and human CLI acceptance
+evidence are recorded in [M7.1 acceptance](fishyume-m7.1-acceptance.md).
 
 Purpose: solve the immediate low-cost comparison use case without Session
 resume, Web, Workflow, or M5 Context.

@@ -6,6 +6,10 @@ links and review evidence stay stable.
 
 ## Current baseline
 
+- [M7 Team exploration plan](fishyume-m7-session-native-web-team-console-plan.md):
+  M7.1 one-round read-only Panel is complete; M7.2 Handoff is next.
+- [M7.1 Panel acceptance](fishyume-m7.1-acceptance.md): frozen Team API,
+  delivered surfaces, boundary decisions, and verification evidence.
 - [Core contract freeze](fishyume-m6-core-contract-freeze.md): frozen public
   contracts and compatibility policy for the closed M6 baseline.
 - [Core stabilization record](fishyume-core-stabilization.md): M6 closure,
@@ -42,6 +46,7 @@ links and review evidence stay stable.
   `fishyume-m4`.
 - M5: Context and Memory increments prefixed `fishyume-m5`.
 - M6: capability and routing increments prefixed `fishyume-m6`.
+- M7: Team exploration and promotion increments prefixed `fishyume-m7`.
 
 These files describe decisions at their milestone date. When wording conflicts
 with the current baseline, the core contract freeze and root README take

@@ -2,7 +2,7 @@
 
 这是 Fishyume 的 CLI/MCP npm 包，提供 `fishyume` 主命令和兼容的 `wf` 别名。匹配平台的 Engine 作为同版本可选依赖安装；安装不会从网络下载未知可执行代码。
 
-Fishyume 通过本地 Control Plane 持久化和管理 Agent Workflow。Codex 等 Host Agent 可以通过 MCP 或 Machine CLI 调用 Application API，人类通过 Dashboard 或 `fishyume attach` 观察同一个 Run。
+Fishyume 通过本地 Control Plane 管理只读 Team 探索和正式 Agent Workflow。用户可以先启动双模型 Panel 比较方案；Codex 等 Host Agent 再通过 MCP 或 Machine CLI 启动确定的 Workflow。
 
 ## 安装
 
@@ -25,6 +25,10 @@ fishyume doctor
 fishyume                 打开 Run Dashboard
 fishyume demo            离线预览拓扑控制台
 fishyume examples list   查看推荐 Workflow 模板
+fishyume team start      启动默认双模型只读 Panel
+fishyume team list       列出持久化 Team
+fishyume team show <id>  查看贡献和部分失败
+fishyume team cancel <id> 确认取消 Team
 fishyume run             创建单 Agent Run
 fishyume attach <id>     接管已有 Run
 fishyume status <id>     查看状态
@@ -38,13 +42,22 @@ Host Agent 接入：
 ```powershell
 fishyume mcp
 fishyume machine system.capabilities --params '{}'
+fishyume machine team.capabilities --params '{"schemaVersion":"fishyume.team/v1"}'
+```
+
+默认 Panel 会等待并打印两个独立贡献；`--detach` 立即返回，`--json` 输出机器可读结果：
+
+```powershell
+fishyume team start "Compare two approaches"
+fishyume team start --detach --json "Compare two approaches"
+fishyume team show <team-id> --json
 ```
 
 `fishyume setup codex` 是 `fishyume setup` 的兼容写法。一个 Agent Node Attempt 会启动一个独立的 one-shot Codex 进程，因此实际 Workflow 应按完整工作包划分 Node。详细原则和长程任务模板见 [Workflow 编排指南](../docs/fishyume-workflow-authoring.md) 与 [示例目录](../docs/examples/README.md)；Application API 和产品边界见仓库根目录 [README](../README.md)。
 
 ## 支持范围
 
-当前正式执行组合是 `codex + local`。产品支持 Agent/Approval Workflow、并行与依赖、持久化恢复、Context/Memory 绑定、确定性路由预检和中文 Operator Console。通用 Shell/HTTP/容器节点、Web/Desktop 客户端、动态 Driver 发现和第三方 Driver 不在当前版本范围内。
+当前正式执行组合是 `codex + local`。产品支持一轮只读 Team Panel，以及 Agent/Approval Workflow、并行与依赖、持久化恢复、Context/Memory 绑定、确定性路由预检和中文 Operator Console。Team Handoff 合同已冻结但要到 M7.2 才开放；多轮 Session、follow-up、单 turn 取消、Web/Desktop 客户端、动态 Driver 发现和第三方 Driver 不在当前版本范围内。
 
 ## License
 

@@ -1,12 +1,14 @@
 # Fishyume
 
-Fishyume 是一个本地、可恢复的 AI Agent 工作流控制台。
+Fishyume 是一个本地、可恢复的 AI Agent 协作与工作流控制台。
 
-它把多个 Agent 步骤和人工决策组织成一个可观察的工作流：Agent 负责执行，Fishyume 负责调度、持久化、恢复和安全动作，人类可以随时接管同一个 Run，审批、补充输入、重试或取消。
+它提供两种明确的投入级别：先用只读 Team Panel 让多个模型独立比较方案；任务确定后，再用可恢复 Workflow 组织 Agent 步骤和人工决策。Agent 负责执行，Fishyume 负责调度、持久化、恢复和安全动作。
 
 ## 你可以用它做什么
 
 - 把计划、研究、实现、验证等步骤组织成有依赖关系的 Workflow
+- 不编写 YAML 或 DAG，直接让两个不同模型给出独立方案
+- 保留 Team 的贡献、部分失败和取消证据，同时不创建虚假的 Run
 - 并行运行互不依赖的 Agent 节点，再在审批节点汇合
 - 在 Agent 等待审批或补充信息时从终端接管
 - 在进程崩溃、Control Plane 重启或客户端断开后继续同一个 Run
@@ -14,7 +16,7 @@ Fishyume 是一个本地、可恢复的 AI Agent 工作流控制台。
 - 通过 Machine CLI 在脚本中使用同一套 Application API
 - 在运行前查看确定性的路由预览、预算和 fallback 边界
 
-当前正式支持的执行组合是 `codex + local`。Fishyume 本身不是聊天客户端，也不内置模型 Tool loop；它是 Agent 工作流的本地控制面。
+当前正式支持的执行组合是 `codex + local`。Fishyume 本身不内置模型 Tool loop；它协调外部 Agent 的只读探索，并控制已确定任务的正式 Workflow。
 
 ## 当前状态
 
@@ -46,6 +48,33 @@ fishyume doctor --project "E:\project"
 `fishyume setup codex` 仍是兼容写法。setup 只修改 Fishyume 自己的 Codex MCP 配置，不会改动其他 MCP、Provider 或认证信息。
 
 ### 运行与接管
+
+先运行一个默认双模型、只读的比较 Panel：
+
+```powershell
+fishyume team start "Compare two approaches for this change"
+```
+
+Panel 默认等待两个贡献完成并打印结果。也可以后台启动、查看或确认取消：
+
+```powershell
+fishyume team start --detach "Compare two approaches"
+fishyume team list
+fishyume team show <team-id>
+fishyume team cancel <team-id>
+```
+
+显式选择模型和角色：
+
+```powershell
+fishyume team start `
+  --project "E:\project" `
+  --participant codex/local/gpt-5.6:architect `
+  --participant codex/local/gpt-5.6-luna:reviewer `
+  "Compare two approaches"
+```
+
+Team 始终使用只读 workspace。按 `Ctrl+C` 只会与观察过程分离，不会取消参与者。
 
 让 Codex 通过 Fishyume MCP 创建工作后，在另一个终端打开 Dashboard：
 
@@ -83,7 +112,7 @@ fishyume examples show repository-hardening > repository-hardening.yaml
 
 ## Agent 集成
 
-Fishyume MCP 和 Machine CLI 暴露同一套 Application API。Host Agent 的典型顺序是：
+Fishyume MCP 和 Machine CLI 同时暴露独立的 `fishyume.team/v1` Team API 和冻结的 `fishyume.application/v1` Workflow API。Host Agent 的典型 Workflow 顺序是：
 
 ```text
 system.capabilities
@@ -104,6 +133,7 @@ fishyume mcp
 fishyume machine system.capabilities --params '{}'
 fishyume machine routing.catalog --params '{}'
 fishyume machine run.get --params '{"runId":"<run-id>"}'
+fishyume machine team.capabilities --params '{"schemaVersion":"fishyume.team/v1"}'
 ```
 
 标准 `fishyume/v2` Workflow 示例和 Host 请求集合见：
@@ -136,6 +166,8 @@ read -> plan -> edit -> test -> summarize
 ## 核心特性
 
 - Agent、Approval、依赖、条件分支和并行调度
+- 默认双模型、只读、可持久化的一轮 Team Panel
+- Team 列表、事件、贡献、部分失败呈现和确认取消
 - 持久化 Run、Node、Attempt、事件和动作回执
 - 崩溃恢复、Control Plane 重启对账和跨客户端共享状态
 - 有界输出、稳定事件分页、幂等 `clientRequestId` 和带版本前置条件的 `run.action`
@@ -146,7 +178,7 @@ read -> plan -> edit -> test -> summarize
 
 ## 当前边界
 
-当前不包含通用 Shell/HTTP/容器节点、动态 Driver 发现、Web/Desktop 客户端、内置 Harness 或 Claude/第三方 Driver。真实 Provider smoke 是显式本地 gate，不是公共 CI 的前置条件。
+M7.1 只开放一轮 Panel 和整组取消。Handoff 方法的 v1 合同已冻结，但能力将在 M7.2 开放；多轮 Session、follow-up、单 turn 取消和主动 close 仍不可用。当前也不包含通用 Shell/HTTP/容器节点、动态 Driver 发现、Web/Desktop 客户端、内置 Harness 或 Claude/第三方 Driver。真实 Provider smoke 是显式本地 gate，不是公共 CI 的前置条件。
 
 ## 文档
 
@@ -154,6 +186,8 @@ read -> plan -> edit -> test -> summarize
 - [Workflow 编排指南](./docs/fishyume-workflow-authoring.md)
 - [M6 核心合同冻结](./docs/fishyume-m6-core-contract-freeze.md)
 - [核心稳定化与就绪状态](./docs/fishyume-core-stabilization.md)
+- [M7 Team 与 Workflow Promotion 计划](./docs/fishyume-m7-session-native-web-team-console-plan.md)
+- [M7.1 Panel 验收记录](./docs/fishyume-m7.1-acceptance.md)
 - [首次使用与安装说明](./docs/fishyume-distribution-first-run.md)
 - [开发与验证](./docs/fishyume-development.md)
 - [Live Provider smoke](./docs/fishyume-m4-live-smoke.md)
