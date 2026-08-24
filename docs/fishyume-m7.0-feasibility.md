@@ -65,6 +65,12 @@ contracts. Contract tests cover unsafe sandbox values, incomplete identity,
 handle/diagnostic bounds, cancellation capability claims, and prompt
 non-serialization.
 
+The next extraction increment adds `internal/execution.ArtifactLocation`, a
+domain-neutral segmented path helper with traversal checks. The existing Codex
+Workflow adapter now uses it to produce the unchanged
+`runs/<run>/nodes/<node>/attempts/<n>` layout. Team execution can later use the
+same primitive with a `teams` namespace without importing Run path logic.
+
 The existing process layer already supports explicit model selection by passing
 `--model <model>` to `codex exec`, and the existing test
 `TestCodexExecArgsPropagateSelectedModel` verifies that argument propagation.

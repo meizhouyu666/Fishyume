@@ -21,6 +21,7 @@ import (
 
 	"wf.local/wf-engine/internal/agent"
 	"wf.local/wf-engine/internal/backend"
+	"wf.local/wf-engine/internal/execution"
 )
 
 const (
@@ -164,7 +165,14 @@ func (b *Backend) Start(ctx context.Context, spec backend.AgentExecutionSpec) (*
 	if err != nil {
 		return nil, err
 	}
-	relativeAttempt := filepath.Join("runs", spec.RunID, "nodes", spec.NodeID, "attempts", fmt.Sprintf("%d", spec.Attempt))
+	location, err := (execution.ArtifactLocation{
+		Namespace: "runs", OwnerID: spec.RunID, ResourceKind: "nodes", ResourceID: spec.NodeID,
+		GenerationKind: "attempts", Generation: spec.Attempt,
+	}).RelativePath()
+	if err != nil {
+		return nil, fmt.Errorf("resolve Direct Attempt artifact location: %w", err)
+	}
+	relativeAttempt := location
 	attemptDir, err := b.resolveRelativePath(relativeAttempt)
 	if err != nil {
 		return nil, err
