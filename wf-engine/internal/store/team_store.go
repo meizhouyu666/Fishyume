@@ -1,0 +1,485 @@
+package store
+
+import (
+	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+
+	"wf.local/wf-engine/internal/teamcontract"
+)
+
+func (s *Store) TeamDir(teamID string) string { return filepath.Join(s.root, "teams", teamID) }
+func (s *Store) TeamSnapshotPath(teamID string) string {
+	return filepath.Join(s.TeamDir(teamID), "team.json")
+}
+func (s *Store) TeamEventsPath(teamID string) string {
+	return filepath.Join(s.TeamDir(teamID), "events.jsonl")
+}
+func (s *Store) TeamMessagesPath(teamID string) string {
+	return filepath.Join(s.TeamDir(teamID), "messages.jsonl")
+}
+func (s *Store) TeamParticipantPath(teamID, participantID string) string {
+	return filepath.Join(s.TeamDir(teamID), "participants", participantID+".json")
+}
+func (s *Store) TeamTurnDir(teamID, turnID string) string {
+	return filepath.Join(s.TeamDir(teamID), "turns", turnID)
+}
+func (s *Store) TeamTurnPath(teamID, turnID string) string {
+	return filepath.Join(s.TeamTurnDir(teamID, turnID), "turn.json")
+}
+func (s *Store) TeamExecutionPath(teamID, turnID string) string {
+	return filepath.Join(s.TeamTurnDir(teamID, turnID), "execution.json")
+}
+func (s *Store) TeamHandoffPath(teamID, handoffID string) string {
+	return filepath.Join(s.TeamDir(teamID), "handoffs", handoffID+".json")
+}
+func (s *Store) TeamBindingsPath(teamID string) string {
+	return filepath.Join(s.TeamDir(teamID), "handoff-bindings.json")
+}
+
+func (s *Store) TeamActionIntentPath(teamID, actionID string) string {
+	return filepath.Join(s.TeamDir(teamID), "action-intents", digestID(actionID)+".json")
+}
+
+func digestID(value string) string {
+	digest := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(digest[:])
+}
+
+func (s *Store) InitTeam(teamID string) error {
+	if err := validateID("team", teamID); err != nil {
+		return err
+	}
+	for _, dir := range []string{filepath.Join(s.TeamDir(teamID), "participants"), filepath.Join(s.TeamDir(teamID), "turns"), filepath.Join(s.TeamDir(teamID), "handoffs"), filepath.Join(s.TeamDir(teamID), "action-intents")} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("create team directory %q: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) WriteTeamSnapshot(snapshot teamcontract.TeamSessionV1) error {
+	if err := teamcontract.ValidateTeamSession(snapshot); err != nil {
+		return err
+	}
+	return s.writeJSON(s.TeamSnapshotPath(snapshot.TeamID), snapshot)
+}
+
+func (s *Store) EnsureTeamSnapshot(snapshot teamcontract.TeamSessionV1) error {
+	if err := teamcontract.ValidateTeamSession(snapshot); err != nil {
+		return err
+	}
+	return s.ensureJSON(s.TeamSnapshotPath(snapshot.TeamID), snapshot, fmt.Sprintf("initial Team snapshot for %q", snapshot.TeamID))
+}
+
+func (s *Store) ReadTeamSnapshot(teamID string, target *teamcontract.TeamSessionV1) error {
+	if err := validateID("team", teamID); err != nil {
+		return err
+	}
+	if err := readTeamContractJSON(s.TeamSnapshotPath(teamID), target); err != nil {
+		return err
+	}
+	if target.TeamID != teamID {
+		return fmt.Errorf("Team snapshot ID %q does not match %q", target.TeamID, teamID)
+	}
+	return teamcontract.ValidateTeamSession(*target)
+}
+
+func (s *Store) WriteTeamParticipant(value teamcontract.ParticipantV1, teamID string) error {
+	if err := validateID("team", teamID); err != nil {
+		return err
+	}
+	if err := teamcontract.ValidateParticipant(value); err != nil {
+		return err
+	}
+	return s.writeJSON(s.TeamParticipantPath(teamID, value.ParticipantID), value)
+}
+
+func (s *Store) ReadTeamParticipant(teamID, participantID string, target *teamcontract.ParticipantV1) error {
+	if err := validateID("team", teamID); err != nil {
+		return err
+	}
+	if err := validateID("participant", participantID); err != nil {
+		return err
+	}
+	if err := readTeamContractJSON(s.TeamParticipantPath(teamID, participantID), target); err != nil {
+		return err
+	}
+	if target.ParticipantID != participantID {
+		return fmt.Errorf("participant ID %q does not match %q", target.ParticipantID, participantID)
+	}
+	return teamcontract.ValidateParticipant(*target)
+}
+
+func (s *Store) ListTeamParticipantIDs(teamID string) ([]string, error) {
+	if err := validateID("team", teamID); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(filepath.Join(s.TeamDir(teamID), "participants"))
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		id := entry.Name()[:len(entry.Name())-len(filepath.Ext(entry.Name()))]
+		if safeID.MatchString(id) {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func (s *Store) WriteTeamTurn(value teamcontract.ParticipantTurnV1) error {
+	if err := teamcontract.ValidateParticipantTurn(value); err != nil {
+		return err
+	}
+	return s.writeJSON(s.TeamTurnPath(value.TeamID, value.TurnID), value)
+}
+
+func (s *Store) ReadTeamTurn(teamID, turnID string, target *teamcontract.ParticipantTurnV1) error {
+	if err := validateID("team", teamID); err != nil {
+		return err
+	}
+	if err := validateID("turn", turnID); err != nil {
+		return err
+	}
+	if err := readTeamContractJSON(s.TeamTurnPath(teamID, turnID), target); err != nil {
+		return err
+	}
+	if target.TeamID != teamID || target.TurnID != turnID {
+		return fmt.Errorf("turn identity does not match requested path")
+	}
+	return teamcontract.ValidateParticipantTurn(*target)
+}
+
+func (s *Store) ListTeamTurnIDs(teamID string) ([]string, error) {
+	if err := validateID("team", teamID); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(filepath.Join(s.TeamDir(teamID), "turns"))
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() && safeID.MatchString(entry.Name()) {
+			ids = append(ids, entry.Name())
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func (s *Store) WriteTeamExecution(teamID, turnID string, handle json.RawMessage) error {
+	if err := validateID("team", teamID); err != nil {
+		return err
+	}
+	if err := validateID("turn", turnID); err != nil {
+		return err
+	}
+	if len(handle) == 0 || len(handle) > teamcontract.MaxExecutionHandleBytes || !json.Valid(handle) {
+		return fmt.Errorf("team execution handle is invalid or exceeds its bound")
+	}
+	return s.writeJSON(s.TeamExecutionPath(teamID, turnID), handle)
+}
+
+func (s *Store) ReadTeamExecution(teamID, turnID string) (json.RawMessage, error) {
+	if err := validateID("team", teamID); err != nil {
+		return nil, err
+	}
+	if err := validateID("turn", turnID); err != nil {
+		return nil, err
+	}
+	var handle json.RawMessage
+	if err := readJSON(s.TeamExecutionPath(teamID, turnID), &handle); err != nil {
+		return nil, err
+	}
+	if len(handle) == 0 || len(handle) > teamcontract.MaxExecutionHandleBytes || !json.Valid(handle) {
+		return nil, fmt.Errorf("persisted team execution handle is invalid")
+	}
+	return handle, nil
+}
+
+func (s *Store) AppendTeamEvent(value teamcontract.TeamEventV1) error {
+	if err := teamcontract.ValidateEvent(value); err != nil {
+		return err
+	}
+	path := s.TeamEventsPath(value.TeamID)
+	return s.appendTeamRecord(path, "append_team_event", value.Sequence, func(raw []byte) (uint64, error) {
+		var event teamcontract.TeamEventV1
+		if err := json.Unmarshal(raw, &event); err != nil {
+			return 0, err
+		}
+		if err := teamcontract.ValidateEvent(event); err != nil {
+			return 0, err
+		}
+		return event.Sequence, nil
+	}, value)
+}
+
+func (s *Store) AppendTeamMessage(value teamcontract.TeamMessageV1) error {
+	if err := teamcontract.ValidateMessage(value); err != nil {
+		return err
+	}
+	path := s.TeamMessagesPath(value.TeamID)
+	return s.appendTeamRecordWithQuota(path, "append_team_message", value.Sequence, teamcontract.MaxRetainedMessages, teamcontract.MaxRetainedMessageBytes, func(raw []byte) (uint64, error) {
+		var message teamcontract.TeamMessageV1
+		if err := json.Unmarshal(raw, &message); err != nil {
+			return 0, err
+		}
+		if err := teamcontract.ValidateMessage(message); err != nil {
+			return 0, err
+		}
+		return message.Sequence, nil
+	}, value)
+}
+
+func (s *Store) ReadTeamEvents(teamID string) ([]teamcontract.TeamEventV1, error) {
+	if err := validateID("team", teamID); err != nil {
+		return nil, err
+	}
+	var events []teamcontract.TeamEventV1
+	err := readTeamLog(s.TeamEventsPath(teamID), func(raw []byte, expected uint64) error {
+		var event teamcontract.TeamEventV1
+		if err := json.Unmarshal(raw, &event); err != nil {
+			return err
+		}
+		if event.TeamID != teamID || event.Sequence != expected {
+			return fmt.Errorf("team event sequence is not strictly increasing")
+		}
+		if err := teamcontract.ValidateEvent(event); err != nil {
+			return err
+		}
+		events = append(events, event)
+		return nil
+	})
+	return events, err
+}
+
+func (s *Store) ReadTeamMessages(teamID string) ([]teamcontract.TeamMessageV1, error) {
+	if err := validateID("team", teamID); err != nil {
+		return nil, err
+	}
+	var messages []teamcontract.TeamMessageV1
+	err := readTeamLog(s.TeamMessagesPath(teamID), func(raw []byte, expected uint64) error {
+		var message teamcontract.TeamMessageV1
+		if err := json.Unmarshal(raw, &message); err != nil {
+			return err
+		}
+		if message.TeamID != teamID || message.Sequence != expected {
+			return fmt.Errorf("team message sequence is not strictly increasing")
+		}
+		if err := teamcontract.ValidateMessage(message); err != nil {
+			return err
+		}
+		messages = append(messages, message)
+		return nil
+	})
+	return messages, err
+}
+
+func (s *Store) WriteTeamHandoff(value teamcontract.HandoffArtifactV1) error {
+	if err := teamcontract.ValidateHandoff(value); err != nil {
+		return err
+	}
+	return s.ensureJSON(s.TeamHandoffPath(value.TeamID, value.HandoffID), value, fmt.Sprintf("handoff %q", value.HandoffID))
+}
+
+func (s *Store) ReadTeamHandoff(teamID, handoffID string, target *teamcontract.HandoffArtifactV1) error {
+	if err := validateID("team", teamID); err != nil {
+		return err
+	}
+	if err := validateID("handoff", handoffID); err != nil {
+		return err
+	}
+	if err := readTeamContractJSON(s.TeamHandoffPath(teamID, handoffID), target); err != nil {
+		return err
+	}
+	if target.TeamID != teamID || target.HandoffID != handoffID {
+		return fmt.Errorf("handoff identity does not match requested path")
+	}
+	return teamcontract.ValidateHandoff(*target)
+}
+
+func (s *Store) WriteTeamBinding(value teamcontract.HandoffBindingV1) error {
+	if err := teamcontract.ValidateHandoffBinding(value); err != nil {
+		return err
+	}
+	return s.writeJSON(s.TeamBindingsPath(value.TeamID), value)
+}
+
+func (s *Store) ReadTeamBinding(teamID string, target *teamcontract.HandoffBindingV1) error {
+	if err := validateID("team", teamID); err != nil {
+		return err
+	}
+	if err := readTeamContractJSON(s.TeamBindingsPath(teamID), target); err != nil {
+		return err
+	}
+	if target.TeamID != teamID {
+		return fmt.Errorf("binding team ID %q does not match %q", target.TeamID, teamID)
+	}
+	return teamcontract.ValidateHandoffBinding(*target)
+}
+
+func (s *Store) WriteTeamActionIntent(teamID, actionID string, intent any) error {
+	if err := validateID("team", teamID); err != nil {
+		return err
+	}
+	if err := validateID("action", actionID); err != nil {
+		return err
+	}
+	return s.writeJSON(s.TeamActionIntentPath(teamID, actionID), intent)
+}
+
+func (s *Store) ReadTeamActionIntent(teamID, actionID string, target any) error {
+	if err := validateID("team", teamID); err != nil {
+		return err
+	}
+	if err := validateID("action", actionID); err != nil {
+		return err
+	}
+	return readJSON(s.TeamActionIntentPath(teamID, actionID), target)
+}
+
+func (s *Store) ListTeamIDs() ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(s.root, "teams"))
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list teams: %w", err)
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() && safeID.MatchString(entry.Name()) {
+			ids = append(ids, entry.Name())
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func (s *Store) appendTeamRecord(path, operation string, sequence uint64, parse func([]byte) (uint64, error), value any) error {
+	return s.appendTeamRecordWithQuota(path, operation, sequence, 0, 0, parse, value)
+}
+
+func (s *Store) appendTeamRecordWithQuota(path, operation string, sequence uint64, maxRecords, maxBytes int, parse func([]byte) (uint64, error), value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if err := s.injectFault(operation, path); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return withLeaseGuard(path, func() error {
+		last, count, bytesUsed, err := scanTeamLog(path, parse)
+		if err != nil {
+			return err
+		}
+		if sequence != last+1 {
+			return fmt.Errorf("team record sequence %d does not follow %d", sequence, last)
+		}
+		if maxRecords > 0 && count >= maxRecords {
+			return fmt.Errorf("team record quota exceeded: %d records", maxRecords)
+		}
+		if maxBytes > 0 && bytesUsed+len(data)+1 > maxBytes {
+			return fmt.Errorf("team record byte quota exceeded: %d bytes", maxBytes)
+		}
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		if _, err := file.Write(append(data, '\n')); err != nil {
+			return err
+		}
+		return file.Sync()
+	})
+}
+
+func scanTeamLog(path string, parse func([]byte) (uint64, error)) (uint64, int, int, error) {
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, 0, 0, nil
+	}
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), teamcontract.MaxHandoffBytes)
+	var last uint64
+	count, bytesUsed := 0, 0
+	for scanner.Scan() {
+		raw := append([]byte(nil), scanner.Bytes()...)
+		sequence, err := parse(raw)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		if sequence != last+1 {
+			return 0, 0, 0, fmt.Errorf("team log sequence is not strictly increasing")
+		}
+		last, count, bytesUsed = sequence, count+1, bytesUsed+len(raw)+1
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, 0, 0, err
+	}
+	return last, count, bytesUsed, nil
+}
+
+func readTeamLog(path string, visit func([]byte, uint64) error) error {
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), teamcontract.MaxHandoffBytes)
+	var expected uint64 = 1
+	for scanner.Scan() {
+		if err := visit(append([]byte(nil), scanner.Bytes()...), expected); err != nil {
+			return err
+		}
+		expected++
+	}
+	return scanner.Err()
+}
+
+func readTeamContractJSON(path string, target any) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open Team contract %q: %w", path, err)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, int64(teamcontract.MaxHandoffBytes)))
+	if err != nil {
+		return fmt.Errorf("read Team contract %q: %w", path, err)
+	}
+	if err := teamcontract.DecodeStrict(data, target); err != nil {
+		return fmt.Errorf("decode Team contract %q: %w", path, err)
+	}
+	return nil
+}
