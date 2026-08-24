@@ -9,7 +9,7 @@
     "fishyume": "dist/cli.js",
     "wf": "dist/cli.js"
   },
-  "description": "Agent-native local control plane for durable AI workflows",
+  "description": "Local control plane for AI Team exploration and durable workflows",
   "license": "Apache-2.0",
   "files": [
     "dist",

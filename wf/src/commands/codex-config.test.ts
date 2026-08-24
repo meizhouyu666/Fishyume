@@ -4,6 +4,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
 import {applyCodexMcpApprovalPolicy, fishyumeMcpTools, hasFishyumeApprovalPolicy, withFishyumeApprovalPolicy} from './codex-config.js';
+import {teamMethods} from '../bridge/team.js';
 
 const fixture = [
   'model = "fixture"',
@@ -18,6 +19,7 @@ const fixture = [
 ].join('\n');
 
 test('Fishyume approval policy is bounded, complete, and idempotent', () => {
+  for (const method of teamMethods) assert.ok(fishyumeMcpTools.includes(method), method);
   const updated = withFishyumeApprovalPolicy(fixture);
   assert.match(updated, /\[mcp_servers\.fishyume\][\s\S]*required = true[\s\S]*default_tools_approval_mode = "approve"/);
   for (const tool of fishyumeMcpTools) assert.ok(updated.includes(`[mcp_servers.fishyume.tools.${JSON.stringify(tool)}]`), tool);

@@ -31,6 +31,11 @@ test('command help remains available', () => {
     assert.equal(result.status, 0, `memory ${command}: ${result.stderr}`);
     assert.match(result.stdout, new RegExp(`fishyume memory ${command}`));
   }
+  for (const command of ['start', 'list', 'show', 'cancel']) {
+    const result = invoke('team', command, '--help');
+    assert.equal(result.status, 0, `team ${command}: ${result.stderr}`);
+    assert.match(result.stdout, new RegExp(`fishyume team ${command}`));
+  }
   const createMemory = invoke('memory', 'create', '--help');
   assert.match(createMemory.stdout, /--stdin/);
   assert.match(createMemory.stdout, /--file/);
@@ -86,13 +91,17 @@ test('command help describes the Agent-facing control-plane surface', () => {
     ['doctor', /Check the Engine, Application protocol, Driver/],
     ['status', /Read a durable Run snapshot or watch it in the human TUI/],
     ['attach', /Attach the human TUI to an existing durable Run/],
-    ['machine', /Call one Agent-facing Application API method/],
+    ['machine', /Call one Agent-facing Application or Team API method/],
     ['mcp', /Serve the Agent-facing Application API as MCP tools over stdio/],
     ['setup codex', /Connect Fishyume to Codex as a local stdio MCP server/],
     ['setup', /Set up Fishyume for the local Codex Host/],
     ['demo', /Preview the Chinese topology console/],
     ['examples list', /List bundled product Workflow examples/],
     ['examples show', /Print one bundled Workflow YAML/],
+    ['team start', /Run a durable read-only multi-model Panel/],
+    ['team list', /List durable Teams/],
+    ['team show', /Show one durable Team/],
+    ['team cancel', /Confirm cancellation of active Team turns/],
   ]);
   for (const [command, description] of expected) {
     const result = invoke(...command.split(' '), '--help');

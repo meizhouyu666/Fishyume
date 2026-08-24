@@ -8,6 +8,7 @@ import type {RoutingCatalogResponse, SystemCapabilitiesResponse, WorkflowExplain
 import type {EngineClient, EventListener} from '../bridge/engine.js';
 import type {EngineHello} from '../bridge/types.js';
 import {runMachine} from '../commands/machine.js';
+import type {TeamCapabilities} from '../bridge/team.js';
 import {createMCPServer, runMCPTransport} from './server.js';
 
 const capabilities: SystemCapabilitiesResponse = {
@@ -25,6 +26,14 @@ const routingCatalog: RoutingCatalogResponse = {
   limits: {maxCatalogModels: 256, maxCandidates: 32, maxFallbacks: 8, maxRoutingBudgetBytes: 16777216, maxCostUnits: 1000000}, errorCodes: ['routing_invalid_contract'],
 };
 
+const teamCapabilities: TeamCapabilities = {
+  schemaVersion: 'fishyume.team/v1', supportedModes: ['panel'], features: {panel: true, handoff: false, session: false, followUp: false, cancelTurn: false, close: false, cancel: true},
+  limits: {minParticipants: 2, maxParticipants: 4}, participantTemplates: [
+    {label: 'architect', role: 'propose', modelId: 'codex/local/gpt-5.6', driver: 'codex', target: 'local'},
+    {label: 'reviewer', role: 'challenge', modelId: 'codex/local/gpt-5.6-luna', driver: 'codex', target: 'local'},
+  ], catalogHash: 'b'.repeat(64),
+};
+
 const routingPreviewResponse = {
   apiVersion: 'fishyume.application/v1', workflowSchemaVersion: 'fishyume/v2', valid: true, issues: [], capabilityGaps: [], warnings: [], routingRequirements: [],
   routingPreviews: [{nodeId: 'work', driver: 'codex', target: 'local', requirement: {schemaVersion: 'fishyume.routing-requirement/v1', capabilities: ['repo_read'], complexity: 'simple', quality: 'economy', latency: 'fast', maxCostUnits: 1, maxContextBytes: 131072, maxOutputBytes: 32768, allowModelFallback: false}, decision: {schemaVersion: 'fishyume.routing-decision/v1', catalogHash: 'a'.repeat(64), requirement: {schemaVersion: 'fishyume.routing-requirement/v1', capabilities: ['repo_read'], complexity: 'simple', quality: 'economy', latency: 'fast', maxCostUnits: 1, maxContextBytes: 131072, maxOutputBytes: 32768, allowModelFallback: false}, selected: {driver: 'codex', provider: 'local', model: 'model'}, reasonCodes: ['capability_match'], budget: {maxCostUnits: 1, contextBytes: 131072, outputBytes: 32768}, fallbackPolicy: {mode: 'none', maxAttempts: 1, requireNoSideEffect: false, requireApproval: false}}}],
@@ -40,6 +49,7 @@ class FakeApplicationClient implements EngineClient {
     if (method === 'routing.catalog') return routingCatalog as T;
     if (method === 'workflow.validate') return routingPreviewResponse as T;
     if (method === 'workflow.explain') return explainPreviewResponse as T;
+    if (method === 'team.capabilities') return teamCapabilities as T;
     throw new Error(`unexpected ${method}`);
   }
   onRunEvent(_listener: EventListener): () => void {return () => undefined}
@@ -124,7 +134,7 @@ test('MCP and Machine CLI expose identical Application response JSON', async () 
   await Promise.all([mcpServer.connect(serverTransport), mcpClient.connect(clientTransport)]);
   try {
     const listed = await mcpClient.listTools();
-    assert.deepEqual(listed.tools.map(tool => tool.name), ['system.capabilities', 'routing.catalog', 'workflow.validate', 'workflow.explain', 'run.start', 'run.list', 'run.get', 'run.events', 'run.action', 'run.result', 'memory.create', 'memory.get', 'memory.list', 'memory.supersede', 'memory.delete']);
+    assert.deepEqual(listed.tools.map(tool => tool.name), ['system.capabilities', 'routing.catalog', 'workflow.validate', 'workflow.explain', 'run.start', 'run.list', 'run.get', 'run.events', 'run.action', 'run.result', 'memory.create', 'memory.get', 'memory.list', 'memory.supersede', 'memory.delete', 'team.capabilities', 'team.start', 'team.list', 'team.get', 'team.events', 'team.messages', 'team.action', 'team.handoff.create', 'team.handoff.get', 'team.handoff.list', 'team.handoff.bindRun']);
     for (const tool of listed.tools) {
       const schema = JSON.stringify(tool.inputSchema);
       for (const legacy of ['"backend"', '"tool"', '"runtime"']) assert.equal(schema.includes(legacy), false, `${tool.name} exposed ${legacy}`);
@@ -136,10 +146,11 @@ test('MCP and Machine CLI expose identical Application response JSON', async () 
     assert.match(listed.tools.find(tool => tool.name === 'run.events')?.description ?? '', /bounded/);
     assert.match(listed.tools.find(tool => tool.name === 'workflow.validate')?.description ?? '', /same workflow, inputs, driver, target/);
     assert.match(listed.tools.find(tool => tool.name === 'workflow.explain')?.description ?? '', /Context Policy/);
-    for (const method of ['system.capabilities', 'routing.catalog'] as const) {
+    for (const method of ['system.capabilities', 'routing.catalog', 'team.capabilities'] as const) {
       const machineClient = new FakeApplicationClient(); let machineOutput = '';
-      assert.equal(await runMachine(machineClient, method, '{}', {write(text) {machineOutput += text}}), 0);
-      const result = await mcpClient.callTool({name: method, arguments: {}});
+      const args = method === 'team.capabilities' ? {schemaVersion: 'fishyume.team/v1'} : {};
+      assert.equal(await runMachine(machineClient, method, JSON.stringify(args), {write(text) {machineOutput += text}}), 0);
+      const result = await mcpClient.callTool({name: method, arguments: args});
       assert.deepEqual(result.structuredContent, JSON.parse(machineOutput));
       const content = result.content as Array<{type: string; text?: string}>;
       assert.equal(content[0]?.type, 'text');

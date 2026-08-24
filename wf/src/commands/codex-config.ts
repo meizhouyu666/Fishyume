@@ -19,6 +19,17 @@ export const fishyumeMcpTools = [
   'memory.list',
   'memory.supersede',
   'memory.delete',
+  'team.capabilities',
+  'team.start',
+  'team.list',
+  'team.get',
+  'team.events',
+  'team.messages',
+  'team.action',
+  'team.handoff.create',
+  'team.handoff.get',
+  'team.handoff.list',
+  'team.handoff.bindRun',
 ] as const;
 
 export function codexConfigPath(environment: NodeJS.ProcessEnv = process.env): string {
