@@ -1,6 +1,6 @@
 # Fishyume M7: Lightweight Team Exploration and Explicit Workflow Promotion
 
-> Status: approved development plan
+> Status: approved development plan; M7.0 feasibility gate passed
 >
 > Date: 2026-08-24
 >
@@ -1013,11 +1013,15 @@ gates. Public CI uses fake Exploration/Session Drivers and crash fixtures.
 
 ### Gate A: after M7.0
 
-Approve M7.1 only if two-model one-shot Panel output is useful enough to justify
-a new durable aggregate and public contract.
+M7.0 passed the technical gate: both trusted Codex models produced bounded
+one-shot read-only contributions in an isolated project, and the project
+remained unchanged. M7.1 is approved to begin behind the frozen Team contract.
 
-Classify resume independently. An unsupported resume surface does not block the
-Panel or Handoff, but blocks M7.3/M7.4.
+Resume is classified independently as unsupported for the current CLI because
+`exec resume` cannot accept the required sandbox/workspace policy controls. It
+does not block the Panel or Handoff, but blocks M7.3/M7.4. Provider-specific
+confirmed cancellation remains a Driver acceptance gate rather than a claim
+derived from the one-shot probe.
 
 ### Gate B: after M7.1 dogfooding
 

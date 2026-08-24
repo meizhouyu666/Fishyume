@@ -1,6 +1,6 @@
 # Fishyume M7.0 Feasibility and Boundary Spike
 
-> Status: engineering spike recorded; live Provider gate pending
+> Status: M7.0 feasibility gate complete; resumable Session deferred
 >
 > Date: 2026-08-24
 >
@@ -123,11 +123,34 @@ codex exec --ephemeral --json --color never --sandbox read-only
   --skip-git-repo-check --cd <temporary-project> --model <model-id> <bounded prompt>
 ```
 
-Neither probe produced a terminal contribution. Both entered the Codex
-service's temporary high-demand reconnect path and were stopped after the
-bounded wait. No repository was used as the probe workspace and no tracked
-file changed. This result is classified as `unavailable/inconclusive`, not as
-model or sandbox failure.
+Both probes produced terminal contributions. The observed final payloads were
+bounded JSON objects with the requested model identity, `writeAttempted: false`,
+and `sandbox: read-only`. `gpt-5.6` emitted one preliminary metadata warning
+(`model metadata not found; fallback metadata`), but still honored the explicit
+model argument and completed the probe. No repository file changed.
+
+The temporary project's README SHA-256 remained
+`7D159464AFF7270B7D4E4633B3430B118C2A11FCECB99F454A1F6EB48AB41A6A` and its
+Git status remained empty after both probes. The temporary project was removed
+after evidence collection.
+
+The earlier high-demand result is superseded by this successful bounded retry;
+it remains useful historical evidence that the live gate must use bounded waits.
+
+### Resume and cancellation classification
+
+The installed CLI exposes `exec resume`, but its resume command does not accept
+the M7-required `--sandbox`, `--cd`, or `--color` controls. A resume request
+therefore cannot prove that Fishyume can reassert the original workspace,
+sandbox, and output policy. Resume is classified **unsupported for the M7
+Session contract**. M7 must not enable `session` mode or emulate continuity by
+injecting a reconstructed transcript.
+
+Confirmed cancellation semantics remain covered by the existing Codex process
+contract tests and integration tests using a fake executable. The live one-shot
+probe establishes model, read-only, and workspace-integrity evidence; it does
+not claim Provider-specific cancellation confirmation. A future Driver adapter
+must pass the existing confirmed-cancel contract before it is advertised.
 
 ## Gate status
 
@@ -136,20 +159,21 @@ model or sandbox failure.
 | Two explicit model IDs exist | pass | Frozen M6 catalog and hash |
 | Model selection reaches Codex process | pass (fake) | Existing process argument test |
 | Read-only process path is exercised | pass (fake) | Existing integration coverage |
-| Real `gpt-5.6` one-shot contribution | pending | Provider high-demand reconnect |
-| Real `gpt-5.6-luna` one-shot contribution | pending | Provider high-demand reconnect |
-| Non-interactive resume continuity | pending | CLI help is insufficient |
-| Domain-neutral artifact extraction | design required | Current paths are Run-bound |
+| Real `gpt-5.6` one-shot contribution | pass | Terminal structured contribution; read-only probe |
+| Real `gpt-5.6-luna` one-shot contribution | pass | Terminal structured contribution; read-only probe |
+| Non-interactive resume continuity | unsupported | Resume cannot accept required policy controls |
+| Confirmed cancellation contract | pass (fake) | Existing Codex process/integration contract tests |
+| Provider-specific cancellation confirmation | deferred | Requires Driver adapter evidence |
+| Domain-neutral artifact extraction | pass | `internal/execution.ArtifactLocation` and Codex adapter regression |
 
 ## Decision
 
-M7.0 is not yet approved as a public-contract gate. The implementation may
-prepare test fixtures and the internal extraction design, but must not ship
-`fishyume.team/v1` or begin M7.1 public behavior until a bounded live probe
-captures two distinct terminal contributions and records the effective model,
-sandbox, cancellation, and workspace-integrity evidence.
+M7.0's one-shot feasibility gate is complete: two distinct trusted model IDs
+produced terminal contributions under the required read-only profile, and the
+workspace remained unchanged. The independent `ExplorationDriver` contract and
+domain-neutral artifact-location extraction are implemented and tested.
 
-If the next live probe remains unavailable, the evidence must be recorded as an
-environment block and the Team implementation should proceed only behind fake
-Exploration Drivers. Fishyume must not claim multi-model live support from
-catalog metadata alone.
+Resumable AgentSession semantics are explicitly deferred because the installed
+CLI cannot reassert required policy controls on `resume`. M7.1 Panel work may
+proceed; M7.3/M7.4 remain gated until a Driver demonstrates policy-preserving
+resume and Provider-specific confirmed cancellation.
