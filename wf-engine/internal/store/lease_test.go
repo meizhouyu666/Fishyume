@@ -30,6 +30,9 @@ func TestLeaseExclusionHeartbeatAndStaleTakeover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if owns, err := first.Owns(); err != nil || !owns {
+		t.Fatalf("first ownership = %t, %v", owns, err)
+	}
 	_, err = manager.Acquire("run-lease", "cancel")
 	var conflict *LeaseConflictError
 	if !errors.As(err, &conflict) || conflict.Current.OwnerID != "owner-a" {
@@ -40,12 +43,21 @@ func TestLeaseExclusionHeartbeatAndStaleTakeover(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock.now = clock.now.Add(10 * time.Second)
+	if owns, err := first.Owns(); err != nil || owns {
+		t.Fatalf("expired ownership = %t, %v", owns, err)
+	}
 	second, err := manager.Acquire("run-lease", "cancel")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if second.Record().OwnerID != "owner-c" {
 		t.Fatalf("takeover owner=%s", second.Record().OwnerID)
+	}
+	if owns, err := first.Owns(); err != nil || owns {
+		t.Fatalf("stale ownership = %t, %v", owns, err)
+	}
+	if owns, err := second.Owns(); err != nil || !owns {
+		t.Fatalf("replacement ownership = %t, %v", owns, err)
 	}
 	if err := first.Release(); err == nil {
 		t.Fatal("stale owner released replacement lease")

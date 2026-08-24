@@ -28,12 +28,15 @@ const protocolVersion = 2
 const stateSchemaVersion = 3
 
 const (
-	startupIdleReconcileChecks = 20
-	startupIdleReconcileDelay  = 500 * time.Millisecond
-	cancelRequestPollInterval  = 25 * time.Millisecond
-	cancelStateReadGrace       = 2 * time.Second
-	cancelSessionPersistGrace  = 30 * time.Second
-	cancelBackendTimeout       = 30 * time.Second
+	startupIdleReconcileChecks     = 20
+	startupIdleReconcileDelay      = 500 * time.Millisecond
+	controllerRecoveryAttempts     = 8
+	controllerRecoveryInitialDelay = 100 * time.Millisecond
+	controllerRecoveryMaxDelay     = 5 * time.Second
+	cancelRequestPollInterval      = 25 * time.Millisecond
+	cancelStateReadGrace           = 2 * time.Second
+	cancelSessionPersistGrace      = 30 * time.Second
+	cancelBackendTimeout           = 30 * time.Second
 )
 
 type StartRequest struct {
@@ -152,6 +155,7 @@ type serviceTestHooks struct {
 	beforeControllerMutation func(point string)
 	afterLaunch              func()
 	idleReconcileDelay       func(context.Context) error
+	controllerRecoveryDelay  func(context.Context) error
 	cancelRequestDelay       func(context.Context) error
 }
 
@@ -728,11 +732,18 @@ func (s *Service) runNeedsController(run WorkflowSnapshot) (bool, error) {
 	if run.Phase == PhaseCompleted || run.Phase == PhaseWaiting && run.Reason == ReasonApprovalRequired {
 		return false, nil
 	}
+	_, nodes, err := s.loadRun(run.ID)
+	if err != nil {
+		return false, err
+	}
+	return s.runNeedsControllerFromState(run, nodes)
+}
+
+func (s *Service) runNeedsControllerFromState(run WorkflowSnapshot, nodes []NodeSnapshot) (bool, error) {
+	if run.Phase == PhaseCompleted || run.Phase == PhaseWaiting && run.Reason == ReasonApprovalRequired {
+		return false, nil
+	}
 	if run.Phase == PhaseWaiting && run.Reason == ReasonAgentWaitingInput {
-		_, nodes, err := s.loadRun(run.ID)
-		if err != nil {
-			return false, err
-		}
 		settled, err := s.hasSettledNeedsInput(nodes)
 		return !settled, err
 	}
@@ -747,10 +758,8 @@ func (s *Service) startController(runID string, lease *store.Lease, control func
 	s.controllers[runID] = entry
 	s.mu.Unlock()
 	go func() {
-		defer cancel()
 		defer close(entry.done)
 		defer func() {
-			_ = lease.Release()
 			s.mu.Lock()
 			if s.controllers[runID] == entry {
 				delete(s.controllers, runID)
@@ -758,8 +767,12 @@ func (s *Service) startController(runID string, lease *store.Lease, control func
 			s.mu.Unlock()
 		}()
 		heartbeatErrors := lease.KeepAlive(ctx)
+		heartbeatFailure := make(chan error, 1)
+		heartbeatDone := make(chan struct{})
 		go func() {
+			defer close(heartbeatDone)
 			if heartbeatErr, ok := <-heartbeatErrors; ok && heartbeatErr != nil {
+				heartbeatFailure <- heartbeatErr
 				cancel()
 			}
 		}()
@@ -772,7 +785,145 @@ func (s *Service) startController(runID string, lease *store.Lease, control func
 		control(ctx, entry.generation)
 		stopMonitor()
 		<-monitorDone
+		cancel()
+		<-heartbeatDone
+		select {
+		case heartbeatErr := <-heartbeatFailure:
+			if err := s.handleControllerHeartbeatFailure(runID, entry, heartbeatErr); err != nil {
+				entry.err = err
+			}
+		default:
+			_ = lease.Release()
+		}
 	}()
+}
+
+func (s *Service) handleControllerHeartbeatFailure(runID string, entry *controller, heartbeatErr error) error {
+	owned, ownershipErr := entry.lease.Owns()
+	var pauseErr error
+	if owned {
+		pauseErr = s.pauseRunForHeartbeatFailure(runID, entry.generation, heartbeatErr)
+		if errors.Is(pauseErr, errControllerInactive) {
+			pauseErr = nil
+		}
+	}
+	releaseErr := entry.lease.Release()
+	recoveryErr := s.recoverControllerAfterHeartbeat(runID, entry.lease.Record().OwnerID)
+	if recoveryErr == nil {
+		return nil
+	}
+	return errors.Join(fmt.Errorf("controller heartbeat failed: %w", heartbeatErr), ownershipErr, pauseErr, releaseErr, recoveryErr)
+}
+
+func (s *Service) pauseRunForHeartbeatFailure(runID string, generation uint64, heartbeatErr error) error {
+	return s.controllerMutation(runID, generation, "controller.heartbeat_failed", func(run *WorkflowSnapshot, nodes []NodeSnapshot) error {
+		if run.Phase == PhaseWaiting && run.Reason == ReasonApprovalRequired {
+			return errControllerInactive
+		}
+		if run.Phase == PhaseWaiting && run.Reason == ReasonAgentWaitingInput {
+			settled, err := s.hasSettledNeedsInput(nodes)
+			if err != nil {
+				return err
+			}
+			if settled {
+				return errControllerInactive
+			}
+		}
+		run.Phase, run.Conclusion, run.Reason = PhasePaused, "", ReasonControllerDetach
+		run.Summary = "controller heartbeat failed: " + heartbeatErr.Error()
+		run.UpdatedAt = s.now().UTC()
+		return s.persistRun(run, nil, "run.paused", run.Summary)
+	})
+}
+
+func (s *Service) recoverControllerAfterHeartbeat(runID, priorOwnerID string) error {
+	var failures []error
+	for attempt := 0; attempt < controllerRecoveryAttempts; attempt++ {
+		recovered, handedOff, err := s.tryRecoverController(runID, priorOwnerID, "heartbeat-recover")
+		if recovered || handedOff {
+			return nil
+		}
+		if err != nil {
+			failures = append(failures, err)
+		}
+		if attempt+1 < controllerRecoveryAttempts {
+			if err := s.waitControllerRecovery(context.Background(), attempt); err != nil {
+				failures = append(failures, err)
+				break
+			}
+		}
+	}
+	return fmt.Errorf("recover controller after heartbeat failure: %w", errors.Join(failures...))
+}
+
+func (s *Service) tryRecoverController(runID, priorOwnerID, command string) (bool, bool, error) {
+	run, nodes, err := s.loadRun(runID)
+	if err != nil {
+		return false, false, err
+	}
+	needsController, err := s.runNeedsControllerFromState(run, nodes)
+	if err != nil || !needsController {
+		return !needsController, false, err
+	}
+	lease, err := s.leases.AcquireRecovery(runID, command)
+	if err != nil {
+		var conflict *store.LeaseConflictError
+		if errors.As(err, &conflict) && conflict.Current.OwnerID != priorOwnerID {
+			return false, true, nil
+		}
+		return false, false, err
+	}
+	releaseLease := true
+	defer func() {
+		if releaseLease {
+			_ = lease.Release()
+		}
+	}()
+
+	s.mu.Lock()
+	run, nodes, err = s.loadRun(runID)
+	if err == nil {
+		needsController, err = s.runNeedsControllerFromState(run, nodes)
+	}
+	if err == nil && needsController && run.Phase == PhasePaused {
+		run.Phase, run.Conclusion, run.Reason, run.Summary, run.UpdatedAt = PhaseRunning, "", "", "controller recovered after heartbeat failure", s.now().UTC()
+		err = s.persistRun(&run, nil, "run.recovered", run.Summary)
+	}
+	s.mu.Unlock()
+	if err != nil {
+		return false, false, err
+	}
+	if !needsController {
+		return true, false, nil
+	}
+
+	releaseLease = false
+	s.startController(runID, lease, func(controllerCtx context.Context, generation uint64) {
+		if run.CancelRequested {
+			_, _ = s.handleCancellationRequest(controllerCtx, runID)
+			return
+		}
+		s.control(controllerCtx, runID, generation)
+	})
+	return true, false, nil
+}
+
+func (s *Service) waitControllerRecovery(ctx context.Context, attempt int) error {
+	if hook := s.testHooks.controllerRecoveryDelay; hook != nil {
+		return hook(ctx)
+	}
+	delay := controllerRecoveryInitialDelay << attempt
+	if delay > controllerRecoveryMaxDelay {
+		delay = controllerRecoveryMaxDelay
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (s *Service) Status(runID string) (StatusView, error) {

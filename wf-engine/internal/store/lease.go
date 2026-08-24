@@ -121,8 +121,25 @@ type Lease struct {
 
 func (l *Lease) Record() LeaseRecord { return l.record }
 
+// Owns reports whether the durable control lease is still bound to this
+// handle. It never mutates or replaces another owner's lease.
+func (l *Lease) Owns() (bool, error) {
+	path := filepath.Join(l.manager.store.RunDir(l.runID), "control.lock")
+	current, err := readLease(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return current.OwnerID == l.record.OwnerID && current.ExpiresAt.After(l.manager.clock.Now().UTC()), nil
+}
+
 func (l *Lease) Heartbeat() error {
 	path := filepath.Join(l.manager.store.RunDir(l.runID), "control.lock")
+	if err := l.manager.store.injectFault("lease_heartbeat", path); err != nil {
+		return err
+	}
 	current, err := readLease(path)
 	if err != nil {
 		return err
