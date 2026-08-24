@@ -821,6 +821,69 @@ func TestExplicitRetryPreservesAttemptHistory(t *testing.T) {
 	}
 }
 
+func TestFailedResultUsesWorkflowValidationAndCanRetry(t *testing.T) {
+	b := &fakeWorkflowBackend{waitResults: []backend.BackendResult{
+		{Status: "failed", Summary: strings.Repeat("x", workflow.MaxSummaryBytes+1)},
+		{Status: "failed", Summary: "valid failure"},
+	}, observations: map[string][]backend.Observation{}}
+	state := store.New(t.TempDir())
+	first := NewService(b, state)
+	started, err := first.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waiting := waitForRun(t, first, started.ID, func(run WorkflowSnapshot) bool {
+		return run.Phase == PhaseWaiting && run.Reason == ReasonInvalidResult
+	})
+	waitForControllers(t, first)
+	if !strings.Contains(waiting.Summary, "result summary exceeds") {
+		t.Fatalf("waiting=%+v", waiting)
+	}
+	view, err := first.Status(started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Nodes) != 1 || view.Nodes[0].Phase != NodePhaseWaiting || view.Nodes[0].Conclusion != "" || view.Nodes[0].Result != nil {
+		t.Fatalf("invalid failed result changed node completion state: %+v", view.Nodes)
+	}
+	var attempt AttemptSnapshot
+	if err := state.ReadAttempt(started.ID, "agent-1", 1, &attempt); err != nil {
+		t.Fatal(err)
+	}
+	if attempt.Phase != NodePhaseWaiting || attempt.Reason != ReasonInvalidResult || attempt.Conclusion != "" || attempt.ResultConsumed || attempt.CompletedAt != nil {
+		t.Fatalf("invalid failed result consumed Attempt: %+v", attempt)
+	}
+	if _, err := os.Stat(state.ResultPath(started.ID, "agent-1", 1)); err == nil || !os.IsNotExist(err) {
+		t.Fatalf("invalid failed result file exists or cannot be checked: %v", err)
+	}
+	events, err := first.ReadEvents(started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Type == "node.completed" || event.Type == "run.completed" || event.Conclusion == ConclusionFailed {
+			t.Fatalf("invalid failed result emitted terminal failure: %+v", events)
+		}
+	}
+
+	second := NewService(b, state)
+	if _, err := second.Resume(context.Background(), ResumeRequest{RunID: started.ID, Action: &ResumeAction{Type: "retry", NodeID: "agent-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	final := waitForRun(t, second, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	if final.Conclusion != ConclusionFailed {
+		t.Fatalf("final=%+v", final)
+	}
+	attempts, err := state.ListAttempts(started.ID, "agent-1")
+	if err != nil || fmt.Sprint(attempts) != "[1 2]" {
+		t.Fatalf("attempts=%v err=%v", attempts, err)
+	}
+	var valid workflow.Result
+	if err := state.ReadResult(started.ID, "agent-1", 2, &valid); err != nil || valid.Summary != "valid failure" {
+		t.Fatalf("valid failed result=%+v err=%v", valid, err)
+	}
+}
+
 func TestIndeterminateRetryRequiresAcknowledgement(t *testing.T) {
 	b := &fakeWorkflowBackend{waitResults: []backend.BackendResult{{Status: "indeterminate", Summary: "lost"}}, observations: map[string][]backend.Observation{}}
 	state := store.New(t.TempDir())

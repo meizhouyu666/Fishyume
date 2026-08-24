@@ -2129,6 +2129,9 @@ func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generati
 		})
 		return err == nil, err
 	case "failed", "error":
+		if err := workflow.ValidateResult(normalized); err != nil {
+			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonInvalidResult, err.Error())
+		}
 		err := s.controllerMutation(runID, generation, "result.failed", func(run *WorkflowSnapshot, nodes []NodeSnapshot) error {
 			node, err := findNode(nodes, nodeID)
 			if err != nil {
