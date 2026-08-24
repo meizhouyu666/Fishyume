@@ -46,6 +46,9 @@ func TestLeaseExclusionHeartbeatAndStaleTakeover(t *testing.T) {
 	if owns, err := first.Owns(); err != nil || owns {
 		t.Fatalf("expired ownership = %t, %v", owns, err)
 	}
+	if bound, err := first.Bound(); err != nil || !bound {
+		t.Fatalf("expired binding = %t, %v", bound, err)
+	}
 	second, err := manager.Acquire("run-lease", "cancel")
 	if err != nil {
 		t.Fatal(err)
@@ -55,6 +58,9 @@ func TestLeaseExclusionHeartbeatAndStaleTakeover(t *testing.T) {
 	}
 	if owns, err := first.Owns(); err != nil || owns {
 		t.Fatalf("stale ownership = %t, %v", owns, err)
+	}
+	if bound, err := first.Bound(); err != nil || bound {
+		t.Fatalf("stale binding = %t, %v", bound, err)
 	}
 	if owns, err := second.Owns(); err != nil || !owns {
 		t.Fatalf("replacement ownership = %t, %v", owns, err)

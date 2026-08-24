@@ -135,6 +135,20 @@ func (l *Lease) Owns() (bool, error) {
 	return current.OwnerID == l.record.OwnerID && current.ExpiresAt.After(l.manager.clock.Now().UTC()), nil
 }
 
+// Bound reports whether the durable control lease still names this handle's
+// owner. An expired lease remains bound until another owner replaces it.
+func (l *Lease) Bound() (bool, error) {
+	path := filepath.Join(l.manager.store.RunDir(l.runID), "control.lock")
+	current, err := readLease(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return current.OwnerID == l.record.OwnerID, nil
+}
+
 func (l *Lease) Heartbeat() error {
 	path := filepath.Join(l.manager.store.RunDir(l.runID), "control.lock")
 	if err := l.manager.store.injectFault("lease_heartbeat", path); err != nil {

@@ -99,6 +99,62 @@ func TestHeartbeatRecoveryRetriesLeaseAcquisition(t *testing.T) {
 	assertSingleBackendLaunch(t, b)
 }
 
+func TestHeartbeatRecoveryRetriesRecoveredEventCommit(t *testing.T) {
+	state := store.New(t.TempDir())
+	results := make(chan backend.BackendResult, 1)
+	b := &fakeWorkflowBackend{waitBlock: true, waitReturn: results, observations: map[string][]backend.Observation{}}
+	service := newHeartbeatTestService(b, state, 60*time.Millisecond, "event-retry")
+	service.testHooks.controllerRecoveryDelay = func(context.Context) error { return nil }
+
+	started, err := service.Start(context.Background(), StartRequest{Project: "p", Task: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForActiveAttempt(t, service, started.ID)
+	var mu sync.Mutex
+	stage := 0
+	state.SetFaultInjectorForTest(func(operation, path string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if stage == 0 && controlLeaseWrite(operation, path) {
+			stage = 1
+			return fmt.Errorf("heartbeat unavailable")
+		}
+		if operation == "append_event" {
+			switch stage {
+			case 1:
+				stage = 2 // Allow run.paused.
+			case 2:
+				stage = 3
+				return fmt.Errorf("recovered event temporarily unavailable")
+			}
+		}
+		return nil
+	})
+	waitForEventType(t, state, started.ID, "run.recovered")
+	state.SetFaultInjectorForTest(nil)
+
+	mu.Lock()
+	finalStage := stage
+	mu.Unlock()
+	if finalStage != 3 {
+		t.Fatalf("fault injector stage=%d, want 3", finalStage)
+	}
+	if got := countEventType(t, state, started.ID, "run.paused"); got != 1 {
+		t.Fatalf("run.paused events = %d, want 1", got)
+	}
+	if got := countEventType(t, state, started.ID, "run.recovered"); got != 1 {
+		t.Fatalf("run.recovered events = %d, want 1", got)
+	}
+
+	results <- backend.BackendResult{Status: "succeeded", Summary: "recovered after event retry"}
+	final := waitForRun(t, service, started.ID, func(run WorkflowSnapshot) bool { return run.Phase == PhaseCompleted })
+	if final.Conclusion != ConclusionSucceeded {
+		t.Fatalf("final = %+v", final)
+	}
+	assertSingleBackendLaunch(t, b)
+}
+
 func TestHeartbeatRecoveryRecreatesMissingLease(t *testing.T) {
 	state := store.New(t.TempDir())
 	results := make(chan backend.BackendResult, 1)
@@ -328,7 +384,9 @@ func waitForEventType(t *testing.T, state *store.Store, runID, eventType string)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("event %q was not persisted for run %s", eventType, runID)
+	var snapshot WorkflowSnapshot
+	_ = state.ReadSnapshot(runID, &snapshot)
+	t.Fatalf("event %q was not persisted for run %s: phase=%q reason=%q summary=%q paused=%d recovered=%d", eventType, runID, snapshot.Phase, snapshot.Reason, snapshot.Summary, countEventType(t, state, runID, "run.paused"), countEventType(t, state, runID, "run.recovered"))
 }
 
 func waitForReplacementController(t *testing.T, service *Service, runID string, old *controller) *controller {

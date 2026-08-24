@@ -33,6 +33,7 @@ const (
 	controllerRecoveryAttempts     = 8
 	controllerRecoveryInitialDelay = 100 * time.Millisecond
 	controllerRecoveryMaxDelay     = 5 * time.Second
+	controllerRecoveredSummary     = "controller recovered after heartbeat failure"
 	cancelRequestPollInterval      = 25 * time.Millisecond
 	cancelStateReadGrace           = 2 * time.Second
 	cancelSessionPersistGrace      = 30 * time.Second
@@ -799,9 +800,9 @@ func (s *Service) startController(runID string, lease *store.Lease, control func
 }
 
 func (s *Service) handleControllerHeartbeatFailure(runID string, entry *controller, heartbeatErr error) error {
-	owned, ownershipErr := entry.lease.Owns()
+	bound, ownershipErr := entry.lease.Bound()
 	var pauseErr error
-	if owned {
+	if bound {
 		pauseErr = s.pauseRunForHeartbeatFailure(runID, entry.generation, heartbeatErr)
 		if errors.Is(pauseErr, errControllerInactive) {
 			pauseErr = nil
@@ -885,9 +886,12 @@ func (s *Service) tryRecoverController(runID, priorOwnerID, command string) (boo
 	if err == nil {
 		needsController, err = s.runNeedsControllerFromState(run, nodes)
 	}
-	if err == nil && needsController && run.Phase == PhasePaused {
-		run.Phase, run.Conclusion, run.Reason, run.Summary, run.UpdatedAt = PhaseRunning, "", "", "controller recovered after heartbeat failure", s.now().UTC()
-		err = s.persistRun(&run, nil, "run.recovered", run.Summary)
+	if err == nil && needsController {
+		if run.Phase == PhasePaused {
+			run.Phase, run.Conclusion, run.Reason, run.Summary = PhaseRunning, "", "", controllerRecoveredSummary
+		}
+		run.UpdatedAt = s.now().UTC()
+		err = s.persistRun(&run, nil, "run.recovered", controllerRecoveredSummary)
 	}
 	s.mu.Unlock()
 	if err != nil {
