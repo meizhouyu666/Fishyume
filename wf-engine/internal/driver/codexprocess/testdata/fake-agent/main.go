@@ -18,6 +18,13 @@ type identity struct {
 	Attempt     int    `json:"attempt"`
 }
 
+type teamIdentity struct {
+	ExecutionID   string `json:"executionId"`
+	TeamID        string `json:"teamId"`
+	ParticipantID string `json:"participantId"`
+	TurnID        string `json:"turnId"`
+}
+
 func main() {
 	for _, arg := range os.Args[1:] {
 		if arg == "--version" {
@@ -32,7 +39,7 @@ func main() {
 	if first := strings.SplitN(prompt, "\n", 2)[0]; strings.HasPrefix(first, "scenario:") {
 		scenario = strings.TrimSpace(strings.TrimPrefix(first, "scenario:"))
 	}
-	for _, candidate := range []string{"terminal-succeeded", "delayed-succeeded", "terminal-failed", "terminal-indeterminate", "terminal-needs-input", "needs-input-then-succeeded", "malformed-result", "wrong-identity", "oversized-result", "conflict-result", "premature-result", "nonzero-missing", "result-pending", "waiting-input", "active", "large-output"} {
+	for _, candidate := range []string{"team-contribution", "team-malformed", "team-unknown-field", "terminal-succeeded", "delayed-succeeded", "terminal-failed", "terminal-indeterminate", "terminal-needs-input", "needs-input-then-succeeded", "malformed-result", "wrong-identity", "oversized-result", "conflict-result", "premature-result", "nonzero-missing", "result-pending", "waiting-input", "active", "large-output"} {
 		if strings.Contains(prompt, "scenario:"+candidate) {
 			scenario = candidate
 			break
@@ -43,8 +50,30 @@ func main() {
 	if index := strings.LastIndex(prompt, marker); index >= 0 {
 		_ = json.Unmarshal([]byte(strings.TrimSpace(prompt[index+len(marker):])), &id)
 	}
+	var teamID teamIdentity
+	teamMarker := "FISHYUME_TEAM_IDENTITY="
+	if index := strings.LastIndex(prompt, teamMarker); index >= 0 {
+		_ = json.Unmarshal([]byte(strings.TrimSpace(prompt[index+len(teamMarker):])), &teamID)
+	}
+	if strings.HasPrefix(scenario, "team-") && (teamID.ExecutionID == "" || teamID.TeamID == "" || teamID.ParticipantID == "" || teamID.TurnID == "") {
+		fmt.Fprintln(os.Stderr, "missing Team execution identity")
+		os.Exit(20)
+	}
 	emit(map[string]any{"type": "thread.started", "thread_id": "fixture-thread"})
 	switch scenario {
+	case "team-contribution":
+		if valueAfter("--model") != "gpt-5.6-luna" || valueAfter("--sandbox") != "read-only" {
+			fmt.Fprintln(os.Stderr, "Team execution did not receive the selected model and read-only sandbox")
+			os.Exit(21)
+		}
+		writeTeamContribution(resultPath, false)
+		emitCompleted()
+	case "team-malformed":
+		_ = os.WriteFile(resultPath, []byte("{not-json"), 0o600)
+		emitCompleted()
+	case "team-unknown-field":
+		writeTeamContribution(resultPath, true)
+		emitCompleted()
 	case "active", "cancel-confirmed", "cancel-not-confirmed", "lost":
 		time.Sleep(60 * time.Second)
 	case "waiting-input":
@@ -102,6 +131,22 @@ func main() {
 		fmt.Fprintln(os.Stderr, "unknown scenario", scenario)
 		os.Exit(19)
 	}
+}
+
+func writeTeamContribution(path string, unknownField bool) {
+	value := map[string]any{
+		"schemaVersion":   "fishyume.team/v1",
+		"status":          "completed",
+		"contentMarkdown": "fixture contribution",
+		"warnings":        []string{},
+		"openQuestions":   []string{},
+	}
+	if unknownField {
+		value["unexpected"] = true
+	}
+	data, _ := json.Marshal(value)
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	_ = os.WriteFile(path, data, 0o600)
 }
 
 func valueAfter(name string) string {

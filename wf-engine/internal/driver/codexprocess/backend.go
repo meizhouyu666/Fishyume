@@ -263,9 +263,13 @@ func (b *Backend) Start(ctx context.Context, spec backend.AgentExecutionSpec) (*
 }
 
 func codexExecArgs(spec backend.AgentExecutionSpec, sandbox, schemaPath, resultPath, workspace string) []string {
+	return codexRawExecArgs(spec.Model, sandbox, schemaPath, resultPath, workspace)
+}
+
+func codexRawExecArgs(model, sandbox, schemaPath, resultPath, workspace string) []string {
 	args := []string{"exec", "--ephemeral"}
-	if spec.Model != "" {
-		args = append(args, "--model", spec.Model)
+	if model != "" {
+		args = append(args, "--model", model)
 	}
 	return append(args, "--sandbox", sandbox, "--json", "--color", "never", "--output-schema", schemaPath, "--output-last-message", resultPath, "-C", workspace, "-")
 }
@@ -397,13 +401,25 @@ func (b *Backend) Cancel(ctx context.Context, handle backend.ExecutionHandle) (*
 	if err != nil {
 		return nil, err
 	}
-	refs := []processRef{data.Supervisor, data.Child}
+	confirmed, diagnostic, err := cancelProcessRefs(ctx, data.Child, data.Supervisor, b.config.PollInterval, "Direct")
+	if err != nil {
+		return nil, err
+	}
+	state := backend.CancelNotConfirmed
+	if confirmed {
+		state = backend.CancelConfirmed
+	}
+	return &backend.CancelResult{State: state, Diagnostic: diagnostic}, nil
+}
+
+func cancelProcessRefs(ctx context.Context, child, supervisor processRef, pollInterval time.Duration, label string) (bool, string, error) {
+	refs := []processRef{supervisor, child}
 	active := make(map[int]processRef, len(refs))
 	mismatchedPID := 0
 	for _, ref := range refs {
 		status, err := inspectProcessRef(ref)
 		if err != nil {
-			return nil, err
+			return false, "", err
 		}
 		switch status {
 		case processMatched:
@@ -416,40 +432,40 @@ func (b *Backend) Cancel(ctx context.Context, handle backend.ExecutionHandle) (*
 	}
 	if len(active) == 0 {
 		if mismatchedPID != 0 {
-			return &backend.CancelResult{State: backend.CancelNotConfirmed, Diagnostic: fmt.Sprintf("PID %d no longer matches the Direct execution identity", mismatchedPID)}, nil
+			return false, fmt.Sprintf("PID %d no longer matches the %s execution identity", mismatchedPID, label), nil
 		}
-		return &backend.CancelResult{State: backend.CancelConfirmed, Diagnostic: "Direct execution is already stopped"}, nil
+		return true, label + " execution is already stopped", nil
 	}
 	// Stop the Agent tree before the supervisor. The supervisor owns Wait(), so
 	// keeping it alive briefly lets it reap the child and avoids persistent
 	// zombies on Unix runners. New handles have distinct supervisor/child
 	// process groups; older handles are still inspected safely by PID identity.
-	if child, ok := active[data.Child.PID]; ok {
-		if err := terminateProcessTree(ctx, child); err != nil {
-			return &backend.CancelResult{State: backend.CancelNotConfirmed, Diagnostic: err.Error()}, nil
+	if matchedChild, ok := active[child.PID]; ok {
+		if err := terminateProcessTree(ctx, matchedChild); err != nil {
+			return false, err.Error(), nil
 		}
-		delete(active, data.Child.PID)
+		delete(active, child.PID)
 	}
-	if supervisor, ok := active[data.Supervisor.PID]; ok {
+	if matchedSupervisor, ok := active[supervisor.PID]; ok {
 		graceDeadline := time.Now().Add(time.Second)
 		for {
-			status, inspectErr := inspectProcessRef(supervisor)
+			status, inspectErr := inspectProcessRef(matchedSupervisor)
 			if inspectErr != nil {
-				return nil, inspectErr
+				return false, "", inspectErr
 			}
 			if status != processMatched {
 				break
 			}
 			if time.Now().After(graceDeadline) {
-				if err := terminateProcessTree(ctx, supervisor); err != nil {
-					return &backend.CancelResult{State: backend.CancelNotConfirmed, Diagnostic: err.Error()}, nil
+				if err := terminateProcessTree(ctx, matchedSupervisor); err != nil {
+					return false, err.Error(), nil
 				}
 				break
 			}
 			select {
 			case <-ctx.Done():
-				return &backend.CancelResult{State: backend.CancelNotConfirmed, Diagnostic: ctx.Err().Error()}, nil
-			case <-time.After(b.config.PollInterval):
+				return false, ctx.Err().Error(), nil
+			case <-time.After(pollInterval):
 			}
 		}
 	}
@@ -459,7 +475,7 @@ func (b *Backend) Cancel(ctx context.Context, handle backend.ExecutionHandle) (*
 		for _, ref := range refs {
 			status, err := inspectProcessRef(ref)
 			if err != nil {
-				return nil, err
+				return false, "", err
 			}
 			if status == processMatched {
 				remaining = true
@@ -467,17 +483,17 @@ func (b *Backend) Cancel(ctx context.Context, handle backend.ExecutionHandle) (*
 		}
 		if !remaining {
 			if mismatchedPID != 0 {
-				return &backend.CancelResult{State: backend.CancelNotConfirmed, Diagnostic: fmt.Sprintf("stopped matching Direct processes, but PID %d no longer matches the execution identity", mismatchedPID)}, nil
+				return false, fmt.Sprintf("stopped matching %s processes, but PID %d no longer matches the execution identity", label, mismatchedPID), nil
 			}
-			return &backend.CancelResult{State: backend.CancelConfirmed}, nil
+			return true, "", nil
 		}
 		if time.Now().After(deadline) {
-			return &backend.CancelResult{State: backend.CancelNotConfirmed, Diagnostic: "Direct process tree remained active after termination"}, nil
+			return false, label + " process tree remained active after termination", nil
 		}
 		select {
 		case <-ctx.Done():
-			return &backend.CancelResult{State: backend.CancelNotConfirmed, Diagnostic: ctx.Err().Error()}, nil
-		case <-time.After(b.config.PollInterval):
+			return false, ctx.Err().Error(), nil
+		case <-time.After(pollInterval):
 		}
 	}
 }
