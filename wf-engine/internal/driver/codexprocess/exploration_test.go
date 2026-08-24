@@ -55,6 +55,23 @@ func startExploration(t *testing.T, adapter *ExplorationAdapter, request explora
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		data, _, decodeErr := adapter.decodeHandle(*handle)
+		if decodeErr != nil {
+			t.Errorf("decode exploration handle for cleanup: %v", decodeErr)
+			return
+		}
+		matched := false
+		for _, ref := range []processRef{data.Child, data.Supervisor} {
+			status, inspectErr := inspectProcessRef(ref)
+			if inspectErr != nil {
+				t.Errorf("inspect exploration process for cleanup: %v", inspectErr)
+				return
+			}
+			matched = matched || status == processMatched
+		}
+		if !matched {
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		result, cancelErr := adapter.Cancel(ctx, *handle)
