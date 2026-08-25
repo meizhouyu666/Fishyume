@@ -1,6 +1,7 @@
 # Fishyume M7: Lightweight Team Exploration and Explicit Workflow Promotion
 
-> Status: M7.4 Multi-turn TeamSession complete; M7.5 remains optional
+> Status: M7.5 Optional Web Team Client complete on 2026-08-25; the Web
+> package remains optional and outside the core package dependency graph.
 >
 > Date: 2026-08-25
 >
@@ -890,6 +891,10 @@ Acceptance:
 - no discussion text is interpreted as Workflow completion evidence.
 
 ### M7.5: Optional Web Team Client
+
+Status: complete on 2026-08-25. Acceptance evidence is recorded in
+`docs/fishyume-m7.5-acceptance.md`. The client remains optional; no M7 or core
+Workflow path requires installing it.
 
 Purpose: add a richer human view only after the headless product path is
 accepted.

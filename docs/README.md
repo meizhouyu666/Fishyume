@@ -23,6 +23,12 @@ links and review evidence stay stable.
 - [M7.4 acceptance](fishyume-m7.4-acceptance.md): Host-directed multi-turn
   TeamSession, recovery, loss handling, cancellation, close, and transport
   verification evidence.
+- [M7.5 implementation plan](fishyume-m7.5-implementation-plan.md): optional
+  loopback sidecar, browser operator workspace, security contract, and
+  acceptance matrix.
+- [M7.5 acceptance](fishyume-m7.5-acceptance.md): optional Web package,
+  authenticated sidecar, real Engine projection, responsive browser evidence,
+  and package/CI verification.
 - [Core contract freeze](fishyume-m6-core-contract-freeze.md): frozen public
   contracts and compatibility policy for the closed M6 baseline.
 - [Core stabilization record](fishyume-core-stabilization.md): M6 closure,

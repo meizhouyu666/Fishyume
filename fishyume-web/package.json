@@ -1,0 +1,45 @@
+{
+  "name": "fishyume-web",
+  "version": "0.2.1-alpha.1",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "fishyume-web": "dist/server.js"
+  },
+  "description": "Optional local Web client for Fishyume Team exploration and Workflow Runs",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/meizhouyu666/Fishyume.git",
+    "directory": "fishyume-web"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --import tsx src/**/*.test.ts",
+    "verify": "npm run typecheck && npm test && npm run build && npm run pack:audit",
+    "pack:audit": "node scripts/audit-pack.mjs",
+    "smoke:install": "npm run build && node scripts/install-smoke.mjs",
+    "dev": "npm run build && node dist/server.js --no-open"
+  },
+  "dependencies": {
+    "lucide": "^0.468.0"
+  },
+  "optionalDependencies": {
+    "fishyume-engine-linux-x64": "0.2.1-alpha.1",
+    "fishyume-engine-win32-x64": "0.2.1-alpha.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

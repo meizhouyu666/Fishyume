@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Fishyume Team Console</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark">F</span><span>Fishyume</span></div>
+        <nav class="view-switch" aria-label="Workspace view">
+          <button class="view-tab is-active" data-view="teams"><i data-lucide="messages-square"></i><span>Teams</span></button>
+          <button class="view-tab" data-view="runs"><i data-lucide="workflow"></i><span>Runs</span></button>
+        </nav>
+        <div class="connection-state"><span class="signal"></span><span id="connection-label">Connecting</span></div>
+      </header>
+      <main class="workspace">
+        <aside class="collection-pane" aria-label="Items">
+          <div class="pane-heading">
+            <div><span class="eyebrow" id="collection-eyebrow">EXPLORATION</span><h1 id="collection-title">Teams</h1></div>
+            <button class="icon-button" id="refresh-button" title="Refresh"><i data-lucide="refresh-cw"></i></button>
+          </div>
+          <div class="filter-row" id="filter-row">
+            <button class="filter is-active" data-filter="all">All</button>
+            <button class="filter" data-filter="active">Active</button>
+            <button class="filter" data-filter="closed">Closed</button>
+          </div>
+          <div id="collection-list" class="collection-list" aria-live="polite"></div>
+        </aside>
+        <section id="detail-pane" class="detail-pane" aria-live="polite"></section>
+      </main>
+      <div id="toast-region" class="toast-region" aria-live="assertive"></div>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

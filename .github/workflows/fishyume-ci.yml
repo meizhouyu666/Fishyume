@@ -21,7 +21,9 @@ jobs:
         with:
           node-version: '24.x'
           cache: npm
-          cache-dependency-path: wf/package-lock.json
+          cache-dependency-path: |
+            wf/package-lock.json
+            fishyume-web/package-lock.json
       - name: Go tests (Driver and historical compatibility fixtures included)
         working-directory: wf-engine
         shell: bash
@@ -55,6 +57,13 @@ jobs:
         run: npm --prefix wf ci
       - name: TypeScript checks
         run: node wf/scripts/preflight.mjs --step typescript
+      - name: Optional Web client checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix fishyume-web ci --ignore-scripts
+          npm --prefix fishyume-web run verify
+          npm --prefix fishyume-web run smoke:install
       - name: M6 operator surface release gate
         shell: bash
         run: |
