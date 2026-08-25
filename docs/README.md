@@ -12,6 +12,9 @@ links and review evidence stay stable.
   delivered surfaces, boundary decisions, and verification evidence.
 - [M7.2 Handoff acceptance](fishyume-m7.2-acceptance.md): immutable source
   evidence, durable idempotency, existing-Run binding, and transport parity.
+- [M7.3 AgentSession capability gate](fishyume-m7.3-capability-gate.md):
+  policy-preserving Codex app-server resume, directed follow-up, identity
+  rejection, and confirmed cancellation evidence.
 - [Core contract freeze](fishyume-m6-core-contract-freeze.md): frozen public
   contracts and compatibility policy for the closed M6 baseline.
 - [Core stabilization record](fishyume-core-stabilization.md): M6 closure,

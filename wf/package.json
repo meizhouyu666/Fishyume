@@ -33,6 +33,7 @@
     "test:restart": "node --test --import tsx src/integration/control-plane-restart.test.ts",
     "smoke:codex-live": "npm run build && node scripts/codex-live-smoke.mjs",
     "smoke:codex-live:parallel": "npm run build && node scripts/codex-live-smoke.mjs --parallel",
+    "smoke:codex-session": "node scripts/codex-session-capability-gate.mjs",
     "smoke:codex-host-mcp": "npm run build && node scripts/codex-host-mcp-smoke.mjs",
     "smoke:codex-installed-mcp": "npm run build && node scripts/codex-installed-mcp-smoke.mjs",
     "smoke:codex-host-pty": "npm run build && node scripts/codex-host-mcp-smoke.mjs --pty-handoff",

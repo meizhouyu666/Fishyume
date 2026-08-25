@@ -1,6 +1,6 @@
 # Fishyume M7: Lightweight Team Exploration and Explicit Workflow Promotion
 
-> Status: M7.2 Handoff and explicit Workflow promotion complete; M7.3 is deferred
+> Status: M7.2 complete; M7.3 capability gate passed and implementation approved
 >
 > Date: 2026-08-24
 >
@@ -804,8 +804,9 @@ Acceptance:
 
 ### M7.3: AgentSession Driver Contract
 
-Purpose: add provider-neutral resumable conversation semantics only after M7.0
-proves at least one Harness implementation.
+Purpose: add provider-neutral resumable conversation semantics. The Codex
+app-server v2 live gate now proves one policy-preserving Harness implementation;
+see [M7.3 capability evidence](fishyume-m7.3-capability-gate.md).
 
 Tasks:
 
@@ -1023,11 +1024,13 @@ M7.0 passed the technical gate: both trusted Codex models produced bounded
 one-shot read-only contributions in an isolated project, and the project
 remained unchanged. M7.1 is approved to begin behind the frozen Team contract.
 
-Resume is classified independently as unsupported for the current CLI because
-`exec resume` cannot accept the required sandbox/workspace policy controls. It
-does not block the Panel or Handoff, but blocks M7.3/M7.4. Provider-specific
-confirmed cancellation remains a Driver acceptance gate rather than a claim
-derived from the one-shot probe.
+The original `exec resume` path remains unsupported because it cannot accept
+the required sandbox/workspace policy controls. The later Codex app-server v2
+gate passed start, process park, policy-preserving resume, recovered-turn
+observation, directed follow-up, lost/stale identity rejection, and confirmed
+turn interruption. M7.3 implementation is therefore approved against the
+app-server surface. M7.4 remains disabled until the internal Session Driver and
+its recovery contract are complete.
 
 ### Gate B: after M7.1 dogfooding
 

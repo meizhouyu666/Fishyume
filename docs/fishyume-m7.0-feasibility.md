@@ -1,6 +1,6 @@
 # Fishyume M7.0 Feasibility and Boundary Spike
 
-> Status: M7.0 feasibility gate complete; resumable Session deferred
+> Status: M7.0 feasibility complete; later app-server gate supersedes resume deferral
 >
 > Date: 2026-08-24
 >
@@ -109,10 +109,10 @@ The installed CLI exposes:
 - `exec resume` by session ID or `--last`;
 - `exec fork` by session ID.
 
-Help output proves that the command surface exists. It does not prove that
-resume works non-interactively, preserves the requested model/sandbox, or
-survives Control Plane restart. Those remain live-driver acceptance questions
-for M7.0/M7.3.
+Help output proves that the exec command surface exists. It did not prove that
+resume worked non-interactively, preserved the requested model/sandbox, or
+survived Control Plane restart. Those questions were later answered separately
+for the app-server v2 surface by the M7.3 capability gate.
 
 ### Live two-model probe
 
@@ -142,15 +142,14 @@ it remains useful historical evidence that the live gate must use bounded waits.
 The installed CLI exposes `exec resume`, but its resume command does not accept
 the M7-required `--sandbox`, `--cd`, or `--color` controls. A resume request
 therefore cannot prove that Fishyume can reassert the original workspace,
-sandbox, and output policy. Resume is classified **unsupported for the M7
-Session contract**. M7 must not enable `session` mode or emulate continuity by
-injecting a reconstructed transcript.
+sandbox, and output policy. The **exec resume path** is therefore unsupported
+for the M7 Session contract. M7 must not enable `session` mode on that path or
+emulate continuity by injecting a reconstructed transcript.
 
-Confirmed cancellation semantics remain covered by the existing Codex process
-contract tests and integration tests using a fake executable. The live one-shot
-probe establishes model, read-only, and workspace-integrity evidence; it does
-not claim Provider-specific cancellation confirmation. A future Driver adapter
-must pass the existing confirmed-cancel contract before it is advertised.
+At M7.0, confirmed cancellation semantics were covered only by the existing
+Codex process contract tests and integration tests using a fake executable. The
+later app-server gate added live Provider-specific evidence: interrupting the
+exact active turn produced an `interrupted` terminal notification.
 
 ## Gate status
 
@@ -161,9 +160,10 @@ must pass the existing confirmed-cancel contract before it is advertised.
 | Read-only process path is exercised | pass (fake) | Existing integration coverage |
 | Real `gpt-5.6` one-shot contribution | pass | Terminal structured contribution; read-only probe |
 | Real `gpt-5.6-luna` one-shot contribution | pass | Terminal structured contribution; read-only probe |
-| Non-interactive resume continuity | unsupported | Resume cannot accept required policy controls |
+| `exec resume` continuity | unsupported | Exec resume cannot accept required policy controls |
+| app-server v2 continuity | pass (later gate) | Same thread resumed across app-server restart with explicit policy |
 | Confirmed cancellation contract | pass (fake) | Existing Codex process/integration contract tests |
-| Provider-specific cancellation confirmation | deferred | Requires Driver adapter evidence |
+| Provider-specific cancellation confirmation | pass (later gate) | Exact app-server turn completed as `interrupted` |
 | Domain-neutral artifact extraction | pass | `internal/execution.ArtifactLocation` and Codex adapter regression |
 
 ## Decision
@@ -173,7 +173,10 @@ produced terminal contributions under the required read-only profile, and the
 workspace remained unchanged. The independent `ExplorationDriver` contract and
 domain-neutral artifact-location extraction are implemented and tested.
 
-Resumable AgentSession semantics are explicitly deferred because the installed
-CLI cannot reassert required policy controls on `resume`. M7.1 Panel work may
-proceed; M7.3/M7.4 remain gated until a Driver demonstrates policy-preserving
-resume and Provider-specific confirmed cancellation.
+The M7.0 decision remains correct for `codex exec resume`, which cannot reassert
+the required policy controls. It has since been superseded for M7.3 by the
+[Codex app-server v2 capability gate](fishyume-m7.3-capability-gate.md). That
+later gate demonstrated cross-process policy-preserving resume, directed
+follow-up, identity rejection, and confirmed interruption. M7.3 implementation
+is approved against app-server v2; M7.4 remains gated on the completed internal
+Session Driver.
