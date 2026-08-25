@@ -5,12 +5,44 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"wf.local/wf-engine/internal/teamcontract"
 )
+
+func TestTeamPrivateSessionRecordsAreOpaqueBoundedJSON(t *testing.T) {
+	state := New(t.TempDir())
+	value := json.RawMessage(`{"schemaVersion":"private/v1","opaque":{"revision":1}}`)
+	if err := state.WriteTeamParticipantSession("team-private", "participant-1", value); err != nil {
+		t.Fatal(err)
+	}
+	read, err := state.ReadTeamParticipantSession("team-private", "participant-1")
+	if err != nil || !sameJSON(read, value) {
+		t.Fatalf("participant Session=%s err=%v", read, err)
+	}
+	if err := state.WriteTeamSessionExecution("team-private", "turn-1", value); err != nil {
+		t.Fatal(err)
+	}
+	read, err = state.ReadTeamSessionExecution("team-private", "turn-1")
+	if err != nil || !sameJSON(read, value) {
+		t.Fatalf("Session execution=%s err=%v", read, err)
+	}
+	if err := state.WriteTeamParticipantSession("team-private", "participant-1", json.RawMessage(`{"broken":`)); err == nil {
+		t.Fatal("invalid private JSON was accepted")
+	}
+	oversized := json.RawMessage(`"` + strings.Repeat("x", 2*teamcontract.MaxExecutionHandleBytes) + `"`)
+	if err := state.WriteTeamSessionExecution("team-private", "turn-1", oversized); err == nil {
+		t.Fatal("oversized private Session execution was accepted")
+	}
+}
+
+func sameJSON(left, right []byte) bool {
+	var leftValue, rightValue any
+	return json.Unmarshal(left, &leftValue) == nil && json.Unmarshal(right, &rightValue) == nil && reflect.DeepEqual(leftValue, rightValue)
+}
 
 func testTeamSnapshot() teamcontract.TeamSessionV1 {
 	now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)

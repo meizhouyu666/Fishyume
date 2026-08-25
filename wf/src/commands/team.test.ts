@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type {EngineClient, EventListener} from '../bridge/engine.js';
 import type {EngineHello} from '../bridge/types.js';
-import {parseParticipant, startTeam} from './team.js';
+import {parseParticipant, startTeam, submitCurrentTeamAction} from './team.js';
 
 class TeamClient implements EngineClient {
   closed = false;
@@ -12,6 +12,7 @@ class TeamClient implements EngineClient {
     this.calls.push({method, params});
     if (method === 'team.start') return {schemaVersion: 'fishyume.team/v1', replayed: false, team: team('running')} as T;
     if (method === 'team.get') return {schemaVersion: 'fishyume.team/v1', team: team('closed'), turns: [{schemaVersion: 'fishyume.team/v1', teamId: 'team-1', participantId: 'participant-1', turnId: 'turn-1', number: 1, state: 'responded', driver: 'codex', target: 'local', modelId: 'codex/local/gpt-5.6', usage: {target: 'local', catalogHash: 'a'.repeat(64), costUnits: 100, cumulativeCostUnits: 100}, createdAt: now, updatedAt: now}]} as T;
+    if (method === 'team.action') return {schemaVersion: 'fishyume.team/v1', actionId: 'action-1', teamId: 'team-1', type: 'follow_up', stateVersion: 5, state: 'running', replayed: false} as T;
     if (method === 'team.messages') return {schemaVersion: 'fishyume.team/v1', teamId: 'team-1', messages: [{schemaVersion: 'fishyume.team/v1', messageId: 'message-1', teamId: 'team-1', sequence: 1, kind: 'participant_contribution', actor: 'participant-1', turnId: 'turn-1', content: JSON.stringify({schemaVersion: 'fishyume.team/v1', status: 'completed', contentMarkdown: 'Use the smaller design.', warnings: [], openQuestions: []}), createdAt: now, contentHash: 'b'.repeat(64)}], nextAfterSequence: 1, more: false} as T;
     throw new Error(`unexpected method ${method}`);
   }
@@ -37,6 +38,30 @@ test('team start detach returns the durable identity without observing', async (
   assert.equal(await startTeam(client, {schemaVersion: 'fishyume.team/v1', clientRequestId: 'request-1', project: 'C:/project', mode: 'panel', topic: 'Compare'}, {detach: true, json: true}, {write(text) {output += text}}), 0);
   assert.deepEqual(client.calls.map(call => call.method), ['team.start']);
   assert.equal(JSON.parse(output).team.teamId, 'team-1');
+});
+
+test('session start returns after the initial round opens', async () => {
+  class SessionClient extends TeamClient {
+    override async call<T>(method: string, params?: unknown): Promise<T> {
+      this.calls.push({method, params});
+      if (method === 'team.start') return {schemaVersion: 'fishyume.team/v1', replayed: false, team: {...team('running'), mode: 'session'}} as T;
+      if (method === 'team.get') return {schemaVersion: 'fishyume.team/v1', team: {...team('running'), mode: 'session', state: 'open'}, turns: []} as T;
+      if (method === 'team.messages') return {schemaVersion: 'fishyume.team/v1', teamId: 'team-1', messages: [], nextAfterSequence: 0, more: false} as T;
+      throw new Error(`unexpected method ${method}`);
+    }
+  }
+  const client = new SessionClient(); let output = '';
+  assert.equal(await startTeam(client, {schemaVersion: 'fishyume.team/v1', clientRequestId: 'request-session', project: 'C:/project', mode: 'session', topic: 'Compare'}, {pollMs: 1}, {write(text) {output += text}}), 0);
+  assert.deepEqual(client.calls.map(call => call.method), ['team.start', 'team.get', 'team.messages']);
+});
+
+test('Host action reads the latest Team version before follow-up', async () => {
+  const client = new TeamClient();
+  await submitCurrentTeamAction(client, 'team-1', {type: 'follow_up', followUp: {content: 'review', participantIds: ['participant-1']}});
+  assert.deepEqual(client.calls.map(call => call.method), ['team.get', 'team.action']);
+  const action = client.calls[1]?.params as {expectedStateVersion: number; type: string};
+  assert.equal(action.expectedStateVersion, 4);
+  assert.equal(action.type, 'follow_up');
 });
 
 test('explicit participants use the frozen modelId:label spelling', () => {

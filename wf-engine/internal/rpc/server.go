@@ -348,6 +348,8 @@ func (s *Server) writeMappedTeamError(id any, err error) {
 		code = teamcontract.ErrorCapabilityUnavailable
 	case errors.Is(err, team.ErrQuotaExceeded):
 		code = teamcontract.ErrorQuotaExceeded
+	case errors.Is(err, team.ErrSessionLost):
+		code = teamcontract.ErrorSessionLost
 	case errors.Is(err, os.ErrNotExist):
 		code = teamcontract.ErrorNotFound
 	}

@@ -9,6 +9,7 @@ import (
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/driver/codexprocess"
 	"wf.local/wf-engine/internal/explorationdriver"
+	"wf.local/wf-engine/internal/sessiondriver"
 )
 
 type Config = codexprocess.Config
@@ -21,6 +22,10 @@ func New(config Config) *Driver { return &Driver{executor: codexprocess.New(conf
 
 func (d *Driver) Exploration() explorationdriver.Driver {
 	return codexprocess.NewExplorationAdapter(d.executor)
+}
+
+func (d *Driver) Session() sessiondriver.Driver {
+	return codexprocess.NewSessionAdapter(d.executor)
 }
 
 func (*Driver) Name() string { return "codex" }

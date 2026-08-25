@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import process from 'node:process';
 import {Command, Option} from 'clipanion';
 import {EngineBridge, type EngineClient} from '../bridge/engine.js';
-import {callTeam, teamApiVersion, TeamCallError, type Contribution, type ParticipantSpec, type TeamGetResponse, type TeamMessagesResponse, type TeamStartRequest} from '../bridge/team.js';
+import {callTeam, teamApiVersion, TeamCallError, type Contribution, type ParticipantSpec, type TeamActionRequest, type TeamActionResponse, type TeamGetResponse, type TeamMessagesResponse, type TeamStartRequest} from '../bridge/team.js';
 
 type Writer = {write(text: string): unknown};
 
@@ -28,7 +28,7 @@ export async function startTeam(client: EngineClient, request: TeamStartRequest,
     let view: TeamGetResponse;
     for (;;) {
       view = await callTeam(client, 'team.get', {schemaVersion: teamApiVersion, teamId: started.team.teamId});
-      if (view.team.state === 'closed' || interrupted) break;
+      if (view.team.state === 'closed' || (request.mode === 'session' && view.team.state === 'open') || interrupted) break;
       await new Promise(resolve => setTimeout(resolve, options.pollMs ?? 100));
     }
     if (interrupted) {
@@ -73,12 +73,13 @@ export function renderTeam(view: TeamGetResponse, messages: TeamMessagesResponse
 
 export class TeamStartCommand extends Command {
   static paths = [['team', 'start']];
-  static usage = Command.Usage({description: 'Run a durable read-only multi-model Panel and print independent contributions.'});
+  static usage = Command.Usage({description: 'Run a durable read-only multi-model Panel or resumable TeamSession.'});
   topic = Option.String({required: true, name: 'topic'});
   project = Option.String('--project', {description: 'Repository directory; defaults to the current directory'});
   instructions = Option.String('--instructions', {description: 'Additional bounded exploration constraints'});
   participants = Option.Array('--participant', {description: 'Explicit modelId:label; repeatable, requires 2-4 distinct models'});
   costGrant = Option.String('--cost-grant', {description: 'Coarse trusted catalog cost grant'});
+  mode = Option.String('--mode', 'panel', {description: 'Exploration mode: panel or session'});
   detach = Option.Boolean('--detach', false, {description: 'Return after durable dispatch preparation'});
   json = Option.Boolean('--json', false, {description: 'Print one canonical JSON response'});
   async execute(): Promise<number> {
@@ -86,9 +87,53 @@ export class TeamStartCommand extends Command {
       const participants = this.participants?.map(parseParticipant);
       const costGrant = this.costGrant === undefined ? undefined : Number(this.costGrant);
       if (costGrant !== undefined && (!Number.isSafeInteger(costGrant) || costGrant < 1)) throw new Error('--cost-grant must be a positive integer');
-      return startTeam(new EngineBridge(), {schemaVersion: teamApiVersion, clientRequestId: `team-start-${randomUUID()}`, project: this.project ?? process.cwd(), mode: 'panel', topic: this.topic, instructions: this.instructions, participants, costGrant}, {detach: this.detach, json: this.json}, this.context.stdout);
+      if (this.mode !== 'panel' && this.mode !== 'session') throw new Error('--mode must be panel or session');
+      return startTeam(new EngineBridge(), {schemaVersion: teamApiVersion, clientRequestId: `team-start-${randomUUID()}`, project: this.project ?? process.cwd(), mode: this.mode, topic: this.topic, instructions: this.instructions, participants, costGrant}, {detach: this.detach, json: this.json}, this.context.stdout);
     } catch (error) {this.context.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`); return 6}
   }
+}
+
+export async function submitCurrentTeamAction(client: EngineClient, teamId: string, request: Omit<TeamActionRequest, 'schemaVersion' | 'actionId' | 'teamId' | 'expectedStateVersion'>): Promise<TeamActionResponse> {
+  const current = await callTeam(client, 'team.get', {schemaVersion: teamApiVersion, teamId});
+  return callTeam(client, 'team.action', {schemaVersion: teamApiVersion, actionId: `team-action-${randomUUID()}`, teamId, expectedStateVersion: current.team.stateVersion, ...request});
+}
+
+abstract class TeamMutationCommand extends Command {
+  teamId = Option.String({required: true, name: 'team-id'});
+  json = Option.Boolean('--json', false);
+  protected async runAction(request: Omit<TeamActionRequest, 'schemaVersion' | 'actionId' | 'teamId' | 'expectedStateVersion'>): Promise<number> {
+    const client = new EngineBridge();
+    try {
+      const response = await submitCurrentTeamAction(client, this.teamId, request);
+      this.context.stdout.write(this.json ? `${JSON.stringify(response)}\n` : `Team ${response.teamId} ${response.state}.\n`);
+      return 0;
+    } catch (error) {this.context.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`); return 6} finally {await client.close()}
+  }
+}
+
+export class TeamFollowUpCommand extends TeamMutationCommand {
+  static paths = [['team', 'follow-up']];
+  static usage = Command.Usage({description: 'Send one Host-directed follow-up to selected Session participants.'});
+  content = Option.String({required: true, name: 'content'});
+  participants = Option.Array('--participant', {description: 'Participant ID; repeatable'});
+  messages = Option.Array('--message', {description: 'Referenced public message ID; repeatable'});
+  async execute(): Promise<number> {
+    if (!this.participants?.length) {this.context.stderr.write('--participant is required\n'); return 6}
+    return this.runAction({type: 'follow_up', followUp: {content: this.content, participantIds: this.participants, referencedMessageIds: this.messages}});
+  }
+}
+
+export class TeamCancelTurnCommand extends TeamMutationCommand {
+  static paths = [['team', 'cancel-turn']];
+  static usage = Command.Usage({description: 'Confirm cancellation of one exact active Session Turn.'});
+  turnId = Option.String({required: true, name: 'turn-id'});
+  async execute(): Promise<number> {return this.runAction({type: 'cancel_turn', cancelTurn: {turnId: this.turnId}})}
+}
+
+export class TeamCloseCommand extends TeamMutationCommand {
+  static paths = [['team', 'close']];
+  static usage = Command.Usage({description: 'Gracefully close a TeamSession after active Turns settle.'});
+  async execute(): Promise<number> {return this.runAction({type: 'close', close: {reason: 'host_closed'}})}
 }
 
 export class TeamListCommand extends Command {

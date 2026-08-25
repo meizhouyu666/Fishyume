@@ -29,7 +29,23 @@ func (s *Service) Capabilities() (teamcontract.TeamCapabilitiesV1, error) {
 		{Label: "architect", Role: "propose a coherent architecture and tradeoffs", ModelID: catalog.Models[0].ID, Driver: catalog.Models[0].Target.Driver, Target: catalog.Models[0].Target.Provider},
 		{Label: "reviewer", Role: "challenge assumptions and identify failure modes", ModelID: catalog.Models[1].ID, Driver: catalog.Models[1].Target.Driver, Target: catalog.Models[1].Target.Provider},
 	}
-	value := teamcontract.TeamCapabilitiesV1{SchemaVersion: teamcontract.SchemaVersion, SupportedModes: []teamcontract.Mode{teamcontract.ModePanel}, Features: teamcontract.TeamFeatureFlagsV1{Panel: true, Handoff: true, Cancel: true}, Limits: teamcontract.DefaultLimits(), ParticipantTemplates: templates, CatalogHash: hash}
+	s.mu.Lock()
+	sessionEnabled := true
+	for _, template := range templates {
+		driver := s.sessionDrivers[template.Driver]
+		if driver == nil || !containsString(driver.Capabilities().Targets, template.Target) {
+			sessionEnabled = false
+			break
+		}
+	}
+	s.mu.Unlock()
+	modes := []teamcontract.Mode{teamcontract.ModePanel}
+	features := teamcontract.TeamFeatureFlagsV1{Panel: true, Handoff: true, Cancel: true}
+	if sessionEnabled {
+		modes = append(modes, teamcontract.ModeSession)
+		features.Session, features.FollowUp, features.CancelTurn, features.Close = true, true, true, true
+	}
+	value := teamcontract.TeamCapabilitiesV1{SchemaVersion: teamcontract.SchemaVersion, SupportedModes: modes, Features: features, Limits: teamcontract.DefaultLimits(), ParticipantTemplates: templates, CatalogHash: hash}
 	return value, teamcontract.ValidateCapabilities(value)
 }
 
@@ -89,9 +105,6 @@ func (s *Service) Recover(ctx context.Context) error {
 				}
 			}
 		}
-		if snapshot.State == teamcontract.LifecycleClosed {
-			continue
-		}
 		intents, readErr := s.state.ListTeamActionIntents(teamID)
 		if readErr != nil {
 			return readErr
@@ -102,7 +115,7 @@ func (s *Service) Recover(ctx context.Context) error {
 			if err := teamcontract.DecodeStrict(raw, &intent); err != nil {
 				return fmt.Errorf("recover Team action: %w", err)
 			}
-			if intent.Action.Type == teamcontract.ActionCancel && intent.Response == nil {
+			if intent.Response == nil && (snapshot.Mode == teamcontract.ModeSession || intent.Action.Type == teamcontract.ActionCancel) {
 				recoveringAction = true
 				s.actionAsync(intent.Action)
 			}
@@ -110,8 +123,33 @@ func (s *Service) Recover(ctx context.Context) error {
 		if recoveringAction {
 			continue
 		}
+		if snapshot.State == teamcontract.LifecycleClosed {
+			continue
+		}
+		if snapshot.Mode == teamcontract.ModeSession && snapshot.State != teamcontract.LifecycleCancelling && s.now().UTC().Sub(snapshot.CreatedAt) >= teamSessionLifetime {
+			s.mu.Lock()
+			if err := s.state.ReadTeamSnapshot(teamID, &snapshot); err != nil {
+				s.mu.Unlock()
+				return fmt.Errorf("recover expired Team %q: %w", teamID, err)
+			}
+			if snapshot.State != teamcontract.LifecycleClosed && snapshot.State != teamcontract.LifecycleClosing && snapshot.State != teamcontract.LifecycleCancelling {
+				snapshot.State, snapshot.StateVersion, snapshot.UpdatedAt = teamcontract.LifecycleClosing, snapshot.StateVersion+1, s.now().UTC()
+				if err := s.state.WriteTeamSnapshot(snapshot); err != nil {
+					s.mu.Unlock()
+					return fmt.Errorf("recover expired Team %q: %w", teamID, err)
+				}
+			}
+			terminal := currentParticipantsTerminal(s.state, snapshot)
+			s.mu.Unlock()
+			if terminal {
+				if err := s.finalizeGracefulClose(ctx, teamID); err != nil {
+					return fmt.Errorf("close expired Team %q: %w", teamID, err)
+				}
+				continue
+			}
+		}
 		switch snapshot.State {
-		case teamcontract.LifecycleCreated, teamcontract.LifecycleRunning:
+		case teamcontract.LifecycleCreated, teamcontract.LifecycleRunning, teamcontract.LifecycleClosing:
 			s.dispatchAsync(teamID)
 		}
 	}
@@ -276,6 +314,10 @@ func (s *Service) Messages(request teamcontract.TeamMessagesRequestV1) (teamcont
 func (s *Service) Action(ctx context.Context, action teamcontract.TeamActionV1) (teamcontract.TeamActionResponseV1, error) {
 	if err := teamcontract.ValidateActionRequest(action); err != nil {
 		return teamcontract.TeamActionResponseV1{}, err
+	}
+	modeSnapshot, snapshotErr := s.Get(action.TeamID)
+	if snapshotErr == nil && modeSnapshot.Mode == teamcontract.ModeSession {
+		return s.sessionAction(ctx, action)
 	}
 	if action.Type != teamcontract.ActionCancel {
 		return teamcontract.TeamActionResponseV1{}, ErrCapabilityUnavailable

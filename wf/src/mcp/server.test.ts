@@ -150,7 +150,7 @@ test('MCP and Machine CLI expose identical Application response JSON', async () 
       const schema = JSON.stringify(tool.inputSchema);
       for (const legacy of ['"backend"', '"tool"', '"runtime"']) assert.equal(schema.includes(legacy), false, `${tool.name} exposed ${legacy}`);
       assert.ok(tool.description?.length, `${tool.name} is missing an Agent-facing description`);
-      for (const legacy of ['Backend', 'CC-Panes', 'TaskBinding', 'Session']) assert.equal(tool.description?.includes(legacy), false, `${tool.name} description exposed ${legacy}`);
+      for (const legacy of ['Backend', 'CC-Panes', 'TaskBinding']) assert.equal(tool.description?.includes(legacy), false, `${tool.name} description exposed ${legacy}`);
     }
     assert.match(listed.tools.find(tool => tool.name === 'run.start')?.description ?? '', /clientRequestId/);
     assert.match(listed.tools.find(tool => tool.name === 'run.action')?.description ?? '', /stateVersion/);

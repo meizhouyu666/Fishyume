@@ -38,6 +38,12 @@ func (s *Store) TeamTurnPath(teamID, turnID string) string {
 func (s *Store) TeamExecutionPath(teamID, turnID string) string {
 	return filepath.Join(s.TeamTurnDir(teamID, turnID), "execution.json")
 }
+func (s *Store) TeamParticipantSessionPath(teamID, participantID string) string {
+	return filepath.Join(s.TeamDir(teamID), "sessions", participantID+".json")
+}
+func (s *Store) TeamSessionExecutionPath(teamID, turnID string) string {
+	return filepath.Join(s.TeamTurnDir(teamID, turnID), "session-execution.json")
+}
 func (s *Store) TeamHandoffPath(teamID, handoffID string) string {
 	return filepath.Join(s.TeamDir(teamID), "handoffs", handoffID+".json")
 }
@@ -66,7 +72,7 @@ func (s *Store) InitTeam(teamID string) error {
 	if err := validateID("team", teamID); err != nil {
 		return err
 	}
-	for _, dir := range []string{filepath.Join(s.TeamDir(teamID), "participants"), filepath.Join(s.TeamDir(teamID), "turns"), filepath.Join(s.TeamDir(teamID), "handoffs"), filepath.Join(s.TeamDir(teamID), "action-intents"), filepath.Join(s.TeamDir(teamID), "handoff-intents"), filepath.Join(s.TeamDir(teamID), "handoff-binding-intents")} {
+	for _, dir := range []string{filepath.Join(s.TeamDir(teamID), "participants"), filepath.Join(s.TeamDir(teamID), "turns"), filepath.Join(s.TeamDir(teamID), "sessions"), filepath.Join(s.TeamDir(teamID), "handoffs"), filepath.Join(s.TeamDir(teamID), "action-intents"), filepath.Join(s.TeamDir(teamID), "handoff-intents"), filepath.Join(s.TeamDir(teamID), "handoff-binding-intents")} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("create team directory %q: %w", dir, err)
 		}
@@ -224,6 +230,64 @@ func (s *Store) ReadTeamExecution(teamID, turnID string) (json.RawMessage, error
 		return nil, fmt.Errorf("persisted team execution handle is invalid")
 	}
 	return handle, nil
+}
+
+func (s *Store) WriteTeamParticipantSession(teamID, participantID string, value json.RawMessage) error {
+	if err := validateID("team", teamID); err != nil {
+		return err
+	}
+	if err := validateID("participant", participantID); err != nil {
+		return err
+	}
+	return s.writeBoundedTeamPrivateJSON(s.TeamParticipantSessionPath(teamID, participantID), value)
+}
+
+func (s *Store) ReadTeamParticipantSession(teamID, participantID string) (json.RawMessage, error) {
+	if err := validateID("team", teamID); err != nil {
+		return nil, err
+	}
+	if err := validateID("participant", participantID); err != nil {
+		return nil, err
+	}
+	return readBoundedTeamPrivateJSON(s.TeamParticipantSessionPath(teamID, participantID))
+}
+
+func (s *Store) WriteTeamSessionExecution(teamID, turnID string, value json.RawMessage) error {
+	if err := validateID("team", teamID); err != nil {
+		return err
+	}
+	if err := validateID("turn", turnID); err != nil {
+		return err
+	}
+	return s.writeBoundedTeamPrivateJSON(s.TeamSessionExecutionPath(teamID, turnID), value)
+}
+
+func (s *Store) ReadTeamSessionExecution(teamID, turnID string) (json.RawMessage, error) {
+	if err := validateID("team", teamID); err != nil {
+		return nil, err
+	}
+	if err := validateID("turn", turnID); err != nil {
+		return nil, err
+	}
+	return readBoundedTeamPrivateJSON(s.TeamSessionExecutionPath(teamID, turnID))
+}
+
+func (s *Store) writeBoundedTeamPrivateJSON(path string, value json.RawMessage) error {
+	if len(value) == 0 || len(value) > 2*teamcontract.MaxExecutionHandleBytes || !json.Valid(value) {
+		return fmt.Errorf("private Team Session record is invalid or exceeds its bound")
+	}
+	return s.writeJSON(path, value)
+}
+
+func readBoundedTeamPrivateJSON(path string) (json.RawMessage, error) {
+	var value json.RawMessage
+	if err := readJSON(path, &value); err != nil {
+		return nil, err
+	}
+	if len(value) == 0 || len(value) > 2*teamcontract.MaxExecutionHandleBytes || !json.Valid(value) {
+		return nil, fmt.Errorf("persisted private Team Session record is invalid")
+	}
+	return value, nil
 }
 
 func (s *Store) AppendTeamEvent(value teamcontract.TeamEventV1) error {

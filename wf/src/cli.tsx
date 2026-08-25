@@ -13,7 +13,7 @@ import {SetupProductCommand} from './commands/setup-product.js';
 import {DemoCommand} from './commands/demo.js';
 import {ExamplesListCommand, ExamplesShowCommand} from './commands/examples.js';
 import {MemoryCreateCommand, MemoryDeleteCommand, MemoryGetCommand, MemoryListCommand, MemorySupersedeCommand} from './commands/memory.js';
-import {TeamCancelCommand, TeamListCommand, TeamShowCommand, TeamStartCommand} from './commands/team.js';
+import {TeamCancelCommand, TeamCancelTurnCommand, TeamCloseCommand, TeamFollowUpCommand, TeamListCommand, TeamShowCommand, TeamStartCommand} from './commands/team.js';
 import {TeamHandoffBindCommand, TeamHandoffCreateCommand, TeamHandoffListCommand, TeamHandoffShowCommand} from './commands/team-handoff.js';
 
 const cli = new Cli({binaryLabel: 'Fishyume', binaryName: 'fishyume', binaryVersion: '0.2.1-alpha.1'});
@@ -41,6 +41,9 @@ cli.register(TeamStartCommand);
 cli.register(TeamListCommand);
 cli.register(TeamShowCommand);
 cli.register(TeamCancelCommand);
+cli.register(TeamFollowUpCommand);
+cli.register(TeamCancelTurnCommand);
+cli.register(TeamCloseCommand);
 cli.register(TeamHandoffCreateCommand);
 cli.register(TeamHandoffListCommand);
 cli.register(TeamHandoffShowCommand);

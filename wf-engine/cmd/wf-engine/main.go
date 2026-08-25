@@ -47,6 +47,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	if err := teamService.SetSessionDriver(codexDriver.Session()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if len(os.Args) == 2 && os.Args[1] == "serve" {
 		if err := serveControlPlane(state, service, applicationService, teamService); err != nil {
 			fmt.Fprintln(os.Stderr, err)

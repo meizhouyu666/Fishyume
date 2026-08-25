@@ -17,7 +17,22 @@ import (
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/run"
 	"wf.local/wf-engine/internal/store"
+	"wf.local/wf-engine/internal/team"
 )
+
+func TestTeamSessionLostErrorMapping(t *testing.T) {
+	var output bytes.Buffer
+	server := &Server{writer: &output}
+	server.writeMappedTeamError(1, fmt.Errorf("follow-up failed: %w", team.ErrSessionLost))
+	var response Response
+	if err := json.Unmarshal(output.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	data, ok := response.Error.Data.(map[string]any)
+	if response.Error == nil || !ok || data["code"] != "session_lost" {
+		t.Fatalf("response=%+v", response)
+	}
+}
 
 type fakeBackend struct {
 	name    string

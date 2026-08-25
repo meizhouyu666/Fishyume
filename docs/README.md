@@ -17,6 +17,12 @@ links and review evidence stay stable.
   rejection, and confirmed cancellation evidence.
 - [M7.3 AgentSession acceptance](fishyume-m7.3-acceptance.md): internal Driver
   contract, Codex adapter, durable recovery, identity, and cancellation closure.
+- [M7.4 implementation plan](fishyume-m7.4-implementation-plan.md): approved
+  TeamSession lifecycle, private Session persistence, actions, recovery, and
+  acceptance increments.
+- [M7.4 acceptance](fishyume-m7.4-acceptance.md): Host-directed multi-turn
+  TeamSession, recovery, loss handling, cancellation, close, and transport
+  verification evidence.
 - [Core contract freeze](fishyume-m6-core-contract-freeze.md): frozen public
   contracts and compatibility policy for the closed M6 baseline.
 - [Core stabilization record](fishyume-core-stabilization.md): M6 closure,

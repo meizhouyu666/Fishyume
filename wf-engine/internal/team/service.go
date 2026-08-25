@@ -20,6 +20,7 @@ import (
 
 	"wf.local/wf-engine/internal/explorationdriver"
 	"wf.local/wf-engine/internal/routing"
+	"wf.local/wf-engine/internal/sessiondriver"
 	"wf.local/wf-engine/internal/store"
 	"wf.local/wf-engine/internal/teamcontract"
 )
@@ -29,6 +30,7 @@ var (
 	ErrConflict              = errors.New("team request conflicts with an existing request")
 	ErrCapabilityUnavailable = errors.New("team capability is unavailable")
 	ErrQuotaExceeded         = errors.New("team quota exceeded")
+	ErrSessionLost           = errors.New("team participant Session is lost")
 )
 
 type StartResult struct {
@@ -40,11 +42,19 @@ type Service struct {
 	state             *store.Store
 	now               func() time.Time
 	drivers           map[string]explorationdriver.Driver
+	sessionDrivers    map[string]sessiondriver.Driver
 	runLookup         RunLookup
 	driverLimits      map[string]chan struct{}
 	activeControllers map[string]struct{}
+	sessionLocks      sync.Map
 	mu                sync.Mutex
 	controllerWG      sync.WaitGroup
+}
+
+func (s *Service) sessionLock(teamID, participantID string) *sync.Mutex {
+	key := teamID + "\x00" + participantID
+	value, _ := s.sessionLocks.LoadOrStore(key, &sync.Mutex{})
+	return value.(*sync.Mutex)
 }
 
 type RunLookup func(runID string) (project string, err error)
@@ -54,6 +64,7 @@ func NewService(state *store.Store) *Service {
 		state:             state,
 		now:               time.Now,
 		drivers:           make(map[string]explorationdriver.Driver),
+		sessionDrivers:    make(map[string]sessiondriver.Driver),
 		driverLimits:      make(map[string]chan struct{}),
 		activeControllers: make(map[string]struct{}),
 	}
@@ -97,6 +108,30 @@ func (s *Service) SetDriver(driver explorationdriver.Driver) error {
 	return nil
 }
 
+func (s *Service) SetSessionDriver(driver sessiondriver.Driver) error {
+	if driver == nil {
+		return fmt.Errorf("Session Driver is required")
+	}
+	capabilities := driver.Capabilities()
+	if err := sessiondriver.ValidateCapabilities(capabilities); err != nil {
+		return err
+	}
+	if !capabilities.SupportsResume || !capabilities.SupportsRecovery || !capabilities.SupportsDirectedInput || !capabilities.SupportsConfirmedCancel {
+		return fmt.Errorf("Session Driver must support resume, recovery, directed input, and confirmed cancellation")
+	}
+	name := strings.TrimSpace(driver.Name())
+	if name == "" || name != driver.Name() {
+		return fmt.Errorf("Session Driver name is invalid")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.sessionDrivers[name]; exists {
+		return fmt.Errorf("Session Driver %q is already registered", name)
+	}
+	s.sessionDrivers[name] = driver
+	return nil
+}
+
 func (s *Service) Drivers() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -115,7 +150,7 @@ func (s *Service) Start(ctx context.Context, request teamcontract.TeamStartReque
 	if err := teamcontract.ValidateStartRequest(request); err != nil {
 		return StartResult{}, err
 	}
-	if request.Mode != teamcontract.ModePanel {
+	if request.Mode != teamcontract.ModePanel && request.Mode != teamcontract.ModeSession {
 		return StartResult{}, ErrCapabilityUnavailable
 	}
 	project, err := canonicalProject(request.Project)
@@ -125,6 +160,9 @@ func (s *Service) Start(ctx context.Context, request teamcontract.TeamStartReque
 	normalized, participants, catalogHash, err := normalizeStart(request, project)
 	if err != nil {
 		return StartResult{}, err
+	}
+	if request.Mode == teamcontract.ModeSession && !s.supportsSessionParticipants(participants) {
+		return StartResult{}, ErrCapabilityUnavailable
 	}
 	requestHash, _, err := teamcontract.CanonicalHash(normalized)
 	if err != nil {
@@ -176,6 +214,29 @@ func (s *Service) Start(ctx context.Context, request teamcontract.TeamStartReque
 	return StartResult{Team: teamSnapshot}, nil
 }
 
+func (s *Service) supportsSessionParticipants(participants []teamcontract.ParticipantV1) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, participant := range participants {
+		driver := s.sessionDrivers[participant.Driver]
+		if driver == nil {
+			return false
+		}
+		capabilities := driver.Capabilities()
+		targetFound := false
+		for _, target := range capabilities.Targets {
+			if target == participant.Target {
+				targetFound = true
+				break
+			}
+		}
+		if !targetFound {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Service) repairPreparedTeamLocked(snapshot teamcontract.TeamSessionV1) error {
 	if err := s.state.InitTeam(snapshot.TeamID); err != nil {
 		return err
@@ -217,8 +278,15 @@ func (s *Service) DispatchInitial(ctx context.Context, teamID string) (teamcontr
 	if s == nil || s.state == nil {
 		return teamcontract.TeamSessionV1{}, fmt.Errorf("team state store is unavailable")
 	}
+	snapshot, err := s.Get(teamID)
+	if err != nil {
+		return teamcontract.TeamSessionV1{}, err
+	}
+	if snapshot.Mode == teamcontract.ModeSession {
+		return s.dispatchSessionRound(ctx, teamID)
+	}
 	s.mu.Lock()
-	_, err := s.prepareInitialTurnsLocked(teamID)
+	_, err = s.prepareInitialTurnsLocked(teamID)
 	if err != nil {
 		s.mu.Unlock()
 		return teamcontract.TeamSessionV1{}, err
@@ -587,17 +655,15 @@ func (s *Service) commitContribution(teamID string, turn teamcontract.Participan
 		}
 	}
 	snapshot.StateVersion, snapshot.UpdatedAt = snapshot.StateVersion+1, s.now().UTC()
-	if allTerminal {
-		snapshot.State, snapshot.CloseReason = teamcontract.LifecycleClosed, teamcontract.ClosePanelSettled
-	}
+	closed, closeSummary := settleTerminalRound(&snapshot, allTerminal)
 	if err := s.state.WriteTeamSnapshot(snapshot); err != nil {
 		return err
 	}
 	if err := s.appendTeamEventLockedFromTurn(teamID, turn, teamcontract.EventParticipantEvent, "turn responded"); err != nil {
 		return err
 	}
-	if allTerminal {
-		if err := s.appendTeamEventLocked(snapshot, teamcontract.EventTeamClosed, "panel settled", "", ""); err != nil {
+	if closed {
+		if err := s.appendTeamEventLocked(snapshot, teamcontract.EventTeamClosed, closeSummary, "", ""); err != nil {
 			return err
 		}
 	}
@@ -645,19 +711,34 @@ func (s *Service) markTurnFailureLocked(teamID string, turn teamcontract.Partici
 			break
 		}
 	}
-	if allTerminal {
-		snapshot.State, snapshot.CloseReason = teamcontract.LifecycleClosed, teamcontract.ClosePanelSettled
-	}
+	closed, closeSummary := settleTerminalRound(&snapshot, allTerminal)
 	if err := s.state.WriteTeamSnapshot(snapshot); err != nil {
 		return err
 	}
 	if err := s.appendTeamEventLockedFromTurn(teamID, turn, teamcontract.EventParticipantEvent, turn.Diagnostic); err != nil {
 		return err
 	}
-	if allTerminal {
-		return s.appendTeamEventLocked(snapshot, teamcontract.EventTeamClosed, "panel settled", "", "")
+	if closed {
+		return s.appendTeamEventLocked(snapshot, teamcontract.EventTeamClosed, closeSummary, "", "")
 	}
 	return nil
+}
+
+func settleTerminalRound(snapshot *teamcontract.TeamSessionV1, allTerminal bool) (bool, string) {
+	if !allTerminal {
+		return false, ""
+	}
+	if snapshot.Mode == teamcontract.ModePanel {
+		snapshot.State, snapshot.CloseReason = teamcontract.LifecycleClosed, teamcontract.ClosePanelSettled
+		return true, "panel settled"
+	}
+	if snapshot.State == teamcontract.LifecycleClosing {
+		return false, ""
+	}
+	if snapshot.State != teamcontract.LifecycleCancelling {
+		snapshot.State, snapshot.CloseReason = teamcontract.LifecycleOpen, ""
+	}
+	return false, ""
 }
 
 func (s *Service) appendTeamEventLocked(snapshot teamcontract.TeamSessionV1, eventType teamcontract.EventType, summary, messageID, turnID string) error {

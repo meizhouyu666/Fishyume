@@ -31,7 +31,7 @@ test('command help remains available', () => {
     assert.equal(result.status, 0, `memory ${command}: ${result.stderr}`);
     assert.match(result.stdout, new RegExp(`fishyume memory ${command}`));
   }
-  for (const command of ['start', 'list', 'show', 'cancel']) {
+  for (const command of ['start', 'list', 'show', 'cancel', 'follow-up', 'cancel-turn', 'close']) {
     const result = invoke('team', command, '--help');
     assert.equal(result.status, 0, `team ${command}: ${result.stderr}`);
     assert.match(result.stdout, new RegExp(`fishyume team ${command}`));
@@ -107,6 +107,9 @@ test('command help describes the Agent-facing control-plane surface', () => {
     ['team list', /List durable Teams/],
     ['team show', /Show one durable Team/],
     ['team cancel', /Confirm cancellation of active Team turns/],
+	['team follow-up', /Send one Host-directed follow-up/],
+	['team cancel-turn', /Confirm cancellation of one exact active Session Turn/],
+	['team close', /Gracefully close a TeamSession/],
     ['team handoff create', /Create an immutable Handoff/],
     ['team handoff list', /List immutable Handoffs/],
     ['team handoff show', /Show one Handoff/],

@@ -1,6 +1,6 @@
 # Fishyume M7: Lightweight Team Exploration and Explicit Workflow Promotion
 
-> Status: M7.3 internal AgentSession Driver complete; M7.4 remains disabled
+> Status: M7.4 Multi-turn TeamSession complete; M7.5 remains optional
 >
 > Date: 2026-08-25
 >
@@ -857,7 +857,14 @@ Acceptance:
 
 ### M7.4: Multi-turn TeamSession
 
+Status: complete on 2026-08-25. The frozen Team contract is enabled only for
+eligible resumable Session Drivers. Acceptance evidence is recorded in
+[M7.4 acceptance](fishyume-m7.4-acceptance.md).
+
 Purpose: turn the one-round Panel into bounded, user-directed exploration.
+
+The detailed implementation decisions and acceptance matrix are frozen in the
+[M7.4 implementation plan](fishyume-m7.4-implementation-plan.md).
 
 Tasks:
 
@@ -1029,9 +1036,9 @@ the required sandbox/workspace policy controls. The later Codex app-server v2
 gate passed start, process park, policy-preserving resume, recovered-turn
 observation, directed follow-up, lost/stale identity rejection, and confirmed
 turn interruption. The M7.3 internal Session Driver and Codex adapter now pass
-their reusable lifecycle and recovery contract. M7.4 remains disabled until
-that internal port is integrated with durable Team state and the frozen public
-Team actions.
+their reusable lifecycle and recovery contract. M7.4 has integrated that port
+with durable Team state and the frozen public Team actions; see the
+[M7.4 acceptance](fishyume-m7.4-acceptance.md).
 
 ### Gate B: after M7.1 dogfooding
 
