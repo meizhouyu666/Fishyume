@@ -19,7 +19,7 @@ func TestCapabilitiesAndPublicPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	capabilities, err := service.Capabilities()
-	if err != nil || len(capabilities.ParticipantTemplates) != 2 || !capabilities.Features.Panel || !capabilities.Features.Cancel || capabilities.Features.Session || capabilities.Features.Handoff {
+	if err != nil || len(capabilities.ParticipantTemplates) != 2 || !capabilities.Features.Panel || !capabilities.Features.Cancel || !capabilities.Features.Handoff || capabilities.Features.Session {
 		t.Fatalf("capabilities=%+v err=%v", capabilities, err)
 	}
 	started, err := service.Start(context.Background(), startRequest(t.TempDir(), "public-pages"))

@@ -40,11 +40,14 @@ type Service struct {
 	state             *store.Store
 	now               func() time.Time
 	drivers           map[string]explorationdriver.Driver
+	runLookup         RunLookup
 	driverLimits      map[string]chan struct{}
 	activeControllers map[string]struct{}
 	mu                sync.Mutex
 	controllerWG      sync.WaitGroup
 }
+
+type RunLookup func(runID string) (project string, err error)
 
 func NewService(state *store.Store) *Service {
 	return &Service{
@@ -54,6 +57,19 @@ func NewService(state *store.Store) *Service {
 		driverLimits:      make(map[string]chan struct{}),
 		activeControllers: make(map[string]struct{}),
 	}
+}
+
+func (s *Service) SetRunLookup(lookup RunLookup) error {
+	if lookup == nil {
+		return fmt.Errorf("Run lookup is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.runLookup != nil {
+		return fmt.Errorf("Run lookup is already configured")
+	}
+	s.runLookup = lookup
+	return nil
 }
 
 func (s *Service) SetDriver(driver explorationdriver.Driver) error {

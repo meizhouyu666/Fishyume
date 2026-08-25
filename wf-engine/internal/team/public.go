@@ -29,7 +29,7 @@ func (s *Service) Capabilities() (teamcontract.TeamCapabilitiesV1, error) {
 		{Label: "architect", Role: "propose a coherent architecture and tradeoffs", ModelID: catalog.Models[0].ID, Driver: catalog.Models[0].Target.Driver, Target: catalog.Models[0].Target.Provider},
 		{Label: "reviewer", Role: "challenge assumptions and identify failure modes", ModelID: catalog.Models[1].ID, Driver: catalog.Models[1].Target.Driver, Target: catalog.Models[1].Target.Provider},
 	}
-	value := teamcontract.TeamCapabilitiesV1{SchemaVersion: teamcontract.SchemaVersion, SupportedModes: []teamcontract.Mode{teamcontract.ModePanel}, Features: teamcontract.TeamFeatureFlagsV1{Panel: true, Cancel: true}, Limits: teamcontract.DefaultLimits(), ParticipantTemplates: templates, CatalogHash: hash}
+	value := teamcontract.TeamCapabilitiesV1{SchemaVersion: teamcontract.SchemaVersion, SupportedModes: []teamcontract.Mode{teamcontract.ModePanel}, Features: teamcontract.TeamFeatureFlagsV1{Panel: true, Handoff: true, Cancel: true}, Limits: teamcontract.DefaultLimits(), ParticipantTemplates: templates, CatalogHash: hash}
 	return value, teamcontract.ValidateCapabilities(value)
 }
 
@@ -58,6 +58,36 @@ func (s *Service) Recover(ctx context.Context) error {
 		snapshot, err := s.Get(teamID)
 		if err != nil {
 			return fmt.Errorf("recover Team %q: %w", teamID, err)
+		}
+		handoffIntents, readErr := s.state.ListTeamHandoffIntents(teamID)
+		if readErr != nil {
+			return readErr
+		}
+		for _, raw := range handoffIntents {
+			var intent handoffCreateIntentV1
+			if err := teamcontract.DecodeStrict(raw, &intent); err != nil {
+				return fmt.Errorf("recover Handoff creation: %w", err)
+			}
+			if intent.Response == nil {
+				if _, err := s.HandoffCreate(intent.Request); err != nil {
+					return fmt.Errorf("recover Handoff %q: %w", intent.Request.HandoffID, err)
+				}
+			}
+		}
+		bindingIntents, readErr := s.state.ListTeamBindingIntents(teamID)
+		if readErr != nil {
+			return readErr
+		}
+		for _, raw := range bindingIntents {
+			var intent handoffBindingIntentV1
+			if err := teamcontract.DecodeStrict(raw, &intent); err != nil {
+				return fmt.Errorf("recover Handoff binding: %w", err)
+			}
+			if intent.Response == nil {
+				if _, err := s.HandoffBindRun(intent.Request); err != nil {
+					return fmt.Errorf("recover Handoff binding %q: %w", intent.Request.ActionID, err)
+				}
+			}
 		}
 		if snapshot.State == teamcontract.LifecycleClosed {
 			continue
@@ -287,12 +317,12 @@ func (s *Service) Action(ctx context.Context, action teamcontract.TeamActionV1) 
 			s.mu.Unlock()
 			return teamcontract.TeamActionResponseV1{}, ErrConflict
 		}
-		intents, err := s.state.ListTeamActionIntents(action.TeamID)
+		intentCount, err := s.state.TeamMutationIntentCount(action.TeamID)
 		if err != nil {
 			s.mu.Unlock()
 			return teamcontract.TeamActionResponseV1{}, err
 		}
-		if len(intents) >= teamcontract.MaxMutationReceipts {
+		if intentCount >= teamcontract.MaxMutationReceipts {
 			s.mu.Unlock()
 			return teamcontract.TeamActionResponseV1{}, ErrQuotaExceeded
 		}

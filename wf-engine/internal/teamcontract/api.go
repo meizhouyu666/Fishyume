@@ -263,8 +263,8 @@ func ValidateHandoffCreateRequest(value HandoffCreateRequestV1) error {
 	if value.ExpectedStateVersion == 0 {
 		return fmt.Errorf("expectedStateVersion must be positive")
 	}
-	if strings.TrimSpace(value.Goal) == "" {
-		return fmt.Errorf("handoff goal is required")
+	if strings.TrimSpace(value.Goal) == "" || value.Goal != strings.TrimSpace(value.Goal) {
+		return fmt.Errorf("handoff goal is required without surrounding whitespace")
 	}
 	if err := validateBounded(value.Goal, MaxMessageBytes, "handoff goal"); err != nil {
 		return err
@@ -279,10 +279,22 @@ func ValidateHandoffCreateRequest(value HandoffCreateRequestV1) error {
 	if len(value.SelectedMessageIDs) == 0 || len(value.SelectedMessageIDs) > MaxHandoffSelectedMessages {
 		return fmt.Errorf("selected message count is out of bounds")
 	}
+	seen := make(map[string]struct{}, len(value.SelectedMessageIDs))
 	for _, id := range value.SelectedMessageIDs {
 		if err := validateAPIID(id, "selected message"); err != nil {
 			return err
 		}
+		if _, exists := seen[id]; exists {
+			return fmt.Errorf("selected message IDs must be unique")
+		}
+		seen[id] = struct{}{}
+	}
+	encoded, err := CanonicalJSON(value)
+	if err != nil {
+		return err
+	}
+	if len(encoded) > MaxHandoffBytes {
+		return fmt.Errorf("handoff request exceeds %d bytes", MaxHandoffBytes)
 	}
 	return nil
 }

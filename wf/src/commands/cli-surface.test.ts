@@ -36,6 +36,11 @@ test('command help remains available', () => {
     assert.equal(result.status, 0, `team ${command}: ${result.stderr}`);
     assert.match(result.stdout, new RegExp(`fishyume team ${command}`));
   }
+  for (const command of ['create', 'list', 'show', 'bind']) {
+    const result = invoke('team', 'handoff', command, '--help');
+    assert.equal(result.status, 0, `team handoff ${command}: ${result.stderr}`);
+    assert.match(result.stdout, new RegExp(`fishyume team handoff ${command}`));
+  }
   const createMemory = invoke('memory', 'create', '--help');
   assert.match(createMemory.stdout, /--stdin/);
   assert.match(createMemory.stdout, /--file/);
@@ -102,6 +107,10 @@ test('command help describes the Agent-facing control-plane surface', () => {
     ['team list', /List durable Teams/],
     ['team show', /Show one durable Team/],
     ['team cancel', /Confirm cancellation of active Team turns/],
+    ['team handoff create', /Create an immutable Handoff/],
+    ['team handoff list', /List immutable Handoffs/],
+    ['team handoff show', /Show one Handoff/],
+    ['team handoff bind', /Bind one Handoff to one existing same-project Workflow Run/],
   ]);
   for (const [command, description] of expected) {
     const result = invoke(...command.split(' '), '--help');

@@ -27,12 +27,19 @@ const routingCatalog: RoutingCatalogResponse = {
 };
 
 const teamCapabilities: TeamCapabilities = {
-  schemaVersion: 'fishyume.team/v1', supportedModes: ['panel'], features: {panel: true, handoff: false, session: false, followUp: false, cancelTurn: false, close: false, cancel: true},
+  schemaVersion: 'fishyume.team/v1', supportedModes: ['panel'], features: {panel: true, handoff: true, session: false, followUp: false, cancelTurn: false, close: false, cancel: true},
   limits: {minParticipants: 2, maxParticipants: 4}, participantTemplates: [
     {label: 'architect', role: 'propose', modelId: 'codex/local/gpt-5.6', driver: 'codex', target: 'local'},
     {label: 'reviewer', role: 'challenge', modelId: 'codex/local/gpt-5.6-luna', driver: 'codex', target: 'local'},
   ], catalogHash: 'b'.repeat(64),
 };
+
+const handoff = {
+  schemaVersion: 'fishyume.team/v1', handoffId: 'handoff-1', teamId: 'team-1', sourceTeamVersion: 4,
+  goal: 'Promote the accepted design', decisions: ['Use the smaller design'], selectedMessageIds: ['message-1'],
+  sourceMessageHashes: ['c'.repeat(64)], contentHash: 'd'.repeat(64), createdAt: '2026-08-25T00:00:00Z',
+};
+const handoffBinding = {teamId: 'team-1', handoffId: 'handoff-1', runId: 'run-1', project: 'C:/project', boundAt: '2026-08-25T00:01:00Z'};
 
 const routingPreviewResponse = {
   apiVersion: 'fishyume.application/v1', workflowSchemaVersion: 'fishyume/v2', valid: true, issues: [], capabilityGaps: [], warnings: [], routingRequirements: [],
@@ -50,6 +57,10 @@ class FakeApplicationClient implements EngineClient {
     if (method === 'workflow.validate') return routingPreviewResponse as T;
     if (method === 'workflow.explain') return explainPreviewResponse as T;
     if (method === 'team.capabilities') return teamCapabilities as T;
+    if (method === 'team.handoff.create') return {schemaVersion: 'fishyume.team/v1', handoff, replayed: false} as T;
+    if (method === 'team.handoff.get') return {schemaVersion: 'fishyume.team/v1', handoff, binding: handoffBinding} as T;
+    if (method === 'team.handoff.list') return {schemaVersion: 'fishyume.team/v1', items: [handoff]} as T;
+    if (method === 'team.handoff.bindRun') return {schemaVersion: 'fishyume.team/v1', binding: handoffBinding, replayed: false} as T;
     throw new Error(`unexpected ${method}`);
   }
   onRunEvent(_listener: EventListener): () => void {return () => undefined}
@@ -146,6 +157,7 @@ test('MCP and Machine CLI expose identical Application response JSON', async () 
     assert.match(listed.tools.find(tool => tool.name === 'run.events')?.description ?? '', /bounded/);
     assert.match(listed.tools.find(tool => tool.name === 'workflow.validate')?.description ?? '', /same workflow, inputs, driver, target/);
     assert.match(listed.tools.find(tool => tool.name === 'workflow.explain')?.description ?? '', /Context Policy/);
+    assert.match(listed.tools.find(tool => tool.name === 'team.handoff.get')?.description ?? '', /workflow\.validate.*workflow\.explain.*user confirmation.*run\.start.*team\.handoff\.bindRun/);
     for (const method of ['system.capabilities', 'routing.catalog', 'team.capabilities'] as const) {
       const machineClient = new FakeApplicationClient(); let machineOutput = '';
       const args = method === 'team.capabilities' ? {schemaVersion: 'fishyume.team/v1'} : {};
@@ -156,6 +168,32 @@ test('MCP and Machine CLI expose identical Application response JSON', async () 
       assert.equal(content[0]?.type, 'text');
       assert.deepEqual(JSON.parse(content[0]?.text ?? ''), JSON.parse(machineOutput));
     }
+  } finally {
+    await mcpClient.close();
+    await mcpServer.close();
+  }
+});
+
+test('M7.2 MCP and Machine CLI preserve all Handoff responses identically', async () => {
+  const mcpServer = createMCPServer(new FakeApplicationClient());
+  const mcpClient = new Client({name: 'handoff-host', version: '1.0.0'});
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([mcpServer.connect(serverTransport), mcpClient.connect(clientTransport)]);
+  try {
+    const cases = [
+      ['team.handoff.create', {schemaVersion: 'fishyume.team/v1', teamId: 'team-1', handoffId: 'handoff-1', expectedStateVersion: 4, goal: handoff.goal, decisions: handoff.decisions, selectedMessageIds: ['message-1']}],
+      ['team.handoff.get', {schemaVersion: 'fishyume.team/v1', teamId: 'team-1', handoffId: 'handoff-1'}],
+      ['team.handoff.list', {schemaVersion: 'fishyume.team/v1', teamId: 'team-1', limit: 10}],
+      ['team.handoff.bindRun', {schemaVersion: 'fishyume.team/v1', actionId: 'bind-1', teamId: 'team-1', handoffId: 'handoff-1', runId: 'run-1', expectedStateVersion: 4}],
+    ] as const;
+    for (const [method, args] of cases) {
+      const machineClient = new FakeApplicationClient(); let machineOutput = '';
+      assert.equal(await runMachine(machineClient, method, JSON.stringify(args), {write(text) {machineOutput += text}}), 0);
+      const result = await mcpClient.callTool({name: method, arguments: args});
+      assert.deepEqual(result.structuredContent, JSON.parse(machineOutput));
+    }
+    const rejected = await mcpClient.callTool({name: 'team.handoff.get', arguments: {schemaVersion: 'fishyume.team/v1', teamId: 'team-1', handoffId: 'h'.repeat(129)}});
+    assert.equal(rejected.isError, true);
   } finally {
     await mcpClient.close();
     await mcpServer.close();

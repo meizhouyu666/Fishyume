@@ -45,6 +45,14 @@ func (s *Store) TeamBindingsPath(teamID string) string {
 	return filepath.Join(s.TeamDir(teamID), "handoff-bindings.json")
 }
 
+func (s *Store) TeamHandoffIntentPath(teamID, handoffID string) string {
+	return filepath.Join(s.TeamDir(teamID), "handoff-intents", digestID(handoffID)+".json")
+}
+
+func (s *Store) TeamBindingIntentPath(teamID, actionID string) string {
+	return filepath.Join(s.TeamDir(teamID), "handoff-binding-intents", digestID(actionID)+".json")
+}
+
 func (s *Store) TeamActionIntentPath(teamID, actionID string) string {
 	return filepath.Join(s.TeamDir(teamID), "action-intents", digestID(actionID)+".json")
 }
@@ -58,7 +66,7 @@ func (s *Store) InitTeam(teamID string) error {
 	if err := validateID("team", teamID); err != nil {
 		return err
 	}
-	for _, dir := range []string{filepath.Join(s.TeamDir(teamID), "participants"), filepath.Join(s.TeamDir(teamID), "turns"), filepath.Join(s.TeamDir(teamID), "handoffs"), filepath.Join(s.TeamDir(teamID), "action-intents")} {
+	for _, dir := range []string{filepath.Join(s.TeamDir(teamID), "participants"), filepath.Join(s.TeamDir(teamID), "turns"), filepath.Join(s.TeamDir(teamID), "handoffs"), filepath.Join(s.TeamDir(teamID), "action-intents"), filepath.Join(s.TeamDir(teamID), "handoff-intents"), filepath.Join(s.TeamDir(teamID), "handoff-binding-intents")} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("create team directory %q: %w", dir, err)
 		}
@@ -319,24 +327,134 @@ func (s *Store) ReadTeamHandoff(teamID, handoffID string, target *teamcontract.H
 	return teamcontract.ValidateHandoff(*target)
 }
 
+type teamHandoffBindingsV1 struct {
+	SchemaVersion string                          `json:"schemaVersion"`
+	Items         []teamcontract.HandoffBindingV1 `json:"items"`
+}
+
 func (s *Store) WriteTeamBinding(value teamcontract.HandoffBindingV1) error {
 	if err := teamcontract.ValidateHandoffBinding(value); err != nil {
 		return err
 	}
-	return s.writeJSON(s.TeamBindingsPath(value.TeamID), value)
+	bindings, err := s.ReadTeamBindings(value.TeamID)
+	if err != nil {
+		return err
+	}
+	for _, existing := range bindings {
+		if existing.HandoffID == value.HandoffID {
+			if existing == value {
+				return nil
+			}
+			return fmt.Errorf("handoff %q already has a different binding", value.HandoffID)
+		}
+	}
+	bindings = append(bindings, value)
+	if len(bindings) > teamcontract.MaxMutationReceipts {
+		return fmt.Errorf("team Handoff binding quota exceeded")
+	}
+	sort.Slice(bindings, func(i, j int) bool { return bindings[i].HandoffID < bindings[j].HandoffID })
+	collection := teamHandoffBindingsV1{SchemaVersion: teamcontract.SchemaVersion, Items: bindings}
+	encoded, err := json.Marshal(collection)
+	if err != nil {
+		return err
+	}
+	if len(encoded) > teamcontract.MaxRetainedMessageBytes {
+		return fmt.Errorf("team Handoff bindings exceed %d bytes", teamcontract.MaxRetainedMessageBytes)
+	}
+	return s.writeJSON(s.TeamBindingsPath(value.TeamID), collection)
 }
 
-func (s *Store) ReadTeamBinding(teamID string, target *teamcontract.HandoffBindingV1) error {
+func (s *Store) ReadTeamBinding(teamID, handoffID string, target *teamcontract.HandoffBindingV1) error {
 	if err := validateID("team", teamID); err != nil {
 		return err
 	}
-	if err := readTeamContractJSON(s.TeamBindingsPath(teamID), target); err != nil {
+	if err := validateID("handoff", handoffID); err != nil {
 		return err
 	}
-	if target.TeamID != teamID {
-		return fmt.Errorf("binding team ID %q does not match %q", target.TeamID, teamID)
+	bindings, err := s.ReadTeamBindings(teamID)
+	if err != nil {
+		return err
 	}
-	return teamcontract.ValidateHandoffBinding(*target)
+	for _, binding := range bindings {
+		if binding.HandoffID == handoffID {
+			*target = binding
+			return nil
+		}
+	}
+	return os.ErrNotExist
+}
+
+func (s *Store) ReadTeamBindings(teamID string) ([]teamcontract.HandoffBindingV1, error) {
+	if err := validateID("team", teamID); err != nil {
+		return nil, err
+	}
+	var collection teamHandoffBindingsV1
+	if err := readTeamContractJSONLimit(s.TeamBindingsPath(teamID), &collection, teamcontract.MaxRetainedMessageBytes); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return []teamcontract.HandoffBindingV1{}, nil
+		}
+		return nil, err
+	}
+	if collection.SchemaVersion != teamcontract.SchemaVersion {
+		return nil, fmt.Errorf("unsupported Team binding schema version %q", collection.SchemaVersion)
+	}
+	if len(collection.Items) > teamcontract.MaxMutationReceipts {
+		return nil, fmt.Errorf("team Handoff binding quota exceeded")
+	}
+	seen := make(map[string]struct{}, len(collection.Items))
+	for _, binding := range collection.Items {
+		if err := teamcontract.ValidateHandoffBinding(binding); err != nil {
+			return nil, err
+		}
+		if binding.TeamID != teamID {
+			return nil, fmt.Errorf("binding team ID %q does not match %q", binding.TeamID, teamID)
+		}
+		if _, exists := seen[binding.HandoffID]; exists {
+			return nil, fmt.Errorf("duplicate binding for handoff %q", binding.HandoffID)
+		}
+		seen[binding.HandoffID] = struct{}{}
+	}
+	return collection.Items, nil
+}
+
+func (s *Store) WriteTeamHandoffIntent(teamID, handoffID string, intent any) error {
+	if err := validateID("team", teamID); err != nil {
+		return err
+	}
+	if err := validateID("handoff", handoffID); err != nil {
+		return err
+	}
+	return s.writeJSON(s.TeamHandoffIntentPath(teamID, handoffID), intent)
+}
+
+func (s *Store) ReadTeamHandoffIntent(teamID, handoffID string, target any) error {
+	if err := validateID("team", teamID); err != nil {
+		return err
+	}
+	if err := validateID("handoff", handoffID); err != nil {
+		return err
+	}
+	return readTeamContractJSON(s.TeamHandoffIntentPath(teamID, handoffID), target)
+}
+
+func (s *Store) WriteTeamBindingIntent(teamID, actionID string, intent any) error {
+	if err := validateID("team", teamID); err != nil {
+		return err
+	}
+	if err := validateID("action", actionID); err != nil {
+		return err
+	}
+	return s.writeJSON(s.TeamBindingIntentPath(teamID, actionID), intent)
+}
+
+func (s *Store) ReadTeamBindingIntent(teamID, actionID string, target any) error {
+	if err := validateID("team", teamID); err != nil {
+		return err
+	}
+	if err := validateID("action", actionID); err != nil {
+		return err
+	}
+	return readTeamContractJSON(s.TeamBindingIntentPath(teamID, actionID), target)
 }
 
 func (s *Store) WriteTeamActionIntent(teamID, actionID string, intent any) error {
@@ -356,14 +474,39 @@ func (s *Store) ReadTeamActionIntent(teamID, actionID string, target any) error 
 	if err := validateID("action", actionID); err != nil {
 		return err
 	}
-	return readJSON(s.TeamActionIntentPath(teamID, actionID), target)
+	return readTeamContractJSON(s.TeamActionIntentPath(teamID, actionID), target)
 }
 
 func (s *Store) ListTeamActionIntents(teamID string) ([]json.RawMessage, error) {
+	return s.listTeamIntentDirectory(teamID, "action-intents")
+}
+
+func (s *Store) ListTeamHandoffIntents(teamID string) ([]json.RawMessage, error) {
+	return s.listTeamIntentDirectory(teamID, "handoff-intents")
+}
+
+func (s *Store) ListTeamBindingIntents(teamID string) ([]json.RawMessage, error) {
+	return s.listTeamIntentDirectory(teamID, "handoff-binding-intents")
+}
+
+func (s *Store) TeamMutationIntentCount(teamID string) (int, error) {
+	total := 0
+	for _, directory := range []string{"action-intents", "handoff-intents", "handoff-binding-intents"} {
+		values, err := s.listTeamIntentDirectory(teamID, directory)
+		if err != nil {
+			return 0, err
+		}
+		total += len(values)
+	}
+	return total, nil
+}
+
+func (s *Store) listTeamIntentDirectory(teamID, directory string) ([]json.RawMessage, error) {
 	if err := validateID("team", teamID); err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(filepath.Join(s.TeamDir(teamID), "action-intents"))
+	path := filepath.Join(s.TeamDir(teamID), directory)
+	entries, err := os.ReadDir(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return []json.RawMessage{}, nil
 	}
@@ -379,7 +522,7 @@ func (s *Store) ListTeamActionIntents(teamID string) ([]json.RawMessage, error) 
 			continue
 		}
 		var raw json.RawMessage
-		if err := readJSON(filepath.Join(s.TeamDir(teamID), "action-intents", entry.Name()), &raw); err != nil {
+		if err := readJSON(filepath.Join(path, entry.Name()), &raw); err != nil {
 			return nil, err
 		}
 		values = append(values, raw)
@@ -523,14 +666,21 @@ func readTeamLog(path string, visit func([]byte, uint64) error) error {
 }
 
 func readTeamContractJSON(path string, target any) error {
+	return readTeamContractJSONLimit(path, target, teamcontract.MaxHandoffBytes)
+}
+
+func readTeamContractJSONLimit(path string, target any, limit int) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open Team contract %q: %w", path, err)
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, int64(teamcontract.MaxHandoffBytes)))
+	data, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
 	if err != nil {
 		return fmt.Errorf("read Team contract %q: %w", path, err)
+	}
+	if len(data) > limit {
+		return fmt.Errorf("Team contract %q exceeds %d bytes", path, limit)
 	}
 	if err := teamcontract.DecodeStrict(data, target); err != nil {
 		return fmt.Errorf("decode Team contract %q: %w", path, err)

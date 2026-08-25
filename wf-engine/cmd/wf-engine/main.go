@@ -36,6 +36,13 @@ func main() {
 	service := run.NewServiceWithRegistry(registry, "codex", state)
 	applicationService := application.NewService(service, "codex", state)
 	teamService := team.NewService(state)
+	if err := teamService.SetRunLookup(func(runID string) (string, error) {
+		snapshot, err := service.Get(runID)
+		return snapshot.Project, err
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if err := teamService.SetDriver(codexDriver.Exploration()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

@@ -247,13 +247,21 @@ func (s *Server) handle(ctx context.Context, request Request) {
 	case "team.action":
 		invokeTeam(ctx, s, id, request.Params, teamcontract.TeamActionV1{}, s.teams.Action)
 	case "team.handoff.create":
-		invokeUnavailableTeam(s, id, request.Params, teamcontract.HandoffCreateRequestV1{})
+		invokeTeam(ctx, s, id, request.Params, teamcontract.HandoffCreateRequestV1{}, func(_ context.Context, value teamcontract.HandoffCreateRequestV1) (teamcontract.HandoffCreateResponseV1, error) {
+			return s.teams.HandoffCreate(value)
+		})
 	case "team.handoff.get":
-		invokeUnavailableTeam(s, id, request.Params, teamcontract.HandoffGetRequestV1{})
+		invokeTeam(ctx, s, id, request.Params, teamcontract.HandoffGetRequestV1{}, func(_ context.Context, value teamcontract.HandoffGetRequestV1) (teamcontract.HandoffGetResponseV1, error) {
+			return s.teams.HandoffGet(value)
+		})
 	case "team.handoff.list":
-		invokeUnavailableTeam(s, id, request.Params, teamcontract.HandoffListRequestV1{})
+		invokeTeam(ctx, s, id, request.Params, teamcontract.HandoffListRequestV1{}, func(_ context.Context, value teamcontract.HandoffListRequestV1) (teamcontract.HandoffListResponseV1, error) {
+			return s.teams.HandoffList(value)
+		})
 	case "team.handoff.bindRun":
-		invokeUnavailableTeam(s, id, request.Params, teamcontract.HandoffBindRunRequestV1{})
+		invokeTeam(ctx, s, id, request.Params, teamcontract.HandoffBindRunRequestV1{}, func(_ context.Context, value teamcontract.HandoffBindRunRequestV1) (teamcontract.HandoffBindRunResponseV1, error) {
+			return s.teams.HandoffBindRun(value)
+		})
 	case "run.status":
 		params, ok := s.parseRunID(id, request.Params)
 		if !ok {
@@ -298,18 +306,6 @@ func invokeTeam[Request any, Response any](ctx context.Context, s *Server, id an
 		return
 	}
 	s.writeResult(id, response)
-}
-
-func invokeUnavailableTeam[Request any](s *Server, id any, raw json.RawMessage, request Request) {
-	if err := decodeParams(raw, &request); err != nil {
-		s.writeTeamError(id, teamcontract.ErrorInvalidArgument, "invalid Team request: "+err.Error())
-		return
-	}
-	if err := validateTeamRequest(request); err != nil {
-		s.writeTeamError(id, teamcontract.ErrorInvalidArgument, err.Error())
-		return
-	}
-	s.writeTeamError(id, teamcontract.ErrorCapabilityUnavailable, "Team capability is unavailable in M7.1")
 }
 
 func validateTeamRequest(value any) error {

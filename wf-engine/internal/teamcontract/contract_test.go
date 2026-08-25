@@ -134,6 +134,11 @@ func TestValidateHandoffRequiresBoundedMessageHashes(t *testing.T) {
 	if err := ValidateHandoff(handoff); err == nil {
 		t.Fatal("handoff with mismatched selected message hashes was accepted")
 	}
+	handoff.SourceMessageHashes = []string{contractHash}
+	handoff.Decisions = []string{strings.Repeat("a", MaxMessageBytes), strings.Repeat("b", MaxMessageBytes), strings.Repeat("c", MaxMessageBytes), strings.Repeat("d", MaxMessageBytes)}
+	if err := ValidateHandoff(handoff); err == nil || !strings.Contains(err.Error(), "handoff exceeds") {
+		t.Fatalf("aggregate overflow error=%v", err)
+	}
 }
 
 func TestDefaultLimitsMatchFrozenM71Values(t *testing.T) {

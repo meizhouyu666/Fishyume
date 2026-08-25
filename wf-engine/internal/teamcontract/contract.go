@@ -366,6 +366,9 @@ func ValidateHandoffBinding(value HandoffBindingV1) error {
 	if err := validateID(value.RunID, "runId"); err != nil {
 		return err
 	}
+	if strings.TrimSpace(value.Project) == "" || value.Project != strings.TrimSpace(value.Project) {
+		return fmt.Errorf("project is required without surrounding whitespace")
+	}
 	return validateBounded(value.Project, MaxProjectBytes, "project")
 }
 
@@ -809,6 +812,9 @@ func ValidateHandoff(value HandoffArtifactV1) error {
 	if value.SourceTeamVersion == 0 {
 		return fmt.Errorf("sourceTeamVersion must be positive")
 	}
+	if strings.TrimSpace(value.Goal) == "" || value.Goal != strings.TrimSpace(value.Goal) {
+		return fmt.Errorf("handoff goal is required without surrounding whitespace")
+	}
 	if err := validateBounded(value.Goal, MaxMessageBytes, "handoff goal"); err != nil {
 		return err
 	}
@@ -825,10 +831,15 @@ func ValidateHandoff(value HandoffArtifactV1) error {
 	if len(value.SelectedMessageIDs) != len(value.SourceMessageHashes) {
 		return fmt.Errorf("selected message IDs and hashes must have equal length")
 	}
+	seen := make(map[string]struct{}, len(value.SelectedMessageIDs))
 	for _, id := range value.SelectedMessageIDs {
 		if err := validateID(id, "selected message"); err != nil {
 			return err
 		}
+		if _, exists := seen[id]; exists {
+			return fmt.Errorf("selected message IDs must be unique")
+		}
+		seen[id] = struct{}{}
 	}
 	for _, hash := range value.SourceMessageHashes {
 		if !validHash(hash) {
@@ -837,6 +848,13 @@ func ValidateHandoff(value HandoffArtifactV1) error {
 	}
 	if !validHash(value.ContentHash) {
 		return fmt.Errorf("handoff contentHash must be a SHA-256 hex digest")
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if len(encoded) > MaxHandoffBytes {
+		return fmt.Errorf("handoff exceeds %d bytes", MaxHandoffBytes)
 	}
 	return nil
 }

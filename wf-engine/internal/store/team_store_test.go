@@ -158,3 +158,50 @@ func TestTeamStoreRejectsUnknownSnapshotFields(t *testing.T) {
 		t.Fatal("unknown Team snapshot field was accepted")
 	}
 }
+
+func TestTeamStoreKeepsOneBindingPerHandoff(t *testing.T) {
+	state := New(t.TempDir())
+	snapshot := testTeamSnapshot()
+	if err := state.InitTeam(snapshot.TeamID); err != nil {
+		t.Fatal(err)
+	}
+	first := teamcontract.HandoffBindingV1{TeamID: snapshot.TeamID, HandoffID: "handoff-a", RunID: "run-a", Project: snapshot.Project, BoundAt: snapshot.CreatedAt}
+	second := teamcontract.HandoffBindingV1{TeamID: snapshot.TeamID, HandoffID: "handoff-b", RunID: "run-b", Project: snapshot.Project, BoundAt: snapshot.CreatedAt.Add(time.Second)}
+	if err := state.WriteTeamBinding(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.WriteTeamBinding(second); err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := state.ReadTeamBindings(snapshot.TeamID)
+	if err != nil || len(bindings) != 2 || bindings[0] != first || bindings[1] != second {
+		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+	var loaded teamcontract.HandoffBindingV1
+	if err := state.ReadTeamBinding(snapshot.TeamID, first.HandoffID, &loaded); err != nil || loaded != first {
+		t.Fatalf("loaded=%+v err=%v", loaded, err)
+	}
+	conflict := first
+	conflict.RunID = "run-other"
+	if err := state.WriteTeamBinding(conflict); err == nil {
+		t.Fatal("conflicting binding was accepted")
+	}
+}
+
+func TestTeamStoreRejectsOversizedBindingCollection(t *testing.T) {
+	state := New(t.TempDir())
+	snapshot := testTeamSnapshot()
+	if err := state.InitTeam(snapshot.TeamID); err != nil {
+		t.Fatal(err)
+	}
+	items := make([]teamcontract.HandoffBindingV1, 0, teamcontract.MaxMutationReceipts+1)
+	for index := 0; index <= teamcontract.MaxMutationReceipts; index++ {
+		items = append(items, teamcontract.HandoffBindingV1{TeamID: snapshot.TeamID, HandoffID: fmt.Sprintf("handoff-%d", index), RunID: fmt.Sprintf("run-%d", index), Project: snapshot.Project, BoundAt: snapshot.CreatedAt})
+	}
+	if err := state.writeJSON(state.TeamBindingsPath(snapshot.TeamID), teamHandoffBindingsV1{SchemaVersion: teamcontract.SchemaVersion, Items: items}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.ReadTeamBindings(snapshot.TeamID); err == nil || !strings.Contains(err.Error(), "quota") {
+		t.Fatalf("oversized binding collection error=%v", err)
+	}
+}
