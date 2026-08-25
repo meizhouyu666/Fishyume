@@ -1,8 +1,8 @@
 # Fishyume M7: Lightweight Team Exploration and Explicit Workflow Promotion
 
-> Status: M7.2 complete; M7.3 capability gate passed and implementation approved
+> Status: M7.3 internal AgentSession Driver complete; M7.4 remains disabled
 >
-> Date: 2026-08-24
+> Date: 2026-08-25
 >
 > Baseline: M6 is closed. `fishyume.application/v1`, `fishyume/v2`, Run state,
 > Attempt, Context/Memory, and routing contracts remain frozen.
@@ -1028,9 +1028,10 @@ The original `exec resume` path remains unsupported because it cannot accept
 the required sandbox/workspace policy controls. The later Codex app-server v2
 gate passed start, process park, policy-preserving resume, recovered-turn
 observation, directed follow-up, lost/stale identity rejection, and confirmed
-turn interruption. M7.3 implementation is therefore approved against the
-app-server surface. M7.4 remains disabled until the internal Session Driver and
-its recovery contract are complete.
+turn interruption. The M7.3 internal Session Driver and Codex adapter now pass
+their reusable lifecycle and recovery contract. M7.4 remains disabled until
+that internal port is integrated with durable Team state and the frozen public
+Team actions.
 
 ### Gate B: after M7.1 dogfooding
 

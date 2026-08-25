@@ -208,7 +208,7 @@ read -> plan -> edit -> test -> summarize
 
 ## 当前边界
 
-M7.2 已开放一轮 Panel、整组取消和显式 Handoff promotion。多轮 Session、follow-up、单 turn 取消和主动 close 仍不可用。当前也不包含通用 Shell/HTTP/容器节点、动态 Driver 发现、Web/Desktop 客户端、内置 Harness 或 Claude/第三方 Driver。真实 Provider smoke 是显式本地 gate，不是公共 CI 的前置条件。
+M7.3 已完成内部 AgentSession Driver 和 Codex app-server 适配器，但公共多轮 Session、follow-up、单 turn 取消和主动 close 要到 M7.4 才会开放。当前已开放一轮 Panel、整组取消和显式 Handoff promotion；仍不包含通用 Shell/HTTP/容器节点、动态 Driver 发现、Web/Desktop 客户端、内置 Harness 或 Claude/第三方 Driver。真实 Provider smoke 是显式本地 gate，不是公共 CI 的前置条件。
 
 ## 文档
 
@@ -219,6 +219,7 @@ M7.2 已开放一轮 Panel、整组取消和显式 Handoff promotion。多轮 Se
 - [M7 Team 与 Workflow Promotion 计划](./docs/fishyume-m7-session-native-web-team-console-plan.md)
 - [M7.1 Panel 验收记录](./docs/fishyume-m7.1-acceptance.md)
 - [M7.2 Handoff 验收记录](./docs/fishyume-m7.2-acceptance.md)
+- [M7.3 AgentSession Driver 验收记录](./docs/fishyume-m7.3-acceptance.md)
 - [首次使用与安装说明](./docs/fishyume-distribution-first-run.md)
 - [开发与验证](./docs/fishyume-development.md)
 - [Live Provider smoke](./docs/fishyume-m4-live-smoke.md)

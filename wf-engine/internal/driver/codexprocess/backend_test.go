@@ -23,6 +23,7 @@ var buildFixtures struct {
 	sync.Once
 	directory  string
 	agent      string
+	session    string
 	supervisor string
 	err        error
 }
@@ -47,9 +48,11 @@ func fixtureBinaries(t *testing.T) (string, string) {
 			extension = ".exe"
 		}
 		buildFixtures.agent = filepath.Join(buildFixtures.directory, "fake-codex"+extension)
+		buildFixtures.session = filepath.Join(buildFixtures.directory, "fake-codex-app-server"+extension)
 		buildFixtures.supervisor = filepath.Join(buildFixtures.directory, "fishyume-engine"+extension)
 		for _, target := range []struct{ output, pkg string }{
 			{buildFixtures.agent, "./testdata/fake-agent"},
+			{buildFixtures.session, "./testdata/fake-app-server"},
 			{buildFixtures.supervisor, "../../../cmd/wf-engine"},
 		} {
 			command := exec.Command("go", "build", "-o", target.output, target.pkg)
@@ -63,6 +66,12 @@ func fixtureBinaries(t *testing.T) (string, string) {
 		t.Fatal(buildFixtures.err)
 	}
 	return buildFixtures.agent, buildFixtures.supervisor
+}
+
+func sessionFixtureBinary(t *testing.T) string {
+	t.Helper()
+	_, _ = fixtureBinaries(t)
+	return buildFixtures.session
 }
 
 type fixtureBuildError struct {
