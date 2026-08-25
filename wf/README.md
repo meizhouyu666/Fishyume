@@ -29,6 +29,10 @@ fishyume team start      启动默认双模型只读 Panel
 fishyume team list       列出持久化 Team
 fishyume team show <id>  查看贡献和部分失败
 fishyume team cancel <id> 确认取消 Team
+fishyume team handoff create <team-id> --goal <goal>
+fishyume team handoff list <team-id>
+fishyume team handoff show <team-id> <handoff-id>
+fishyume team handoff bind <team-id> <handoff-id> <run-id>
 fishyume run             创建单 Agent Run
 fishyume attach <id>     接管已有 Run
 fishyume status <id>     查看状态
@@ -53,11 +57,13 @@ fishyume team start --detach --json "Compare two approaches"
 fishyume team show <team-id> --json
 ```
 
+Handoff create 默认选择全部参与者贡献，也可重复传入 `--message`、`--decision`、`--constraint`、`--open-question` 和 `--acceptance`。创建 Handoff 不会启动 Run；`team handoff show` 会显示明确的 Host promotion 顺序，只有用户确认后的已有同项目 Run 才能通过 `team handoff bind` 绑定。
+
 `fishyume setup codex` 是 `fishyume setup` 的兼容写法。一个 Agent Node Attempt 会启动一个独立的 one-shot Codex 进程，因此实际 Workflow 应按完整工作包划分 Node。详细原则和长程任务模板见 [Workflow 编排指南](../docs/fishyume-workflow-authoring.md) 与 [示例目录](../docs/examples/README.md)；Application API 和产品边界见仓库根目录 [README](../README.md)。
 
 ## 支持范围
 
-当前正式执行组合是 `codex + local`。产品支持一轮只读 Team Panel，以及 Agent/Approval Workflow、并行与依赖、持久化恢复、Context/Memory 绑定、确定性路由预检和中文 Operator Console。Team Handoff 合同已冻结但要到 M7.2 才开放；多轮 Session、follow-up、单 turn 取消、Web/Desktop 客户端、动态 Driver 发现和第三方 Driver 不在当前版本范围内。
+当前正式执行组合是 `codex + local`。产品支持一轮只读 Team Panel、不可变 Handoff 和显式 Workflow promotion，以及 Agent/Approval Workflow、并行与依赖、持久化恢复、Context/Memory 绑定、确定性路由预检和中文 Operator Console。多轮 Session、follow-up、单 turn 取消、Web/Desktop 客户端、动态 Driver 发现和第三方 Driver 不在当前版本范围内。
 
 ## License
 

@@ -76,6 +76,23 @@ fishyume team start `
 
 Team 始终使用只读 workspace。按 `Ctrl+C` 只会与观察过程分离，不会取消参与者。
 
+接受探索结论后，可以把选中的贡献冻结为 Handoff；未传 `--message` 时默认选择该 Team 的全部参与者贡献：
+
+```powershell
+fishyume team handoff create <team-id> --goal "Implement the accepted design" `
+  --decision "Use the smaller design" `
+  --constraint "Keep public Run contracts unchanged" `
+  --acceptance "All repository gates pass"
+fishyume team handoff list <team-id>
+fishyume team handoff show <team-id> <handoff-id>
+```
+
+Handoff 只保存不可变的探索证据，不会创建 Run。Host Agent 根据它编写并预检 `fishyume/v2` Workflow，用户确认并执行 `run.start` 后，再显式绑定已有 Run：
+
+```powershell
+fishyume team handoff bind <team-id> <handoff-id> <run-id>
+```
+
 让 Codex 通过 Fishyume MCP 创建工作后，在另一个终端打开 Dashboard：
 
 ```powershell
@@ -119,6 +136,18 @@ system.capabilities
 workflow.validate -> workflow.explain
 run.start -> run.events/run.get
 run.action -> run.result
+```
+
+从探索提升为正式执行时，顺序固定且不会自动规划或自动启动：
+
+```text
+team.handoff.get
+-> Host authors fishyume/v2
+-> workflow.validate
+-> workflow.explain
+-> user confirms
+-> run.start
+-> team.handoff.bindRun
 ```
 
 启动 MCP 服务：
@@ -168,6 +197,7 @@ read -> plan -> edit -> test -> summarize
 - Agent、Approval、依赖、条件分支和并行调度
 - 默认双模型、只读、可持久化的一轮 Team Panel
 - Team 列表、事件、贡献、部分失败呈现和确认取消
+- 不可变 Handoff、来源消息哈希校验，以及到同项目已有 Run 的显式一对一绑定
 - 持久化 Run、Node、Attempt、事件和动作回执
 - 崩溃恢复、Control Plane 重启对账和跨客户端共享状态
 - 有界输出、稳定事件分页、幂等 `clientRequestId` 和带版本前置条件的 `run.action`
@@ -178,7 +208,7 @@ read -> plan -> edit -> test -> summarize
 
 ## 当前边界
 
-M7.1 只开放一轮 Panel 和整组取消。Handoff 方法的 v1 合同已冻结，但能力将在 M7.2 开放；多轮 Session、follow-up、单 turn 取消和主动 close 仍不可用。当前也不包含通用 Shell/HTTP/容器节点、动态 Driver 发现、Web/Desktop 客户端、内置 Harness 或 Claude/第三方 Driver。真实 Provider smoke 是显式本地 gate，不是公共 CI 的前置条件。
+M7.2 已开放一轮 Panel、整组取消和显式 Handoff promotion。多轮 Session、follow-up、单 turn 取消和主动 close 仍不可用。当前也不包含通用 Shell/HTTP/容器节点、动态 Driver 发现、Web/Desktop 客户端、内置 Harness 或 Claude/第三方 Driver。真实 Provider smoke 是显式本地 gate，不是公共 CI 的前置条件。
 
 ## 文档
 
@@ -188,6 +218,7 @@ M7.1 只开放一轮 Panel 和整组取消。Handoff 方法的 v1 合同已冻�
 - [核心稳定化与就绪状态](./docs/fishyume-core-stabilization.md)
 - [M7 Team 与 Workflow Promotion 计划](./docs/fishyume-m7-session-native-web-team-console-plan.md)
 - [M7.1 Panel 验收记录](./docs/fishyume-m7.1-acceptance.md)
+- [M7.2 Handoff 验收记录](./docs/fishyume-m7.2-acceptance.md)
 - [首次使用与安装说明](./docs/fishyume-distribution-first-run.md)
 - [开发与验证](./docs/fishyume-development.md)
 - [Live Provider smoke](./docs/fishyume-m4-live-smoke.md)

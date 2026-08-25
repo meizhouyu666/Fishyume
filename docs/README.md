@@ -7,9 +7,11 @@ links and review evidence stay stable.
 ## Current baseline
 
 - [M7 Team exploration plan](fishyume-m7-session-native-web-team-console-plan.md):
-  M7.1 one-round read-only Panel is complete; M7.2 Handoff is next.
+  M7.1 one-round read-only Panel and M7.2 explicit Handoff promotion are complete.
 - [M7.1 Panel acceptance](fishyume-m7.1-acceptance.md): frozen Team API,
   delivered surfaces, boundary decisions, and verification evidence.
+- [M7.2 Handoff acceptance](fishyume-m7.2-acceptance.md): immutable source
+  evidence, durable idempotency, existing-Run binding, and transport parity.
 - [Core contract freeze](fishyume-m6-core-contract-freeze.md): frozen public
   contracts and compatibility policy for the closed M6 baseline.
 - [Core stabilization record](fishyume-core-stabilization.md): M6 closure,

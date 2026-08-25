@@ -1,6 +1,6 @@
 # Fishyume M7: Lightweight Team Exploration and Explicit Workflow Promotion
 
-> Status: M7.1 one-round Panel complete; M7.2 Handoff is next
+> Status: M7.2 Handoff and explicit Workflow promotion complete; M7.3 is deferred
 >
 > Date: 2026-08-24
 >
@@ -433,12 +433,11 @@ team.handoff.list
 team.handoff.bindRun
 ```
 
-M7.1 freezes the names and request/response schemas for this complete v1 method
-set, including Handoff schemas, even though it enables only the Panel subset.
-`team.capabilities` reports Handoff as unavailable until M7.2; Handoff calls
-before that increment return `capability_unavailable` without side effects.
-M7.2 supplies the persistence and behavior behind the already-frozen surface.
-This keeps milestone staging from silently expanding `fishyume.team/v1`.
+M7.1 froze the names and request/response schemas for this complete v1 method
+set, including Handoff schemas, while enabling only the Panel subset. M7.2 now
+supplies the persistence and behavior behind that already-frozen Handoff
+surface, and `team.capabilities` reports it as available. This staging did not
+expand `fishyume.team/v1` or the frozen Run/Application contracts.
 
 MCP and Machine CLI expose identical request/response JSON. The local Control
 Plane may route both contract families over the same IPC connection; transport
@@ -762,6 +761,9 @@ Acceptance:
 - the target repository is unchanged.
 
 ### M7.2: Handoff and Explicit Workflow Promotion
+
+Status: complete. Closure evidence is recorded in
+[`fishyume-m7.2-acceptance.md`](fishyume-m7.2-acceptance.md).
 
 Purpose: connect the accepted Panel to formal execution without an automatic
 Planner and without depending on resumable sessions.
