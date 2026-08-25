@@ -156,7 +156,11 @@ func TestTeamRPCStartAndCapabilityGates(t *testing.T) {
 		t.Fatalf("page=%+v err=%v", page, err)
 	}
 
-	sameRun, err := runs.Start(context.Background(), run.StartRequest{Project: project, Task: "execute accepted design"})
+	teamSnapshot, err := teams.Get(started.Team.TeamID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameRun, err := runs.Start(context.Background(), run.StartRequest{Project: teamSnapshot.Project, Task: "execute accepted design"})
 	if err != nil {
 		t.Fatal(err)
 	}

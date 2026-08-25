@@ -75,8 +75,22 @@ func startExploration(t *testing.T, adapter *ExplorationAdapter, request explora
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		result, cancelErr := adapter.Cancel(ctx, *handle)
-		if cancelErr != nil || result == nil || result.State != explorationdriver.CancelConfirmed {
+		if cancelErr != nil || result == nil {
 			t.Errorf("exploration cleanup was not confirmed: result=%+v err=%v", result, cancelErr)
+			return
+		}
+		if result.State != explorationdriver.CancelConfirmed {
+			for _, ref := range []processRef{data.Child, data.Supervisor} {
+				status, inspectErr := inspectProcessRef(ref)
+				if inspectErr != nil {
+					t.Errorf("reinspect exploration process after cleanup: %v", inspectErr)
+					return
+				}
+				if status == processMatched {
+					t.Errorf("exploration cleanup left a matching process: result=%+v", result)
+					return
+				}
+			}
 		}
 	})
 	return *handle
