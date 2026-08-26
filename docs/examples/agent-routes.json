@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "fishyume.capability-catalog/v1",
+  "policyVersion": "fishyume.routing-policy/v1",
+  "models": [
+    {
+      "id": "claude/default/sonnet",
+      "target": {"driver": "claude", "provider": "default", "model": "sonnet"},
+      "capabilities": ["repo_read", "streaming", "tool_use"],
+      "contextLimitBytes": 262144,
+      "maxOutputBytes": 65536,
+      "quality": "premium",
+      "cost": "high",
+      "latency": "balanced",
+      "supportsCancellation": true
+    },
+    {
+      "id": "codex/local/gpt-5.6-sol",
+      "target": {"driver": "codex", "provider": "local", "model": "gpt-5.6-sol"},
+      "capabilities": ["needs_input", "repo_read", "streaming", "tool_use"],
+      "contextLimitBytes": 262144,
+      "maxOutputBytes": 65536,
+      "quality": "premium",
+      "cost": "high",
+      "latency": "balanced",
+      "supportsCancellation": true
+    },
+    {
+      "id": "opencode/deepseek/deepseek-chat",
+      "target": {"driver": "opencode", "provider": "deepseek", "model": "deepseek/deepseek-chat"},
+      "capabilities": ["repo_read", "streaming", "tool_use"],
+      "contextLimitBytes": 131072,
+      "maxOutputBytes": 32768,
+      "quality": "balanced",
+      "cost": "low",
+      "latency": "fast",
+      "supportsCancellation": true
+    }
+  ]
+}

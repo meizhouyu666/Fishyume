@@ -66,6 +66,25 @@ test('bundled sidecar resolves a sibling platform Engine package', () => {
   } finally {rmSync(directory, {recursive: true, force: true})}
 });
 
+test('sidecar focus endpoint updates the browser target with the same bearer contract', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'fishyume-web-focus-'));
+  writeFileSync(join(directory, 'index.html'), '<!doctype html><title>fixture</title>');
+  const sidecar = await startSidecar({engine: new FakeEngine(), openBrowser: false, publicDir: directory});
+  const headers = {Authorization: 'Bearer ' + sidecar.token, Origin: sidecar.origin};
+  try {
+    const rejected = await fetch(sidecar.origin + '/api/focus', {method: 'POST', headers: {...headers, Origin: 'http://evil.invalid'}, body: JSON.stringify({target: {kind: 'run', runId: 'run-1'}})});
+    assert.equal(rejected.status, 403);
+    const response = await fetch(sidecar.origin + '/api/focus', {method: 'POST', headers, body: JSON.stringify({target: {kind: 'run', runId: 'run-1'}})});
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {revision: 1, target: {kind: 'run', runId: 'run-1'}});
+    const read = await fetch(sidecar.origin + '/api/focus', {headers});
+    assert.deepEqual(await read.json(), {revision: 1, target: {kind: 'run', runId: 'run-1'}});
+  } finally {
+    await sidecar.close();
+    rmSync(directory, {recursive: true, force: true});
+  }
+});
+
 test('gateway enforces concurrency, body, timeout, and response limits', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'fishyume-web-limits-'));
   writeFileSync(join(directory, 'index.html'), '<!doctype html><title>fixture</title>');

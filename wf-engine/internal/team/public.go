@@ -20,14 +20,24 @@ type actionIntentV1 struct {
 }
 
 func (s *Service) Capabilities() (teamcontract.TeamCapabilitiesV1, error) {
-	catalog := routing.BuiltinCatalogV1()
+	catalog := s.catalog
 	hash, err := routing.CatalogHash(catalog)
 	if err != nil {
 		return teamcontract.TeamCapabilitiesV1{}, err
 	}
-	templates := []teamcontract.ParticipantTemplateV1{
-		{Label: "architect", Role: "propose a coherent architecture and tradeoffs", ModelID: catalog.Models[0].ID, Driver: catalog.Models[0].Target.Driver, Target: catalog.Models[0].Target.Provider},
-		{Label: "reviewer", Role: "challenge assumptions and identify failure modes", ModelID: catalog.Models[1].ID, Driver: catalog.Models[1].Target.Driver, Target: catalog.Models[1].Target.Provider},
+	presets := []struct{ label, role string }{
+		{"architect", "propose a coherent architecture and tradeoffs"},
+		{"reviewer", "challenge assumptions and identify failure modes"},
+		{"researcher", "investigate evidence and alternative approaches"},
+		{"verifier", "check claims, constraints, and unresolved risks"},
+	}
+	count := len(catalog.Models)
+	if count > teamcontract.MaxParticipantTemplates {
+		count = teamcontract.MaxParticipantTemplates
+	}
+	templates := make([]teamcontract.ParticipantTemplateV1, 0, count)
+	for index, model := range catalog.Models[:count] {
+		templates = append(templates, teamcontract.ParticipantTemplateV1{Label: presets[index].label, Role: presets[index].role, ModelID: model.ID, Driver: model.Target.Driver, Target: model.Target.Provider})
 	}
 	s.mu.Lock()
 	sessionEnabled := true

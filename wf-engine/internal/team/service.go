@@ -40,6 +40,7 @@ type StartResult struct {
 
 type Service struct {
 	state             *store.Store
+	catalog           routing.CapabilityCatalogV1
 	now               func() time.Time
 	drivers           map[string]explorationdriver.Driver
 	sessionDrivers    map[string]sessiondriver.Driver
@@ -60,14 +61,30 @@ func (s *Service) sessionLock(teamID, participantID string) *sync.Mutex {
 type RunLookup func(runID string) (project string, err error)
 
 func NewService(state *store.Store) *Service {
+	service, err := NewServiceWithCatalog(state, routing.BuiltinCatalogV1())
+	if err != nil {
+		panic(err)
+	}
+	return service
+}
+
+func NewServiceWithCatalog(state *store.Store, catalog routing.CapabilityCatalogV1) (*Service, error) {
+	catalog = routing.CanonicalCatalogV1(catalog)
+	if err := routing.ValidateCatalog(catalog); err != nil {
+		return nil, err
+	}
+	if len(catalog.Models) < teamcontract.MinParticipants {
+		return nil, fmt.Errorf("Team Agent route catalog requires at least %d models", teamcontract.MinParticipants)
+	}
 	return &Service{
 		state:             state,
+		catalog:           catalog,
 		now:               time.Now,
 		drivers:           make(map[string]explorationdriver.Driver),
 		sessionDrivers:    make(map[string]sessiondriver.Driver),
 		driverLimits:      make(map[string]chan struct{}),
 		activeControllers: make(map[string]struct{}),
-	}
+	}, nil
 }
 
 func (s *Service) SetRunLookup(lookup RunLookup) error {
@@ -157,7 +174,7 @@ func (s *Service) Start(ctx context.Context, request teamcontract.TeamStartReque
 	if err != nil {
 		return StartResult{}, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
-	normalized, participants, catalogHash, err := normalizeStart(request, project)
+	normalized, participants, catalogHash, err := s.normalizeStart(request, project)
 	if err != nil {
 		return StartResult{}, err
 	}
@@ -198,7 +215,7 @@ func (s *Service) Start(ctx context.Context, request teamcontract.TeamStartReque
 		return StartResult{}, err
 	}
 	now := s.now().UTC()
-	teamSnapshot := teamcontract.TeamSessionV1{SchemaVersion: teamcontract.SchemaVersion, TeamID: teamID, ClientRequestID: request.ClientRequestID, RequestHash: requestHash, Project: project, Mode: request.Mode, Topic: request.Topic, Instructions: request.Instructions, CatalogHash: catalogHash, Participants: participants, State: teamcontract.LifecycleCreated, StateVersion: 1, CostGrant: normalized.CostGrant, CostUsed: participantCost(participants, catalogHash), CreatedAt: now, UpdatedAt: now}
+	teamSnapshot := teamcontract.TeamSessionV1{SchemaVersion: teamcontract.SchemaVersion, TeamID: teamID, ClientRequestID: request.ClientRequestID, RequestHash: requestHash, Project: project, Mode: request.Mode, Topic: request.Topic, Instructions: request.Instructions, CatalogHash: catalogHash, Participants: participants, State: teamcontract.LifecycleCreated, StateVersion: 1, CostGrant: normalized.CostGrant, CostUsed: s.participantCost(participants, catalogHash), CreatedAt: now, UpdatedAt: now}
 	if teamSnapshot.CostUsed > teamSnapshot.CostGrant {
 		return StartResult{}, ErrQuotaExceeded
 	}
@@ -359,7 +376,7 @@ func (s *Service) prepareInitialTurnsLocked(teamID string) (teamcontract.TeamSes
 	if snapshot.State == teamcontract.LifecycleClosed {
 		return snapshot, nil
 	}
-	catalog := routing.BuiltinCatalogV1()
+	catalog := s.catalog
 	now := s.now().UTC()
 	changed := false
 	cumulative := 0
@@ -790,8 +807,8 @@ func boundedDiagnostic(value string) string {
 
 func ptrTime(value time.Time) *time.Time { return &value }
 
-func normalizeStart(request teamcontract.TeamStartRequestV1, project string) (teamcontract.TeamStartRequestV1, []teamcontract.ParticipantV1, string, error) {
-	catalog := routing.BuiltinCatalogV1()
+func (s *Service) normalizeStart(request teamcontract.TeamStartRequestV1, project string) (teamcontract.TeamStartRequestV1, []teamcontract.ParticipantV1, string, error) {
+	catalog := s.catalog
 	if err := routing.ValidateCatalog(catalog); err != nil {
 		return teamcontract.TeamStartRequestV1{}, nil, "", err
 	}
@@ -838,8 +855,8 @@ func normalizeStart(request teamcontract.TeamStartRequestV1, project string) (te
 	return normalized, participants, catalogHash, nil
 }
 
-func participantCost(participants []teamcontract.ParticipantV1, catalogHash string) int {
-	catalog := routing.BuiltinCatalogV1()
+func (s *Service) participantCost(participants []teamcontract.ParticipantV1, catalogHash string) int {
+	catalog := s.catalog
 	if hash, err := routing.CatalogHash(catalog); err != nil || hash != catalogHash {
 		return teamcontract.MaxCostGrant + 1
 	}

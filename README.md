@@ -16,7 +16,7 @@ Fishyume 是一个本地、可恢复的 AI Agent 协作与工作流控制台。
 - 通过 Machine CLI 在脚本中使用同一套 Application API
 - 在运行前查看确定性的路由预览、预算和 fallback 边界
 
-当前正式支持的执行组合是 `codex + local`。Fishyume 本身不内置模型 Tool loop；它协调外部 Agent 的只读探索，并控制已确定任务的正式 Workflow。
+Team Panel 与 TeamSession 正式支持 Codex、Claude Code 和 OpenCode；Workflow Node 当前仍使用 `codex + local`。Fishyume 不直接调用模型 API，也不内置模型 Tool loop：Host Agent 选择可信 Agent Route，外部 Agent Harness 负责模型调用和会话，Fishyume 负责只读编排、持久化、恢复和安全动作。
 
 ## 当前状态
 
@@ -26,7 +26,7 @@ Fishyume 是一个本地、可恢复的 AI Agent 协作与工作流控制台。
 
 ### Windows Developer Preview
 
-环境要求：Node.js 24+、Go 1.26+、已安装的 Codex CLI。仓库根目录执行：
+环境要求：Node.js 24+、Go 1.26+、已安装的 Codex CLI。Claude Code 和 OpenCode 仅在 Team 路由实际使用它们时需要安装。仓库根目录执行：
 
 ```powershell
 .\install-fishyume.ps1
@@ -49,7 +49,7 @@ fishyume doctor --project "E:\project"
 
 ### 运行与接管
 
-先运行一个默认双模型、只读的比较 Panel：
+先运行一个默认双 Agent 视角、只读的比较 Panel：
 
 ```powershell
 fishyume team start "Compare two approaches for this change"
@@ -64,15 +64,17 @@ fishyume team show <team-id>
 fishyume team cancel <team-id>
 ```
 
-显式选择模型和角色：
+显式选择 Agent Route 和角色（以下路由来自 `docs/examples/agent-routes.json`）：
 
 ```powershell
 fishyume team start `
   --project "E:\project" `
-  --participant codex/local/gpt-5.6:architect `
-  --participant codex/local/gpt-5.6-luna:reviewer `
+  --participant claude/default/sonnet:architect `
+  --participant opencode/deepseek/deepseek-chat:reviewer `
   "Compare two approaches"
 ```
+
+Agent Route 文件只保存 Driver、可信 Profile 名称和模型绑定，不保存 API Key、Base URL 或其他凭据。配置方法见 [Team Agent Routes](./docs/fishyume-team-agent-routes.md)。
 
 Team 始终使用只读 workspace。按 `Ctrl+C` 只会与观察过程分离，不会取消参与者。
 
@@ -205,7 +207,8 @@ read -> plan -> edit -> test -> summarize
 ## 核心特性
 
 - Agent、Approval、依赖、条件分支和并行调度
-- 默认双模型、只读、可持久化的一轮 Team Panel
+- 默认双 Agent 视角、只读、可持久化的一轮 Team Panel
+- Codex、Claude Code 与 OpenCode 的可配置 Team Panel/TeamSession Route
 - Team 列表、事件、贡献、部分失败呈现和确认取消
 - 不可变 Handoff、来源消息哈希校验，以及到同项目已有 Run 的显式一对一绑定
 - 持久化 Run、Node、Attempt、事件和动作回执
@@ -218,12 +221,14 @@ read -> plan -> edit -> test -> summarize
 
 ## 当前边界
 
-M7.4 已开放公共多轮 TeamSession、follow-up、单 Turn 取消和主动 close；M7.5 提供独立的可选 Web Team 客户端。当前仍不包含通用 Shell/HTTP/容器节点、动态 Driver 发现、内置 Harness 或 Claude/第三方 Driver。真实 Provider smoke 是显式本地 gate，不是公共 CI 的前置条件。
+M7.4 已开放公共多轮 TeamSession、follow-up、单 Turn 取消和主动 close；M7.5 提供独立的可选 Web Team 客户端。Team Driver 采用显式可信 Route 配置，不做动态 Driver 扫描；Workflow Backend 仍不扩展到 Claude Code/OpenCode，也不包含通用 Shell/HTTP/容器节点。真实 Provider smoke 是显式本地 gate，不是公共 CI 的前置条件。
+M7.6 补齐 Host-Web Continuity：Host Agent 可在创建 Team、冻结 Handoff 或启动 Run 后打开/聚焦可选 Web 客户端；Web 仍只是同一 Control Plane 的投影，TUI 继续只支持 Workflow Run。
 
 ## 文档
 
 - [文档总览](./docs/README.md)
 - [Workflow 编排指南](./docs/fishyume-workflow-authoring.md)
+- [Team Agent Routes](./docs/fishyume-team-agent-routes.md)
 - [M6 核心合同冻结](./docs/fishyume-m6-core-contract-freeze.md)
 - [核心稳定化与就绪状态](./docs/fishyume-core-stabilization.md)
 - [M7 Team 与 Workflow Promotion 计划](./docs/fishyume-m7-session-native-web-team-console-plan.md)
@@ -231,6 +236,7 @@ M7.4 已开放公共多轮 TeamSession、follow-up、单 Turn 取消和主动 cl
 - [M7.2 Handoff 验收记录](./docs/fishyume-m7.2-acceptance.md)
 - [M7.3 AgentSession Driver 验收记录](./docs/fishyume-m7.3-acceptance.md)
 - [M7.5 可选 Web 客户端验收记录](./docs/fishyume-m7.5-acceptance.md)
+- [M7.6 Host-Web Continuity](./docs/fishyume-m7.6-host-web-continuity.md)
 - [首次使用与安装说明](./docs/fishyume-distribution-first-run.md)
 - [开发与验证](./docs/fishyume-development.md)
 - [Live Provider smoke](./docs/fishyume-m4-live-smoke.md)

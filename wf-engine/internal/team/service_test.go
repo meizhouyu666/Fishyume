@@ -62,6 +62,72 @@ func startRequest(project, requestID string) teamcontract.TeamStartRequestV1 {
 	return teamcontract.TeamStartRequestV1{SchemaVersion: teamcontract.SchemaVersion, ClientRequestID: requestID, Project: project, Mode: teamcontract.ModePanel, Topic: "Compare two approaches"}
 }
 
+func TestServiceUsesInjectedAgentRouteCatalog(t *testing.T) {
+	catalog := routing.CapabilityCatalogV1{
+		SchemaVersion: routing.CapabilityCatalogV1Version,
+		PolicyVersion: routing.RoutingPolicyV1Version,
+		Models: []routing.ModelCapabilityV1{
+			{ID: "claude/default/sonnet", Target: routing.Target{Driver: "claude", Provider: "default", Model: "sonnet"}, Capabilities: []routing.Capability{routing.CapabilityRepoRead}, ContextLimitBytes: 256 * 1024, MaxOutputBytes: 64 * 1024, Quality: routing.QualityPremium, Cost: routing.CostHigh, Latency: routing.LatencyBalanced, SupportsCancellation: true},
+			{ID: "opencode/deepseek/deepseek-chat", Target: routing.Target{Driver: "opencode", Provider: "deepseek", Model: "deepseek-chat"}, Capabilities: []routing.Capability{routing.CapabilityRepoRead}, ContextLimitBytes: 128 * 1024, MaxOutputBytes: 32 * 1024, Quality: routing.QualityBalanced, Cost: routing.CostLow, Latency: routing.LatencyFast, SupportsCancellation: true},
+		},
+	}
+	service, err := NewServiceWithCatalog(store.New(t.TempDir()), catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilities, err := service.Capabilities()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(capabilities.ParticipantTemplates) != 2 || capabilities.ParticipantTemplates[0].ModelID != "claude/default/sonnet" || capabilities.ParticipantTemplates[1].ModelID != "opencode/deepseek/deepseek-chat" {
+		t.Fatalf("capabilities did not use injected catalog: %+v", capabilities.ParticipantTemplates)
+	}
+	project := filepath.Join(t.TempDir(), "project")
+	if err := os.MkdirAll(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Start(context.Background(), startRequest(project, "configured-routes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Team.CostUsed != 101 || result.Team.Participants[0].Driver != "claude" || result.Team.Participants[1].Driver != "opencode" {
+		t.Fatalf("Team did not bind injected routes: %+v", result.Team)
+	}
+	wantHash, _ := routing.CatalogHash(routing.CanonicalCatalogV1(catalog))
+	if result.Team.CatalogHash != wantHash {
+		t.Fatalf("catalog hash = %s, want %s", result.Team.CatalogHash, wantHash)
+	}
+}
+
+func TestCapabilitiesExposeEveryConfiguredAgentRoute(t *testing.T) {
+	models := make([]routing.ModelCapabilityV1, 0, 3)
+	for _, route := range []struct{ id, driver, provider, model string }{
+		{"claude/default/sonnet", "claude", "default", "sonnet"},
+		{"codex/local/gpt-5.6-sol", "codex", "local", "gpt-5.6-sol"},
+		{"opencode/deepseek/deepseek-chat", "opencode", "deepseek", "deepseek/deepseek-chat"},
+	} {
+		models = append(models, routing.ModelCapabilityV1{ID: route.id, Target: routing.Target{Driver: route.driver, Provider: route.provider, Model: route.model}, Capabilities: []routing.Capability{routing.CapabilityRepoRead}, ContextLimitBytes: 128 * 1024, MaxOutputBytes: 32 * 1024, Quality: routing.QualityBalanced, Cost: routing.CostLow, Latency: routing.LatencyFast, SupportsCancellation: true})
+	}
+	service, err := NewServiceWithCatalog(store.New(t.TempDir()), routing.CapabilityCatalogV1{SchemaVersion: routing.CapabilityCatalogV1Version, PolicyVersion: routing.RoutingPolicyV1Version, Models: models})
+	if err != nil {
+		t.Fatal(err)
+	}
+	capabilities, err := service.Capabilities()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(capabilities.ParticipantTemplates) != 3 || capabilities.ParticipantTemplates[2].ModelID != "opencode/deepseek/deepseek-chat" {
+		t.Fatalf("configured routes are not discoverable: %+v", capabilities.ParticipantTemplates)
+	}
+}
+
+func TestServiceRejectsCatalogThatCannotFormATeam(t *testing.T) {
+	catalog := routing.CapabilityCatalogV1{SchemaVersion: routing.CapabilityCatalogV1Version, PolicyVersion: routing.RoutingPolicyV1Version, Models: []routing.ModelCapabilityV1{{ID: "codex/local/model", Target: routing.Target{Driver: "codex", Provider: "local", Model: "model"}, Capabilities: []routing.Capability{routing.CapabilityRepoRead}, ContextLimitBytes: 1024, MaxOutputBytes: 512, Quality: routing.QualityBalanced, Cost: routing.CostLow, Latency: routing.LatencyFast, SupportsCancellation: true}}}
+	if _, err := NewServiceWithCatalog(store.New(t.TempDir()), catalog); err == nil {
+		t.Fatal("single-route Team catalog was accepted")
+	}
+}
+
 func TestStartPreparesDefaultPanelWithoutCreatingWorkflowRun(t *testing.T) {
 	project := filepath.Join(t.TempDir(), "project")
 	if err := os.MkdirAll(project, 0o700); err != nil {

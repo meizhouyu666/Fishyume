@@ -10,6 +10,7 @@ import type {EngineHello} from '../bridge/types.js';
 import {runMachine} from '../commands/machine.js';
 import type {TeamCapabilities} from '../bridge/team.js';
 import {createMCPServer, runMCPTransport} from './server.js';
+import type {WebOpenManager} from './web.js';
 
 const capabilities: SystemCapabilitiesResponse = {
   apiVersion: 'fishyume.application/v1', workflowSchemaVersion: 'fishyume/v1', workflowSchema: {type: 'object'},
@@ -145,7 +146,7 @@ test('MCP and Machine CLI expose identical Application response JSON', async () 
   await Promise.all([mcpServer.connect(serverTransport), mcpClient.connect(clientTransport)]);
   try {
     const listed = await mcpClient.listTools();
-    assert.deepEqual(listed.tools.map(tool => tool.name), ['system.capabilities', 'routing.catalog', 'workflow.validate', 'workflow.explain', 'run.start', 'run.list', 'run.get', 'run.events', 'run.action', 'run.result', 'memory.create', 'memory.get', 'memory.list', 'memory.supersede', 'memory.delete', 'team.capabilities', 'team.start', 'team.list', 'team.get', 'team.events', 'team.messages', 'team.action', 'team.handoff.create', 'team.handoff.get', 'team.handoff.list', 'team.handoff.bindRun']);
+    assert.deepEqual(listed.tools.map(tool => tool.name), ['system.capabilities', 'routing.catalog', 'workflow.validate', 'workflow.explain', 'run.start', 'run.list', 'run.get', 'run.events', 'run.action', 'run.result', 'memory.create', 'memory.get', 'memory.list', 'memory.supersede', 'memory.delete', 'team.capabilities', 'team.start', 'team.list', 'team.get', 'team.events', 'team.messages', 'team.action', 'team.handoff.create', 'team.handoff.get', 'team.handoff.list', 'team.handoff.bindRun', 'web.open']);
     for (const tool of listed.tools) {
       const schema = JSON.stringify(tool.inputSchema);
       for (const legacy of ['"backend"', '"tool"', '"runtime"']) assert.equal(schema.includes(legacy), false, `${tool.name} exposed ${legacy}`);
@@ -213,6 +214,27 @@ test('MCP Memory writes use the fixed host_agent RPC facade and require an audit
     assert.notEqual(result.isError, true);
     assert.equal(engine.calls.at(-1)?.method, 'memory.host.create');
     assert.deepEqual(engine.calls.at(-1)?.params, {project: 'p', mutationId: 'm', type: 'fact', content: 'value', sensitivity: 'project', reason: 'explicit host audit'});
+  } finally {
+    await host.close();
+    await server.close();
+  }
+});
+
+test('M7.6 exposes Host-directed Web focus without changing Team or Application contracts', async () => {
+  const calls: unknown[] = [];
+  const web: WebOpenManager = {
+    async open(target) {calls.push(target); return {status: 'focused', target}},
+    async close() {},
+  };
+  const server = createMCPServer(new FakeApplicationClient(), web);
+  const host = new Client({name: 'web-host', version: '1.0.0'});
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverTransport), host.connect(clientTransport)]);
+  try {
+    const result = await host.callTool({name: 'web.open', arguments: {target: {kind: 'handoff', teamId: 'team-1', handoffId: 'handoff-1'}}});
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(result.structuredContent, {status: 'focused', target: {kind: 'handoff', teamId: 'team-1', handoffId: 'handoff-1'}});
+    assert.deepEqual(calls, [{kind: 'handoff', teamId: 'team-1', handoffId: 'handoff-1'}]);
   } finally {
     await host.close();
     await server.close();

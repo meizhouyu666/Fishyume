@@ -19,6 +19,7 @@ type supervisorConfig struct {
 	Executable     string   `json:"executable"`
 	Workspace      string   `json:"workspace"`
 	Args           []string `json:"args"`
+	Env            []string `json:"env,omitempty"`
 	EventsPath     string   `json:"eventsPath"`
 	StderrPath     string   `json:"stderrPath"`
 	ReadyPath      string   `json:"readyPath"`
@@ -55,6 +56,7 @@ func RunSupervisor(configPath string) int {
 	defer stderr.Close()
 	command := exec.Command(config.Executable, config.Args...)
 	command.Dir = config.Workspace
+	command.Env = append(os.Environ(), config.Env...)
 	command.Stdin = bytes.NewReader(prompt)
 	command.Stdout = events
 	command.Stderr = stderr

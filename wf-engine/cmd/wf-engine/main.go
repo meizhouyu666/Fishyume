@@ -11,7 +11,9 @@ import (
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/controlplane"
 	"wf.local/wf-engine/internal/driver/codex"
+	"wf.local/wf-engine/internal/driver/harnesssession"
 	"wf.local/wf-engine/internal/driver/scheduleradapter"
+	"wf.local/wf-engine/internal/routing"
 	"wf.local/wf-engine/internal/rpc"
 	"wf.local/wf-engine/internal/run"
 	"wf.local/wf-engine/internal/store"
@@ -35,7 +37,16 @@ func main() {
 	}
 	service := run.NewServiceWithRegistry(registry, "codex", state)
 	applicationService := application.NewService(service, "codex", state)
-	teamService := team.NewService(state)
+	teamCatalog, err := routing.LoadCatalogFromEnvironment()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	teamService, err := team.NewServiceWithCatalog(state, teamCatalog)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if err := teamService.SetRunLookup(func(runID string) (string, error) {
 		snapshot, err := service.Get(runID)
 		return snapshot.Project, err
@@ -50,6 +61,36 @@ func main() {
 	if err := teamService.SetSessionDriver(codexDriver.Session()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if catalogHasDriver(teamCatalog, "claude") {
+		claudeDriver, err := harnesssession.NewClaude(harnesssession.Config{StateRoot: state.Root(), Catalog: teamCatalog})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err := teamService.SetSessionDriver(claudeDriver); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err := teamService.SetDriver(claudeDriver.Exploration()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+	if catalogHasDriver(teamCatalog, "opencode") {
+		opencodeDriver, err := harnesssession.NewOpenCode(harnesssession.Config{StateRoot: state.Root(), Catalog: teamCatalog})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err := teamService.SetSessionDriver(opencodeDriver); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err := teamService.SetDriver(opencodeDriver.Exploration()); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	}
 	if len(os.Args) == 2 && os.Args[1] == "serve" {
 		if err := serveControlPlane(state, service, applicationService, teamService); err != nil {
@@ -71,6 +112,15 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func catalogHasDriver(catalog routing.CapabilityCatalogV1, name string) bool {
+	for _, model := range catalog.Models {
+		if model.Target.Driver == name {
+			return true
+		}
+	}
+	return false
 }
 
 func serveControlPlane(state *store.Store, service *run.Service, applicationService *application.Service, teamService *team.Service) error {

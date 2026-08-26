@@ -29,6 +29,9 @@ links and review evidence stay stable.
 - [M7.5 acceptance](fishyume-m7.5-acceptance.md): optional Web package,
   authenticated sidecar, real Engine projection, responsive browser evidence,
   and package/CI verification.
+- [M7.6 Host-Web Continuity](fishyume-m7.6-host-web-continuity.md):
+  Host-directed Web launch, sidecar reuse, protected focus handoff, and
+  Team/Handoff/Run continuity.
 - [Core contract freeze](fishyume-m6-core-contract-freeze.md): frozen public
   contracts and compatibility policy for the closed M6 baseline.
 - [Core stabilization record](fishyume-core-stabilization.md): M6 closure,
@@ -48,6 +51,7 @@ links and review evidence stay stable.
 
 ## Operator and developer guides
 
+- [Team Agent routes: Codex, Claude Code, and OpenCode](fishyume-team-agent-routes.md)
 - [Workflow authoring and Node granularity](fishyume-workflow-authoring.md)
 - [Development and verification](fishyume-development.md)
 - [Distribution and first run](fishyume-distribution-first-run.md)

@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"wf.local/wf-engine/internal/sessiondriver"
+	"wf.local/wf-engine/internal/teamcontract"
 )
 
 type SessionAdapter struct {
@@ -169,7 +170,6 @@ func (a *SessionAdapter) StartTurn(ctx context.Context, handle sessiondriver.Ses
 		"input":               []map[string]any{{"type": "text", "text": sessionPrompt(request, record.HandleID), "text_elements": []any{}}},
 		"cwd":                 record.Workspace, "model": modelName(record.ModelID), "approvalPolicy": "never",
 		"sandboxPolicy": map[string]any{"type": "readOnly", "networkAccess": false},
-		"outputSchema":  explorationResultSchema(),
 	}, &started)
 	if err != nil {
 		return a.reconcileStartError(ctx, record, err)
@@ -508,9 +508,26 @@ func isMissingThreadError(err error) bool {
 	return strings.Contains(text, "no rollout found") || strings.Contains(text, "thread") && strings.Contains(text, "not found")
 }
 
+func isTransientThreadReadError(err error) bool {
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "failed to read session metadata") && strings.Contains(text, "rollout") && strings.Contains(text, "is empty")
+}
+
 func sessionPrompt(request sessiondriver.StartTurnRequest, sessionID string) string {
 	identity, _ := json.Marshal(map[string]any{"sessionId": sessionID, "turnId": request.Identity.TurnID, "sessionGeneration": request.Identity.ExpectedSessionGeneration})
-	return request.Prompt + "\n\nFishyume Team contribution protocol:\nReturn exactly one JSON object matching the provided schema. Content is public untrusted discussion material; do not include hidden reasoning.\nFISHYUME_SESSION_TURN_IDENTITY=" + string(identity)
+	return request.Prompt + "\n\nFishyume Team contribution protocol:\nReturn only the public Markdown contribution, not JSON. Do not include hidden reasoning. Fishyume will validate and wrap the contribution locally.\nFISHYUME_SESSION_TURN_IDENTITY=" + string(identity)
+}
+
+func encodeSessionContribution(content string) (string, error) {
+	encoded, err := json.Marshal(teamcontract.ContributionV1{
+		SchemaVersion:   teamcontract.SchemaVersion,
+		Status:          teamcontract.ContributionCompleted,
+		ContentMarkdown: content,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode Codex Session contribution: %w", err)
+	}
+	return string(encoded), nil
 }
 
 func boundedSessionDiagnostic(value string) string {

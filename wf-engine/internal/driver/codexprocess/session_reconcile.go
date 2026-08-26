@@ -32,6 +32,9 @@ func (a *SessionAdapter) reconcileTurn(ctx context.Context, record sessionRecord
 	}
 	var read appThreadReadResponse
 	if err := client.request(ctx, "thread/read", map[string]any{"threadId": record.ThreadID, "includeTurns": true}, &read); err != nil {
+		if isTransientThreadReadError(err) {
+			return record, nil
+		}
 		return record, err
 	}
 	if read.Thread.ID != record.ThreadID || read.Thread.SessionID != record.ExternalSessionID || !samePath(read.Thread.CWD, record.Workspace) {
@@ -147,7 +150,11 @@ func mapAppTurn(turn appTurn, maxBytes int) (sessiondriver.TurnState, string, st
 		if len([]byte(output)) > maxBytes {
 			return sessiondriver.TurnFailed, "", fmt.Sprintf("Codex response exceeds %d bytes", maxBytes)
 		}
-		return sessiondriver.TurnResponded, output, ""
+		encoded, err := encodeSessionContribution(output)
+		if err != nil {
+			return sessiondriver.TurnFailed, "", boundedSessionDiagnostic(err.Error())
+		}
+		return sessiondriver.TurnResponded, encoded, ""
 	default:
 		return sessiondriver.TurnLost, "", boundedSessionDiagnostic("unsupported Codex turn status " + turn.Status)
 	}

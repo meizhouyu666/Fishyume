@@ -251,7 +251,7 @@ func (s *Service) preflightFollowUpLocked(snapshot teamcontract.TeamSessionV1, f
 		}
 		selected = append(selected, *participant)
 	}
-	additionalCost := participantCost(selected, snapshot.CatalogHash)
+	additionalCost := s.participantCost(selected, snapshot.CatalogHash)
 	if additionalCost > teamcontract.MaxCostGrant || snapshot.CostUsed+additionalCost > snapshot.CostGrant {
 		return ErrQuotaExceeded
 	}
@@ -311,7 +311,7 @@ func (s *Service) commitFollowUp(action teamcontract.TeamActionV1, intent action
 			return teamcontract.TeamActionResponseV1{}, err
 		}
 	}
-	catalog := routing.BuiltinCatalogV1()
+	catalog := s.catalog
 	cumulative, err := persistedTeamCost(s.state, action.TeamID)
 	if err != nil {
 		return teamcontract.TeamActionResponseV1{}, err

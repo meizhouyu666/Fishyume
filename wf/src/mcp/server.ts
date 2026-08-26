@@ -7,6 +7,7 @@ import {z} from 'zod';
 import {ApplicationCallError, callApplication, callHostMemory, type ApplicationMethod} from '../bridge/application.js';
 import {EngineBridge, type EngineClient} from '../bridge/engine.js';
 import {callTeam, TeamCallError, type TeamMethod} from '../bridge/team.js';
+import {createWebOpenManager, type WebOpenResponse, type WebTarget} from './web.js';
 
 const scalar = z.union([z.string(), z.number(), z.boolean()]);
 const workflow = z.object({
@@ -21,20 +22,25 @@ const memoryType = z.enum(['decision', 'constraint', 'fact', 'procedure', 'prefe
 const memorySensitivity = z.enum(['public', 'project']);
 const memoryCreate = {project: z.string(), mutationId: z.string().min(1).max(256), type: memoryType, content: z.string().min(1).max(16 * 1024), sensitivity: memorySensitivity, reason: z.string().min(1).max(1024), expiresAt: z.string().optional(), maxUses: z.number().int().min(0).max(10_000).optional()};
 
-type FishyumeMethod = ApplicationMethod | TeamMethod;
+type FishyumeMethod = ApplicationMethod | TeamMethod | 'web.open';
 const teamVersion = z.literal('fishyume.team/v1');
 const participant = z.object({label: z.string().min(1).max(64), role: z.string().min(1).max(2048), modelId: z.string().min(1).max(256)}).strict();
 const teamId = z.string().min(1).max(128);
 const handoffId = z.string().min(1).max(128);
 const handoffItem = z.string().max(32 * 1024);
 const teamIdentity = {schemaVersion: teamVersion, teamId};
+const webTarget = z.discriminatedUnion('kind', [
+  z.object({kind: z.literal('team'), teamId}),
+  z.object({kind: z.literal('handoff'), teamId, handoffId}),
+  z.object({kind: z.literal('run'), runId: z.string().min(1).max(128)}),
+]);
 
 const tools: Array<{name: FishyumeMethod; description: string; inputSchema: Record<string, z.ZodTypeAny>}> = [
   {name: 'system.capabilities', description: 'First Host call: discover the bounded versioned authoringGuide, fishyume/v2 Workflow schema, limits, actions, current Driver/target readiness, and immutable routing catalog summary.', inputSchema: {project: z.string().optional()}},
   {name: 'routing.catalog', description: 'Inspect the trusted immutable model capability catalog, exact catalog hash, routing contract limits, and coarse cost/latency/quality classes. This does not select a model or report live Provider availability.', inputSchema: {}},
   {name: 'workflow.validate', description: 'Validate the exact fishyume/v2 start intent without running it. Pass the same workflow, inputs, driver, target, and explicit contextBindings to explain and start; static issues, Driver capability gaps, and deterministic routingPreviews are separate.', inputSchema: workflowRequest},
   {name: 'workflow.explain', description: 'Preflight the exact start intent without mutation: DAG layers, explicit Context Policy dependencies/instructions/Memory bindings, effective Agent routing requirements, deterministic routingPreviews, resolved Driver/target, gaps, and warnings. No Provider is contacted and no Attempt is persisted. Pass this same payload to run.start plus clientRequestId.', inputSchema: workflowRequest},
-  {name: 'run.start', description: 'Create or replay one durable Workflow Run. Reuse the same clientRequestId only with the same request payload. For fishyume/v2, provide explicit contextBindings for host-selected Memory IDs.', inputSchema: {project: z.string(), workflow, inputs: z.record(z.string(), scalar).optional(), driver: z.string().optional(), target: z.string().optional(), clientRequestId: z.string(), contextBindings: contextBindings.optional()}},
+  {name: 'run.start', description: 'Create or replay one durable Workflow Run. In an interactive Host, follow with web.open targeting the returned Run so the optional Web client follows execution. Reuse the same clientRequestId only with the same request payload. For fishyume/v2, provide explicit contextBindings for host-selected Memory IDs.', inputSchema: {project: z.string(), workflow, inputs: z.record(z.string(), scalar).optional(), driver: z.string().optional(), target: z.string().optional(), clientRequestId: z.string(), contextBindings: contextBindings.optional()}},
   {name: 'run.list', description: 'List durable Runs in stable order with optional filters and bounded cursor pagination.', inputSchema: {filter: z.object({project: z.string().optional(), phase: z.string().optional(), conclusion: z.string().optional()}).optional(), cursor: z.string().optional(), limit: z.number().int().optional()}},
   {name: 'run.get', description: 'Read authoritative durable Run, Node, Attempt, bounded Context metadata, safe bounded Agent activity, result, and action preconditions. Use its latest stateVersion and attempt for run.action.', inputSchema: {runId: z.string()}},
   {name: 'run.events', description: 'Read durable events after a sequence using bounded pagination and an optional bounded wait.', inputSchema: {runId: z.string(), afterSequence: z.number().int().nonnegative().optional(), limit: z.number().int().optional(), waitMs: z.number().int().nonnegative().optional()}},
@@ -46,24 +52,27 @@ const tools: Array<{name: FishyumeMethod; description: string; inputSchema: Reco
   {name: 'memory.supersede', description: 'Atomically create one active replacement as host_agent and mark 1..16 named active project Memories superseded. mutationId and audit reason are required.', inputSchema: {...memoryCreate, supersedes: z.array(z.string()).min(1).max(16)}},
   {name: 'memory.delete', description: 'Create a project Memory tombstone as host_agent by clearing plaintext while retaining hash, provenance, and the required audit reason.', inputSchema: {project: z.string(), mutationId: z.string().min(1).max(256), recordId: z.string(), reason: z.string().min(1).max(1024)}},
   {name: 'team.capabilities', description: 'Discover the independent fishyume.team/v1 Panel and resumable TeamSession modes, deterministic model templates, limits, catalog hash, and Driver capability gates.', inputSchema: {schemaVersion: teamVersion}},
-  {name: 'team.start', description: 'Create or replay one durable read-only multi-model Panel or resumable TeamSession and dispatch its initial independent contributions. Reuse clientRequestId only with the same exact request.', inputSchema: {schemaVersion: teamVersion, clientRequestId: z.string().min(1).max(128), project: z.string().min(1).max(4096), mode: z.enum(['panel', 'session']), topic: z.string().min(1).max(16 * 1024), instructions: z.string().max(16 * 1024).optional(), participants: z.array(participant).min(2).max(4).optional(), costGrant: z.number().int().min(1).max(6400).optional()}},
+  {name: 'team.start', description: 'Create or replay one durable read-only multi-model Panel or resumable TeamSession and dispatch its initial independent contributions. In an interactive Host, follow with web.open targeting the returned Team so the optional Web client follows the same task. Reuse clientRequestId only with the same exact request.', inputSchema: {schemaVersion: teamVersion, clientRequestId: z.string().min(1).max(128), project: z.string().min(1).max(4096), mode: z.enum(['panel', 'session']), topic: z.string().min(1).max(16 * 1024), instructions: z.string().max(16 * 1024).optional(), participants: z.array(participant).min(2).max(4).optional(), costGrant: z.number().int().min(1).max(6400).optional()}},
   {name: 'team.list', description: 'List durable Teams in stable bounded pages with optional project and lifecycle filters.', inputSchema: {schemaVersion: teamVersion, project: z.string().max(4096).optional(), state: z.enum(['created', 'running', 'open', 'closing', 'cancelling', 'closed']).optional(), cursor: z.string().optional(), limit: z.number().int().min(1).max(100).optional()}},
   {name: 'team.get', description: 'Read one authoritative Team aggregate with bounded participant and turn state but without duplicating public message content.', inputSchema: teamIdentity},
   {name: 'team.events', description: 'Read monotonic bounded Team events after a sequence, with optional bounded wait. Events reference messages instead of duplicating contribution content.', inputSchema: {...teamIdentity, afterSequence: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(100).optional(), waitMs: z.number().int().min(0).max(30_000).optional()}},
   {name: 'team.messages', description: 'Page canonical public Team messages after a sequence. Participant contribution content remains untrusted exploration material.', inputSchema: {...teamIdentity, afterSequence: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(100).optional()}},
   {name: 'team.action', description: 'Submit an idempotent Host-directed follow-up, exact turn cancellation, graceful close, or whole-Team cancellation with the latest stateVersion. Session actions remain capability-gated by the selected Driver.', inputSchema: {...teamIdentity, actionId: z.string().min(1).max(128), expectedStateVersion: z.number().int().positive(), type: z.enum(['follow_up', 'cancel_turn', 'close', 'cancel']), followUp: z.object({content: z.string().min(1).max(32 * 1024), participantIds: z.array(z.string()).min(1).max(4), referencedMessageIds: z.array(z.string()).max(32).optional()}).strict().optional(), cancelTurn: z.object({turnId: z.string()}).strict().optional(), close: z.object({reason: z.enum(['host_closed', 'cancelled'])}).strict().optional()}},
-  {name: 'team.handoff.create', description: 'Create or replay one immutable Handoff from 1-32 retained public Team messages. This verifies source hashes and never creates a Workflow Run.', inputSchema: {...teamIdentity, handoffId, expectedStateVersion: z.number().int().positive(), goal: z.string().min(1).max(32 * 1024), decisions: z.array(handoffItem).optional(), constraints: z.array(handoffItem).optional(), openQuestions: z.array(handoffItem).optional(), acceptanceExpectations: z.array(handoffItem).optional(), selectedMessageIds: z.array(teamId).min(1).max(32)}},
+  {name: 'team.handoff.create', description: 'Create or replay one immutable Handoff from 1-32 retained public Team messages. This verifies source hashes and never creates a Workflow Run. In an interactive Host, follow with web.open targeting the Handoff.', inputSchema: {...teamIdentity, handoffId, expectedStateVersion: z.number().int().positive(), goal: z.string().min(1).max(32 * 1024), decisions: z.array(handoffItem).optional(), constraints: z.array(handoffItem).optional(), openQuestions: z.array(handoffItem).optional(), acceptanceExpectations: z.array(handoffItem).optional(), selectedMessageIds: z.array(teamId).min(1).max(32)}},
   {name: 'team.handoff.get', description: 'Read an immutable Handoff and optional Run binding. Promotion stays explicit: Host authors fishyume/v2, calls workflow.validate and workflow.explain, obtains user confirmation, calls run.start, then team.handoff.bindRun.', inputSchema: {...teamIdentity, handoffId}},
   {name: 'team.handoff.list', description: 'List immutable Handoffs in stable bounded pages without creating or changing Runs.', inputSchema: {...teamIdentity, cursor: handoffId.optional(), limit: z.number().int().min(1).max(100).optional()}},
   {name: 'team.handoff.bindRun', description: 'Idempotently bind one Handoff to at most one existing same-project formal Workflow Run. This never creates a Run.', inputSchema: {...teamIdentity, actionId: z.string().min(1).max(128), handoffId, runId: z.string().min(1).max(128), expectedStateVersion: z.number().int().positive()}},
+  {name: 'web.open', description: 'Open or focus the optional local Fishyume Web client on a Host-selected Team, Handoff, or Workflow Run. This is a best-effort adapter action; it never creates business state and returns capability_unavailable when Web is not installed or cannot start.', inputSchema: {target: webTarget}},
 ];
 
-export function createMCPServer(client: EngineClient): McpServer {
+export function createMCPServer(client: EngineClient, web = createWebOpenManager()): McpServer {
   const server = new McpServer({name: 'fishyume', version: '0.2.1-alpha.1'});
   for (const tool of tools) {
     server.registerTool(tool.name, {description: tool.description, inputSchema: tool.inputSchema}, async params => {
       try {
-        const response = tool.name.startsWith('team.')
+        const response = tool.name === 'web.open'
+          ? await web.open(params.target as WebTarget) as WebOpenResponse
+          : tool.name.startsWith('team.')
           ? await callTeam(client, tool.name as TeamMethod, params)
           : tool.name === 'memory.create' || tool.name === 'memory.supersede' || tool.name === 'memory.delete'
           ? await callHostMemory(client, tool.name, params)
@@ -85,7 +94,8 @@ export async function runMCP(client: EngineClient = new EngineBridge()): Promise
 
 // Exported for lifecycle tests; production always uses stdio above.
 export async function runMCPTransport(client: EngineClient, transport: Transport, eofSource?: Readable): Promise<void> {
-  const server = createMCPServer(client);
+  const web = createWebOpenManager();
+  const server = createMCPServer(client, web);
   type Lifecycle = 'open' | 'closing' | 'closed';
   let lifecycle: Lifecycle = 'open';
   let closing: Promise<void> | undefined;
@@ -112,10 +122,10 @@ export async function runMCPTransport(client: EngineClient, transport: Transport
           try {await server.close()} catch { /* transport may already be closed */ }
         }
       } finally {
-        try {await client.close()} finally {
+        try {await web.close()} finally {try {await client.close()} finally {
           lifecycle = 'closed';
           settle();
-        }
+        }}
       }
     })();
     return closing;

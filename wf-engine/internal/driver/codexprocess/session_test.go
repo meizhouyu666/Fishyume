@@ -128,6 +128,45 @@ func TestCodexSessionReconcilesLostTurnStartResponseWithoutRelaunch(t *testing.T
 	}
 }
 
+func TestCodexSessionTreatsEmptyRolloutReadAsTransient(t *testing.T) {
+	adapter, _, workspace, _ := newSessionFixture(t)
+	t.Setenv("FISHYUME_FAKE_EMPTY_THREAD_READ_ONCE", "1")
+	started, err := adapter.StartSession(context.Background(), sessionStartRequest(workspace))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.StartTurn(context.Background(), *started, sessionTurnRequest("turn-empty-rollout", "fixture response"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := adapter.ObserveTurn(context.Background(), result.Session, result.Turn)
+	if err != nil || first.State != sessiondriver.TurnActive {
+		t.Fatalf("transient empty rollout observation=%+v err=%v", first, err)
+	}
+	second, err := adapter.ObserveTurn(context.Background(), first.Session, first.Turn)
+	if err != nil || second.State != sessiondriver.TurnResponded {
+		t.Fatalf("recovered empty rollout observation=%+v err=%v", second, err)
+	}
+}
+
+func TestCodexSessionWrapsMarkdownAsContribution(t *testing.T) {
+	state, output, diagnostic := mapAppTurn(appTurn{Status: "completed", Items: []appThreadItem{{Type: "agentMessage", Text: "# Quiet operations\n\nUse neutral surfaces."}}}, 32*1024)
+	if state != sessiondriver.TurnResponded || diagnostic != "" {
+		t.Fatalf("wrapped Markdown state=%q diagnostic=%q", state, diagnostic)
+	}
+	var contribution struct {
+		SchemaVersion   string `json:"schemaVersion"`
+		Status          string `json:"status"`
+		ContentMarkdown string `json:"contentMarkdown"`
+	}
+	if err := json.Unmarshal([]byte(output), &contribution); err != nil {
+		t.Fatal(err)
+	}
+	if contribution.SchemaVersion != "fishyume.team/v1" || contribution.Status != "completed" || contribution.ContentMarkdown != "# Quiet operations\n\nUse neutral surfaces." {
+		t.Fatalf("wrapped contribution=%+v", contribution)
+	}
+}
+
 func TestCodexSessionRejectsStaleGenerationAndTurnIdentity(t *testing.T) {
 	adapter, _, workspace, _ := newSessionFixture(t)
 	started, err := adapter.StartSession(context.Background(), sessionStartRequest(workspace))

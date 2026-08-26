@@ -10,8 +10,9 @@ import (
 )
 
 type state struct {
-	Thread   *thread `json:"thread,omitempty"`
-	NextTurn int     `json:"nextTurn"`
+	Thread            *thread `json:"thread,omitempty"`
+	NextTurn          int     `json:"nextTurn"`
+	EmptyReadFailures int     `json:"emptyReadFailures,omitempty"`
 }
 
 type thread struct {
@@ -82,6 +83,9 @@ func handle(path string, value *state, message request) {
 		decode(message.Params, &params)
 		value.Thread = &thread{ID: "fixture-thread", SessionID: "fixture-session", CWD: params.CWD}
 		value.NextTurn = 1
+		if os.Getenv("FISHYUME_FAKE_EMPTY_THREAD_READ_ONCE") == "1" {
+			value.EmptyReadFailures = 1
+		}
 		persist(path, *value)
 		respond(message.ID, threadResponse(value.Thread, params.Model, params.ApprovalPolicy))
 	case "thread/resume":
@@ -104,6 +108,12 @@ func handle(path string, value *state, message request) {
 		decode(message.Params, &params)
 		if value.Thread == nil || params.ThreadID != value.Thread.ID {
 			fail(message.ID, "thread not found")
+			return
+		}
+		if value.EmptyReadFailures > 0 {
+			value.EmptyReadFailures--
+			persist(path, *value)
+			fail(message.ID, "failed to read thread: thread-store internal error: failed to read session metadata rollout fixture.jsonl: rollout fixture.jsonl is empty")
 			return
 		}
 		respond(message.ID, map[string]any{"thread": externalThread(value.Thread)})
@@ -176,7 +186,7 @@ func contribution(prompt string) string {
 	if strings.Contains(prompt, "follow-up") {
 		label = "fixture directed follow-up"
 	}
-	return fmt.Sprintf(`{"schemaVersion":"fishyume.team/v1","status":"completed","contentMarkdown":%q,"warnings":[],"openQuestions":[]}`, label)
+	return label
 }
 
 func threadResponse(value *thread, model, approval string) map[string]any {
