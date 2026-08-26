@@ -30,6 +30,7 @@ export const fishyumeMcpTools = [
   'team.handoff.get',
   'team.handoff.list',
   'team.handoff.bindRun',
+  'web.open',
 ] as const;
 
 export function codexConfigPath(environment: NodeJS.ProcessEnv = process.env): string {

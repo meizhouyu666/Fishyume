@@ -31,6 +31,13 @@ test('repository excludes retired execution paths and local agent configuration'
   assert.match(ignore, /^\.codex\/$/m);
 });
 
+test('Windows preview upgrade checks active Runs through the structured API', async () => {
+  const installer = await readFile(resolve(repoRoot, 'install-fishyume.ps1'), 'utf8');
+  assert.match(installer, /machine run\.list --params \$params/);
+  assert.match(installer, /ConvertFrom-Json/);
+  assert.doesNotMatch(installer, /\\b\(\\d\+\) active\\b/);
+});
+
 test('repository markdown has no broken relative links', async () => {
   const files = [resolve(repoRoot, 'README.md'), ...await markdownFiles(resolve(repoRoot, 'docs'))];
   const broken = [];

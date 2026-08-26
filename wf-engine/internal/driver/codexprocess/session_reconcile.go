@@ -150,7 +150,7 @@ func mapAppTurn(turn appTurn, maxBytes int) (sessiondriver.TurnState, string, st
 		if len([]byte(output)) > maxBytes {
 			return sessiondriver.TurnFailed, "", fmt.Sprintf("Codex response exceeds %d bytes", maxBytes)
 		}
-		encoded, err := encodeSessionContribution(output)
+		encoded, err := encodeTeamContribution(output)
 		if err != nil {
 			return sessiondriver.TurnFailed, "", boundedSessionDiagnostic(err.Error())
 		}

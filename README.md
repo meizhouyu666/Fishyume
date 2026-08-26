@@ -237,6 +237,7 @@ M7.6 补齐 Host-Web Continuity：Host Agent 可在创建 Team、冻结 Handoff 
 - [M7.3 AgentSession Driver 验收记录](./docs/fishyume-m7.3-acceptance.md)
 - [M7.5 可选 Web 客户端验收记录](./docs/fishyume-m7.5-acceptance.md)
 - [M7.6 Host-Web Continuity](./docs/fishyume-m7.6-host-web-continuity.md)
+- [M7.7 三 Agent 真实测试与修复验收](./docs/fishyume-m7.7-live-team-repair-acceptance.md)
 - [首次使用与安装说明](./docs/fishyume-distribution-first-run.md)
 - [开发与验证](./docs/fishyume-development.md)
 - [Live Provider smoke](./docs/fishyume-m4-live-smoke.md)

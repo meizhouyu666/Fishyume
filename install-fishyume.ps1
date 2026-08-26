@@ -44,12 +44,19 @@ function Stop-IdleControlPlaneForUpgrade {
   Assert-NativeSuccess 'npm global root lookup'
   $currentCli = Join-Path $currentGlobalRoot 'fishyume\dist\cli.js'
   if (-not (Test-Path -LiteralPath $currentCli -PathType Leaf)) { throw 'a Fishyume Control Plane is running but the current global CLI cannot be inspected' }
-  $dashboard = & node $currentCli | Out-String
-  Assert-NativeSuccess 'running Fishyume activity check'
-  $activeMatch = [regex]::Match($dashboard, '(?m)\b(\d+) active\b')
-  if (-not $activeMatch.Success) { throw 'could not verify whether the running Fishyume Control Plane has active Runs' }
-  $active = [int]$activeMatch.Groups[1].Value
-  if ($active -gt 0) { throw "Fishyume has $active active Run(s); wait or cancel them before upgrading" }
+  foreach ($phase in @('created', 'running', 'waiting', 'paused', 'cancelling')) {
+    # Windows PowerShell strips unescaped quotes when forwarding native arguments.
+    $params = '{\"filter\":{\"phase\":\"' + $phase + '\"},\"limit\":1}'
+    $activity = & node $currentCli machine run.list --params $params | Out-String
+    Assert-NativeSuccess 'running Fishyume activity check'
+    $response = $activity | ConvertFrom-Json
+    if ($response.apiVersion -ne 'fishyume.application/v1' -or $null -eq $response.items) {
+      throw 'could not verify whether the running Fishyume Control Plane has active Runs'
+    }
+    if (@($response.items).Count -gt 0) {
+      throw "Fishyume has an active $phase Run; wait or cancel it before upgrading"
+    }
+  }
 
   Stop-Process -Id ([int]$owner.pid)
   Wait-Process -Id ([int]$owner.pid) -Timeout 10 -ErrorAction SilentlyContinue

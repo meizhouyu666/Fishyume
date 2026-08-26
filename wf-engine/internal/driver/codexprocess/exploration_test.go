@@ -130,6 +130,10 @@ func TestExplorationAdapterUsesTeamArtifactsAndRecoversOutput(t *testing.T) {
 	if filepath.Clean(filepath.FromSlash(data.ArtifactDir)) != filepath.Clean(wantArtifactDir) || strings.Contains(data.ArtifactDir, "runs/") {
 		t.Fatalf("artifact dir = %q, want %q under teams", data.ArtifactDir, filepath.ToSlash(wantArtifactDir))
 	}
+	attemptDir := filepath.Join(config.StateRoot, filepath.FromSlash(data.ArtifactDir))
+	if _, err := os.Stat(filepath.Join(attemptDir, "direct-result.schema.json")); !os.IsNotExist(err) {
+		t.Fatalf("Codex Team execution unexpectedly created an output schema: %v", err)
+	}
 	awaitExploration(t, adapter, handle, explorationdriver.ObservationTerminal)
 	recovered := NewExplorationAdapter(New(config))
 	observation, err := recovered.Observe(context.Background(), handle)
@@ -150,7 +154,7 @@ func TestExplorationAdapterUsesTeamArtifactsAndRecoversOutput(t *testing.T) {
 }
 
 func TestExplorationAdapterRejectsInvalidContributions(t *testing.T) {
-	for _, scenario := range []string{"team-malformed", "team-unknown-field"} {
+	for _, scenario := range []string{"team-empty", "team-oversized"} {
 		t.Run(scenario, func(t *testing.T) {
 			adapter, _, workspace := newExplorationFixture(t)
 			handle := startExploration(t, adapter, explorationRequest(workspace, scenario))
@@ -159,6 +163,31 @@ func TestExplorationAdapterRejectsInvalidContributions(t *testing.T) {
 				t.Fatalf("invalid contribution was accepted: %s", output)
 			}
 		})
+	}
+}
+
+func TestExplorationAdapterPreservesCodexFailureDiagnostic(t *testing.T) {
+	adapter, _, workspace := newExplorationFixture(t)
+	handle := startExploration(t, adapter, explorationRequest(workspace, "team-failed"))
+	observation := awaitExploration(t, adapter, handle, explorationdriver.ObservationTerminal)
+	if !strings.Contains(observation.Diagnostic, "upstream rejected the Team request") {
+		t.Fatalf("terminal diagnostic=%q", observation.Diagnostic)
+	}
+	if output, err := adapter.Output(context.Background(), handle, 32*1024); err == nil || !strings.Contains(err.Error(), "upstream rejected the Team request") || strings.Contains(err.Error(), "direct-result.json") {
+		t.Fatalf("output=%q err=%v", output, err)
+	}
+}
+
+func TestCodexExplorationExecArgsUseNaturalTextOutput(t *testing.T) {
+	args := codexExplorationExecArgs("gpt-5.6-sol", "read-only", "result.txt", "C:/workspace")
+	want := []string{"exec", "--ephemeral", "--model", "gpt-5.6-sol", "--sandbox", "read-only", "--json", "--color", "never", "--output-last-message", "result.txt", "-C", "C:/workspace", "-"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("Codex Team args=%v, want %v", args, want)
+	}
+	for _, arg := range args {
+		if arg == "--output-schema" {
+			t.Fatalf("Codex Team args unexpectedly require structured Agent output: %v", args)
+		}
 	}
 }
 

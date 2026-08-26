@@ -558,6 +558,7 @@ type eventEvidence struct {
 	CompleteLog  bool
 	InputTokens  int
 	OutputTokens int
+	Failure      string
 }
 
 func readEventEvidence(path string, maxBytes int64) (eventEvidence, error) {
@@ -579,7 +580,11 @@ func readEventEvidence(path string, maxBytes int64) (eventEvidence, error) {
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		var event struct {
-			Type string `json:"type"`
+			Type    string `json:"type"`
+			Message string `json:"message"`
+			Error   struct {
+				Message string `json:"message"`
+			} `json:"error"`
 			Item struct {
 				Type string `json:"type"`
 			} `json:"item"`
@@ -599,6 +604,14 @@ func readEventEvidence(path string, maxBytes int64) (eventEvidence, error) {
 			evidence.OutputTokens = event.Usage.OutputTokens
 		case "turn.waiting_input", "item.waiting_input", "fishyume.waiting_input":
 			evidence.WaitingInput = true
+		case "turn.failed":
+			if event.Error.Message != "" {
+				evidence.Failure = codexEventFailure(event.Error.Message)
+			}
+		case "error":
+			if evidence.Failure == "" && event.Message != "" {
+				evidence.Failure = codexEventFailure(event.Message)
+			}
 		case "item.started", "item.completed":
 			switch event.Item.Type {
 			case "agent_message", "reasoning", "error":
@@ -617,6 +630,19 @@ func readEventEvidence(path string, maxBytes int64) (eventEvidence, error) {
 		return eventEvidence{}, fmt.Errorf("read Direct event log: %w", err)
 	}
 	return evidence, nil
+}
+
+func codexEventFailure(message string) string {
+	message = strings.TrimSpace(message)
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(message), &envelope) == nil && strings.TrimSpace(envelope.Error.Message) != "" {
+		return strings.TrimSpace(envelope.Error.Message)
+	}
+	return message
 }
 
 func sideEffectStatus(events eventEvidence) agent.SideEffectStatus {

@@ -40,6 +40,8 @@ type ManagedProcessRequest struct {
 	MaxOutputBytes, MaxStderrBytes                           int64
 }
 
+const managedProcessExitEvidenceAttempts = 25
+
 func LaunchManagedProcess(ctx context.Context, request ManagedProcessRequest) (ManagedProcess, error) {
 	config := supervisorConfig{ExecutionID: request.ExecutionID, Executable: request.Executable, Workspace: request.Workspace, Args: request.Args, Env: request.Env, EventsPath: request.StdoutPath, StderrPath: request.StderrPath, ReadyPath: request.ReadyPath, ExitPath: request.ExitPath, MaxEventBytes: request.MaxOutputBytes, MaxStderrBytes: request.MaxStderrBytes}
 	if err := writeJSONExclusive(request.ConfigPath, config); err != nil {
@@ -123,7 +125,7 @@ func ObserveManagedProcess(process ManagedProcess, exitPath string) (ManagedProc
 		return *result, nil
 	}
 	waitExit := func() (*ManagedProcessObservation, error) {
-		for attempt := 0; attempt < 5; attempt++ {
+		for attempt := 0; attempt < managedProcessExitEvidenceAttempts; attempt++ {
 			time.Sleep(10 * time.Millisecond)
 			if result, err := readExit(); result != nil || err != nil {
 				return result, err

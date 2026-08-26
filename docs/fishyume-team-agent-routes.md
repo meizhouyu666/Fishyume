@@ -26,4 +26,4 @@ Do not put API keys, base URLs, tokens, or environment variables in this file. F
 
 Team Session workers are research and discussion participants. Claude starts in safe mode with only `Read`, `Glob`, and `Grep`. OpenCode receives an in-memory primary Agent policy that denies every permission except `read`, `glob`, and `grep`. Both use a durable process supervisor for recovery and confirmed process-tree cancellation.
 
-The model response is ordinary Markdown. Fishyume validates its size and locally wraps it as `ContributionV1`; the harness is not required to produce a JSON Schema response.
+For all three Team Drivers, the model response is ordinary Markdown. Fishyume validates its size and locally wraps it as `ContributionV1`; the harness is not required to produce a JSON Schema response. Formal Workflow Nodes keep their separate strict structured-result contract.

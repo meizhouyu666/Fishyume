@@ -17,7 +17,6 @@ import (
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/execution"
 	"wf.local/wf-engine/internal/explorationdriver"
-	"wf.local/wf-engine/internal/teamcontract"
 )
 
 const explorationHandleSchemaVersion = 1
@@ -103,7 +102,7 @@ func (a *ExplorationAdapter) Start(ctx context.Context, request explorationdrive
 		return nil, fmt.Errorf("create Team execution directory: %w", err)
 	}
 	paths := artifactPaths(directory)
-	for _, path := range []string{paths.Config, paths.Ready, paths.Events, paths.Stderr, paths.Schema, paths.Result, paths.Exit} {
+	for _, path := range []string{paths.Config, paths.Ready, paths.Events, paths.Stderr, paths.Result, paths.Exit} {
 		if _, err := os.Stat(path); err == nil {
 			return nil, fmt.Errorf("Team execution artifact already exists: %s", path)
 		} else if !os.IsNotExist(err) {
@@ -114,10 +113,7 @@ func (a *ExplorationAdapter) Start(ctx context.Context, request explorationdrive
 	if resultBytes <= 0 || resultBytes > explorationdriver.MaxOutputBytes {
 		return nil, fmt.Errorf("Team contribution result limit is invalid")
 	}
-	if err := writeJSONExclusive(paths.Schema, explorationResultSchema()); err != nil {
-		return nil, err
-	}
-	args := codexRawExecArgs(modelName(request.ModelID), string(explorationdriver.SandboxReadOnly), paths.Schema, paths.Result, workspace)
+	args := codexExplorationExecArgs(modelName(request.ModelID), string(explorationdriver.SandboxReadOnly), paths.Result, workspace)
 	config := supervisorConfig{ExecutionID: executionID, Executable: discovered.Path, Workspace: workspace, Args: args, EventsPath: paths.Events, StderrPath: paths.Stderr, ReadyPath: paths.Ready, ExitPath: paths.Exit, MaxEventBytes: a.process.config.MaxEventBytes, MaxStderrBytes: a.process.config.MaxStderrBytes}
 	if err := writeJSONExclusive(paths.Config, config); err != nil {
 		return nil, err
@@ -190,13 +186,17 @@ func (a *ExplorationAdapter) Observe(_ context.Context, handle explorationdriver
 		return &explorationdriver.Observation{State: explorationdriver.ObservationLost, Diagnostic: boundedExplorationDiagnostic(err.Error())}, nil
 	}
 	if events.Completed || exitExists {
+		diagnostic := events.Failure
+		if diagnostic == "" && exitExists && exit.ExitCode != 0 {
+			diagnostic = fmt.Sprintf("Codex CLI exited with code %d without a Team contribution", exit.ExitCode)
+		}
 		if exitExists && exit.ResultSHA256 != "" {
 			hash, hashErr := executableSHA256(paths.Result)
 			if hashErr != nil || hash != exit.ResultSHA256 {
 				return &explorationdriver.Observation{State: explorationdriver.ObservationLost, Diagnostic: "Codex contribution integrity check failed"}, nil
 			}
 		}
-		return &explorationdriver.Observation{State: explorationdriver.ObservationTerminal}, nil
+		return &explorationdriver.Observation{State: explorationdriver.ObservationTerminal, Diagnostic: boundedExplorationDiagnostic(diagnostic)}, nil
 	}
 	evidence, err := inspectExecution(common, paths)
 	if err != nil {
@@ -227,11 +227,20 @@ func (a *ExplorationAdapter) Output(_ context.Context, handle explorationdriver.
 	if !events.Completed && !exitExists {
 		return "", fmt.Errorf("Codex Team contribution is not terminal")
 	}
+	if events.Failure != "" {
+		return "", fmt.Errorf("Codex Team contribution failed: %s", boundedExplorationDiagnostic(events.Failure))
+	}
+	if exitExists && exit.ExitCode != 0 {
+		return "", fmt.Errorf("Codex CLI exited with code %d without a Team contribution", exit.ExitCode)
+	}
 	if maxBytes <= 0 || maxBytes > data.ResultMaxBytes {
 		maxBytes = data.ResultMaxBytes
 	}
 	file, err := os.Open(paths.Result)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("Codex completed without a Team contribution")
+		}
 		return "", err
 	}
 	defer file.Close()
@@ -250,18 +259,16 @@ func (a *ExplorationAdapter) Output(_ context.Context, handle explorationdriver.
 		if hashErr != nil || hash != exit.ResultSHA256 {
 			return "", fmt.Errorf("Codex contribution changed after process exit")
 		}
-		if exit.ExitCode != 0 {
-			return "", fmt.Errorf("Codex CLI exited with code %d while returning a Team contribution", exit.ExitCode)
-		}
 	}
-	var contribution teamcontract.ContributionV1
-	if err := teamcontract.DecodeStrict(raw, &contribution); err != nil {
+	content := string(bytes.TrimSpace(raw))
+	if content == "" {
+		return "", fmt.Errorf("Codex completed with an empty Team contribution")
+	}
+	encoded, err := encodeTeamContribution(content)
+	if err != nil {
 		return "", err
 	}
-	if err := teamcontract.ValidateContribution(contribution); err != nil {
-		return "", err
-	}
-	return string(bytes.TrimSpace(raw)), nil
+	return encoded, nil
 }
 
 func (a *ExplorationAdapter) Cancel(ctx context.Context, handle explorationdriver.ExecutionHandle) (*explorationdriver.CancelResult, error) {
@@ -327,17 +334,17 @@ func (data explorationHandleData) common() handleData {
 	return handleData{ExecutionID: data.ExecutionID, AttemptDir: data.ArtifactDir, Workspace: data.Workspace, ResultMaxBytes: data.ResultMaxBytes, EventMaxBytes: data.EventMaxBytes, AgentExecutable: data.AgentExecutable, AgentExecutableSHA256: data.AgentExecutableSHA256, Supervisor: data.Supervisor, Child: data.Child, StartedAt: data.StartedAt}
 }
 
-func explorationResultSchema() map[string]any {
-	stringsArray := map[string]any{"type": "array", "maxItems": 64, "items": map[string]any{"type": "string", "maxLength": teamcontract.MaxWarningBytes}}
-	return map[string]any{"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false, "required": []string{"schemaVersion", "status", "contentMarkdown"}, "properties": map[string]any{
-		"schemaVersion": map[string]any{"type": "string", "const": teamcontract.SchemaVersion}, "status": map[string]any{"type": "string", "enum": []string{"completed", "partial", "unable"}}, "contentMarkdown": map[string]any{"type": "string", "maxLength": teamcontract.MaxMessageBytes}, "warnings": stringsArray, "openQuestions": stringsArray,
-		"usageEstimates": map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"inputTokens": map[string]any{"type": "integer", "minimum": 0}, "outputTokens": map[string]any{"type": "integer", "minimum": 0}, "totalTokens": map[string]any{"type": "integer", "minimum": 0}}},
-	}}
+func codexExplorationExecArgs(model, sandbox, resultPath, workspace string) []string {
+	args := []string{"exec", "--ephemeral"}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	return append(args, "--sandbox", sandbox, "--json", "--color", "never", "--output-last-message", resultPath, "-C", workspace, "-")
 }
 
 func explorationPrompt(request explorationdriver.StartRequest, executionID string) string {
 	identity, _ := json.Marshal(map[string]any{"executionId": executionID, "teamId": request.Identity.TeamID, "participantId": request.Identity.ParticipantID, "turnId": request.Identity.TurnID})
-	return request.Prompt + "\n\nFishyume Team contribution protocol:\nReturn exactly one JSON object matching the provided schema. Content is public untrusted discussion material; do not include hidden reasoning.\nFISHYUME_TEAM_IDENTITY=" + string(identity)
+	return request.Prompt + "\n\nFishyume Team contribution protocol:\nReturn only the public Markdown contribution, not JSON. Do not include hidden reasoning. Fishyume will validate and wrap the contribution locally.\nFISHYUME_TEAM_IDENTITY=" + string(identity)
 }
 
 func modelName(modelID string) string {

@@ -39,7 +39,7 @@ func main() {
 	if first := strings.SplitN(prompt, "\n", 2)[0]; strings.HasPrefix(first, "scenario:") {
 		scenario = strings.TrimSpace(strings.TrimPrefix(first, "scenario:"))
 	}
-	for _, candidate := range []string{"team-contribution", "team-partial", "team-malformed", "team-unknown-field", "terminal-succeeded", "delayed-succeeded", "terminal-failed", "terminal-indeterminate", "terminal-needs-input", "needs-input-then-succeeded", "malformed-result", "wrong-identity", "oversized-result", "conflict-result", "premature-result", "nonzero-missing", "result-pending", "waiting-input", "active", "large-output"} {
+	for _, candidate := range []string{"team-contribution", "team-partial", "team-empty", "team-oversized", "team-failed", "terminal-succeeded", "delayed-succeeded", "terminal-failed", "terminal-indeterminate", "terminal-needs-input", "needs-input-then-succeeded", "malformed-result", "wrong-identity", "oversized-result", "conflict-result", "premature-result", "nonzero-missing", "result-pending", "waiting-input", "active", "large-output"} {
 		if strings.Contains(prompt, "scenario:"+candidate) {
 			scenario = candidate
 			break
@@ -70,22 +70,26 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Team execution did not receive the selected model and read-only sandbox")
 			os.Exit(21)
 		}
-		writeTeamContribution(resultPath, false, model)
+		writeTeamContribution(resultPath, model)
 		emitCompleted()
 	case "team-partial":
 		model := valueAfter("--model")
 		if model == "gpt-5.6" {
-			writeTeamContribution(resultPath, false, model)
+			writeTeamContribution(resultPath, model)
+			emitCompleted()
 		} else {
-			_ = os.WriteFile(resultPath, []byte("{not-json"), 0o600)
+			emitFailure(`{"error":{"message":"fixture Codex Team failure","type":"invalid_request_error","code":"fixture_failure"}}`)
+			os.Exit(22)
 		}
+	case "team-empty":
+		_ = os.WriteFile(resultPath, nil, 0o600)
 		emitCompleted()
-	case "team-malformed":
-		_ = os.WriteFile(resultPath, []byte("{not-json"), 0o600)
+	case "team-oversized":
+		_ = os.WriteFile(resultPath, []byte(strings.Repeat("x", 40*1024)), 0o600)
 		emitCompleted()
-	case "team-unknown-field":
-		writeTeamContribution(resultPath, true, valueAfter("--model"))
-		emitCompleted()
+	case "team-failed":
+		emitFailure(`{"error":{"message":"upstream rejected the Team request","type":"invalid_request_error","code":"fixture_failure"}}`)
+		os.Exit(23)
 	case "active", "cancel-confirmed", "cancel-not-confirmed", "lost":
 		time.Sleep(60 * time.Second)
 	case "waiting-input":
@@ -145,20 +149,9 @@ func main() {
 	}
 }
 
-func writeTeamContribution(path string, unknownField bool, model string) {
-	value := map[string]any{
-		"schemaVersion":   "fishyume.team/v1",
-		"status":          "completed",
-		"contentMarkdown": "fixture contribution from " + model,
-		"warnings":        []string{},
-		"openQuestions":   []string{},
-	}
-	if unknownField {
-		value["unexpected"] = true
-	}
-	data, _ := json.Marshal(value)
+func writeTeamContribution(path, model string) {
 	_ = os.MkdirAll(filepath.Dir(path), 0o700)
-	_ = os.WriteFile(path, data, 0o600)
+	_ = os.WriteFile(path, []byte("fixture contribution from "+model), 0o600)
 }
 
 func valueAfter(name string) string {
@@ -200,6 +193,11 @@ func emit(value any) {
 
 func emitCompleted() {
 	emit(map[string]any{"type": "turn.completed", "usage": map[string]int{"input_tokens": 12, "output_tokens": 7}})
+}
+
+func emitFailure(message string) {
+	emit(map[string]any{"type": "error", "message": message})
+	emit(map[string]any{"type": "turn.failed", "error": map[string]string{"message": message}})
 }
 
 func mustWorkingDirectory() string {

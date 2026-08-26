@@ -518,14 +518,14 @@ func sessionPrompt(request sessiondriver.StartTurnRequest, sessionID string) str
 	return request.Prompt + "\n\nFishyume Team contribution protocol:\nReturn only the public Markdown contribution, not JSON. Do not include hidden reasoning. Fishyume will validate and wrap the contribution locally.\nFISHYUME_SESSION_TURN_IDENTITY=" + string(identity)
 }
 
-func encodeSessionContribution(content string) (string, error) {
+func encodeTeamContribution(content string) (string, error) {
 	encoded, err := json.Marshal(teamcontract.ContributionV1{
 		SchemaVersion:   teamcontract.SchemaVersion,
 		Status:          teamcontract.ContributionCompleted,
 		ContentMarkdown: content,
 	})
 	if err != nil {
-		return "", fmt.Errorf("encode Codex Session contribution: %w", err)
+		return "", fmt.Errorf("encode Codex Team contribution: %w", err)
 	}
 	return string(encoded), nil
 }

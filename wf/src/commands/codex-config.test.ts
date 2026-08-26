@@ -20,6 +20,7 @@ const fixture = [
 
 test('Fishyume approval policy is bounded, complete, and idempotent', () => {
   for (const method of teamMethods) assert.ok(fishyumeMcpTools.includes(method), method);
+  assert.ok(fishyumeMcpTools.includes('web.open'));
   const updated = withFishyumeApprovalPolicy(fixture);
   assert.match(updated, /\[mcp_servers\.fishyume\][\s\S]*required = true[\s\S]*default_tools_approval_mode = "approve"/);
   for (const tool of fishyumeMcpTools) assert.ok(updated.includes(`[mcp_servers.fishyume.tools.${JSON.stringify(tool)}]`), tool);
