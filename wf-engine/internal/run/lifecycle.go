@@ -166,14 +166,16 @@ type AttemptSnapshot struct {
 	ContextHash              string                             `json:"contextHash"`
 	// RoutingDecision is captured when this Attempt is created. It is never
 	// recomputed while the Attempt advances through launch/recovery states.
-	RoutingDecision  *routing.RoutingDecisionV1 `json:"routingDecision,omitempty"`
-	RoutingUsage     *routing.RoutingUsageV1    `json:"routingUsage,omitempty"`
-	SideEffectStatus agent.SideEffectStatus     `json:"sideEffectStatus,omitempty"`
-	MemoryUsage      *MemoryUsageReceipt        `json:"memoryUsage,omitempty"`
-	PromptHash       string                     `json:"-"`
-	StartedAt        time.Time                  `json:"startedAt"`
-	UpdatedAt        time.Time                  `json:"updatedAt"`
-	CompletedAt      *time.Time                 `json:"completedAt,omitempty"`
+	RoutingDecision  *routing.RoutingDecisionV1  `json:"routingDecision,omitempty"`
+	ExecutionProfile *routing.ExecutionProfileV1 `json:"executionProfile,omitempty"`
+	RoutingUsage     *routing.RoutingUsageV1     `json:"routingUsage,omitempty"`
+	SideEffectStatus agent.SideEffectStatus      `json:"sideEffectStatus,omitempty"`
+	FailureClass     backend.FailureClass        `json:"failureClass,omitempty"`
+	MemoryUsage      *MemoryUsageReceipt         `json:"memoryUsage,omitempty"`
+	PromptHash       string                      `json:"-"`
+	StartedAt        time.Time                   `json:"startedAt"`
+	UpdatedAt        time.Time                   `json:"updatedAt"`
+	CompletedAt      *time.Time                  `json:"completedAt,omitempty"`
 
 	legacyExecution *legacyExecutionSnapshot
 }
@@ -276,6 +278,10 @@ func ValidateNodeSnapshot(snapshot NodeSnapshot) error {
 }
 
 func ValidateAttemptSnapshot(snapshot AttemptSnapshot) error {
+	return ValidateAttemptSnapshotWithCatalogs(snapshot, routing.BuiltinCatalogRegistry())
+}
+
+func ValidateAttemptSnapshotWithCatalogs(snapshot AttemptSnapshot, catalogs routing.CatalogProvider) error {
 	if err := validateStateSchemaVersion(snapshot.StateSchemaVersion, "Attempt"); err != nil {
 		return err
 	}
@@ -315,12 +321,26 @@ func ValidateAttemptSnapshot(snapshot AttemptSnapshot) error {
 		if snapshot.RoutingDecision == nil {
 			return fmt.Errorf("attempt routing usage requires a routing decision")
 		}
-		if err := routing.ValidateRoutingUsageForDecision(routing.BuiltinCatalogV1(), *snapshot.RoutingDecision, *snapshot.RoutingUsage); err != nil {
+		catalog, ok := catalogs.CatalogByHash(snapshot.RoutingDecision.CatalogHash)
+		if !ok {
+			return fmt.Errorf("attempt routing catalog %q is unavailable", snapshot.RoutingDecision.CatalogHash)
+		}
+		if err := routing.ValidateRoutingUsageForDecision(catalog, *snapshot.RoutingDecision, *snapshot.RoutingUsage); err != nil {
 			return fmt.Errorf("attempt routing usage is invalid: %w", err)
+		}
+	}
+	if snapshot.ExecutionProfile != nil {
+		if err := routing.ValidateExecutionProfile(*snapshot.ExecutionProfile, snapshot.RoutingDecision); err != nil {
+			return fmt.Errorf("attempt execution profile is invalid: %w", err)
 		}
 	}
 	if snapshot.SideEffectStatus != "" && snapshot.SideEffectStatus != agent.SideEffectNone && snapshot.SideEffectStatus != agent.SideEffectUnknown {
 		return fmt.Errorf("attempt has invalid side-effect status %q", snapshot.SideEffectStatus)
+	}
+	if snapshot.FailureClass != "" {
+		if snapshot.Conclusion != ConclusionFailed || snapshot.FailureClass != backend.FailureModelUnavailablePreExecution || snapshot.SideEffectStatus != agent.SideEffectNone {
+			return fmt.Errorf("attempt has invalid failure classification %q", snapshot.FailureClass)
+		}
 	}
 	if snapshot.Execution != nil {
 		if err := backend.ValidateExecutionHandle(*snapshot.Execution); err != nil {

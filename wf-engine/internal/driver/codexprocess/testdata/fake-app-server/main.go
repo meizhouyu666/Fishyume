@@ -74,6 +74,11 @@ func handle(path string, value *state, message request) {
 			emit(map[string]any{"id": message.ID, "method": "request/approval", "params": map[string]any{}})
 		}
 		respond(message.ID, map[string]any{"userAgent": "fake-codex-app-server", "platformFamily": "fixture", "platformOs": "fixture", "codexHome": os.TempDir()})
+	case "model/list":
+		respond(message.ID, map[string]any{"data": []map[string]any{
+			{"id": "gpt-5.6-sol", "model": "gpt-5.6-sol", "displayName": "GPT-5.6 Sol", "description": "fixture", "hidden": false, "isDefault": true, "supportedReasoningEfforts": []map[string]any{{"reasoningEffort": "low"}, {"reasoningEffort": "medium"}, {"reasoningEffort": "high"}}, "defaultReasoningEffort": "medium", "inputModalities": []string{"text"}, "supportsPersonality": true, "multiAgentVersion": "v1", "serviceTiers": []map[string]any{{"id": "priority"}}, "defaultServiceTier": "priority"},
+			{"id": "gpt-5.6-terra", "model": "gpt-5.6-terra", "displayName": "GPT-5.6 Terra", "description": "fixture", "hidden": false, "isDefault": false, "supportedReasoningEfforts": []map[string]any{{"reasoningEffort": "medium"}}, "defaultReasoningEffort": "medium", "inputModalities": []string{"text"}, "supportsPersonality": false, "multiAgentVersion": nil, "serviceTiers": []map[string]any{}, "defaultServiceTier": nil},
+		}, "nextCursor": nil})
 	case "thread/start":
 		var params struct {
 			CWD            string `json:"cwd"`

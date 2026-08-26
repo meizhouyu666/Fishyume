@@ -263,13 +263,16 @@ func (b *Backend) Start(ctx context.Context, spec backend.AgentExecutionSpec) (*
 }
 
 func codexExecArgs(spec backend.AgentExecutionSpec, sandbox, schemaPath, resultPath, workspace string) []string {
-	return codexRawExecArgs(spec.Model, sandbox, schemaPath, resultPath, workspace)
+	return codexRawExecArgs(spec.Model, spec.ReasoningEffort, sandbox, schemaPath, resultPath, workspace)
 }
 
-func codexRawExecArgs(model, sandbox, schemaPath, resultPath, workspace string) []string {
+func codexRawExecArgs(model, effort, sandbox, schemaPath, resultPath, workspace string) []string {
 	args := []string{"exec", "--ephemeral"}
 	if model != "" {
 		args = append(args, "--model", model)
+	}
+	if effort != "" {
+		args = append(args, "-c", "model_reasoning_effort=\""+effort+"\"")
 	}
 	return append(args, "--sandbox", sandbox, "--json", "--color", "never", "--output-schema", schemaPath, "--output-last-message", resultPath, "-C", workspace, "-")
 }

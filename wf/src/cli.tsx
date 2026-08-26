@@ -15,6 +15,7 @@ import {ExamplesListCommand, ExamplesShowCommand} from './commands/examples.js';
 import {MemoryCreateCommand, MemoryDeleteCommand, MemoryGetCommand, MemoryListCommand, MemorySupersedeCommand} from './commands/memory.js';
 import {TeamCancelCommand, TeamCancelTurnCommand, TeamCloseCommand, TeamFollowUpCommand, TeamListCommand, TeamShowCommand, TeamStartCommand} from './commands/team.js';
 import {TeamHandoffBindCommand, TeamHandoffCreateCommand, TeamHandoffListCommand, TeamHandoffShowCommand} from './commands/team-handoff.js';
+import {DriversInspectCommand, RoutingDisableCommand, RoutingEnableCommand, RoutingRefreshCommand, RoutingShowCommand} from './commands/routing.js';
 
 const cli = new Cli({binaryLabel: 'Fishyume', binaryName: 'fishyume', binaryVersion: '0.2.1-alpha.1'});
 cli.register(Builtins.HelpCommand);
@@ -48,6 +49,11 @@ cli.register(TeamHandoffCreateCommand);
 cli.register(TeamHandoffListCommand);
 cli.register(TeamHandoffShowCommand);
 cli.register(TeamHandoffBindCommand);
+cli.register(DriversInspectCommand);
+cli.register(RoutingShowCommand);
+cli.register(RoutingEnableCommand);
+cli.register(RoutingDisableCommand);
+cli.register(RoutingRefreshCommand);
 const args = process.argv.slice(2);
 // Keep the historical `setup codex` spelling as a compatibility alias for the
 // single product setup command without registering an ambiguous Clipanion path.

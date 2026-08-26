@@ -15,6 +15,7 @@ import (
 
 	"wf.local/wf-engine/internal/agent"
 	"wf.local/wf-engine/internal/application"
+	"wf.local/wf-engine/internal/routingconfig"
 	"wf.local/wf-engine/internal/rpc"
 	"wf.local/wf-engine/internal/run"
 	"wf.local/wf-engine/internal/team"
@@ -26,23 +27,28 @@ const (
 )
 
 type Server struct {
-	owner       *Owner
-	listener    net.Listener
-	service     *run.Service
-	application *application.Service
-	teams       *team.Service
-	mutationMu  sync.Mutex
-	connections atomic.Int64
-	closed      chan struct{}
-	closeOnce   sync.Once
+	owner         *Owner
+	listener      net.Listener
+	service       *run.Service
+	application   *application.Service
+	teams         *team.Service
+	routingConfig *routingconfig.Service
+	mutationMu    sync.Mutex
+	connections   atomic.Int64
+	closed        chan struct{}
+	closeOnce     sync.Once
 }
 
 func NewServer(owner *Owner, service *run.Service, applications ...*application.Service) (*Server, error) {
-	return newServer(owner, service, selectApplication(service, applications), nil)
+	return newServer(owner, service, selectApplication(service, applications), nil, nil)
 }
 
 func NewServerWithTeam(owner *Owner, service *run.Service, applicationService *application.Service, teamService *team.Service) (*Server, error) {
-	return newServer(owner, service, applicationService, teamService)
+	return newServer(owner, service, applicationService, teamService, nil)
+}
+
+func NewServerWithTeamAndConfig(owner *Owner, service *run.Service, applicationService *application.Service, teamService *team.Service, config *routingconfig.Service) (*Server, error) {
+	return newServer(owner, service, applicationService, teamService, config)
 }
 
 func selectApplication(service *run.Service, applications []*application.Service) *application.Service {
@@ -52,7 +58,7 @@ func selectApplication(service *run.Service, applications []*application.Service
 	return application.NewService(service, "codex", service.ApplicationJournal())
 }
 
-func newServer(owner *Owner, service *run.Service, applicationService *application.Service, teamService *team.Service) (*Server, error) {
+func newServer(owner *Owner, service *run.Service, applicationService *application.Service, teamService *team.Service, config *routingconfig.Service) (*Server, error) {
 	if owner == nil || service == nil {
 		return nil, errors.New("control plane owner and Run service are required")
 	}
@@ -65,7 +71,7 @@ func newServer(owner *Owner, service *run.Service, applicationService *applicati
 		_ = cleanupEndpoint(owner.Record())
 		return nil, fmt.Errorf("publish control plane owner: %w", err)
 	}
-	return &Server{owner: owner, listener: listener, service: service, application: applicationService, teams: teamService, closed: make(chan struct{})}, nil
+	return &Server{owner: owner, listener: listener, service: service, application: applicationService, teams: teamService, routingConfig: config, closed: make(chan struct{})}, nil
 }
 
 func (s *Server) Serve(ctx context.Context) error {
@@ -93,7 +99,7 @@ func (s *Server) Serve(ctx context.Context) error {
 			if err := s.handshake(connection); err != nil {
 				return
 			}
-			server := rpc.NewConnectionServer(connection, connection, s.service, s.application, &s.mutationMu, s.teams)
+			server := rpc.NewConnectionServerWithConfig(connection, connection, s.service, s.application, &s.mutationMu, s.teams, s.routingConfig)
 			_ = server.Serve(context.Background())
 		}()
 	}

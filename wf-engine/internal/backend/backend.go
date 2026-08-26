@@ -25,10 +25,11 @@ type AgentExecutionSpec struct {
 	Runtime   string
 	// Model is an optional provider model selected by the routing layer. Empty
 	// preserves the legacy Driver default.
-	Model          string
-	Instructions   string
-	RequiredSkills []string
-	ResultContract ResultContract
+	Model           string
+	ReasoningEffort string
+	Instructions    string
+	RequiredSkills  []string
+	ResultContract  ResultContract
 	// Envelope carries the M4 headless protocol. The flattened fields above are
 	// retained for the bounded backend compatibility window.
 	Envelope *agent.AttemptEnvelope
@@ -102,7 +103,14 @@ type AgentResult struct {
 	Questions        []InputQuestion        `json:"questions,omitempty"`
 	Usage            Usage                  `json:"usage"`
 	SideEffectStatus agent.SideEffectStatus `json:"sideEffectStatus,omitempty"`
+	FailureClass     FailureClass           `json:"failureClass,omitempty"`
 }
+
+type FailureClass string
+
+const (
+	FailureModelUnavailablePreExecution FailureClass = "model_unavailable_pre_execution"
+)
 
 type InputQuestion struct {
 	ID       string   `json:"id"`
@@ -294,6 +302,17 @@ func ValidateAgentResult(result AgentResult) error {
 	}
 	if result.SideEffectStatus != "" && result.SideEffectStatus != agent.SideEffectNone && result.SideEffectStatus != agent.SideEffectUnknown {
 		return fmt.Errorf("unsupported side-effect status %q", result.SideEffectStatus)
+	}
+	if result.FailureClass != "" {
+		if result.Status != "failed" {
+			return fmt.Errorf("only failed Agent results may carry a failure class")
+		}
+		if result.FailureClass != FailureModelUnavailablePreExecution {
+			return fmt.Errorf("unsupported Agent failure class %q", result.FailureClass)
+		}
+		if result.SideEffectStatus != agent.SideEffectNone {
+			return fmt.Errorf("model-unavailable pre-execution failure requires no side effects")
+		}
 	}
 	return nil
 }

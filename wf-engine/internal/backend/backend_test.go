@@ -84,6 +84,14 @@ func TestValidateAgentResultAndObservation(t *testing.T) {
 	if err := ValidateAgentResult(result); err == nil || !strings.Contains(err.Error(), "duplicated") {
 		t.Fatalf("accepted duplicate question IDs: %v", err)
 	}
+	classified := AgentResult{Status: "failed", Summary: "model rejected", SideEffectStatus: "none", FailureClass: FailureModelUnavailablePreExecution}
+	if err := ValidateAgentResult(classified); err != nil {
+		t.Fatalf("rejected classified pre-execution failure: %v", err)
+	}
+	classified.SideEffectStatus = "unknown"
+	if err := ValidateAgentResult(classified); err == nil || !strings.Contains(err.Error(), "requires no side effects") {
+		t.Fatalf("accepted unsafe failure classification: %v", err)
+	}
 }
 
 func TestValidateCancelResult(t *testing.T) {

@@ -1,9 +1,11 @@
 package run
 
 import (
+	"context"
 	"fmt"
 
 	"wf.local/wf-engine/internal/agent"
+	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/routing"
 	"wf.local/wf-engine/internal/workflow"
 )
@@ -12,7 +14,14 @@ import (
 // custom test/embedded Driver that has no catalog entry keeps the pre-M6.4
 // behavior; production Drivers must have a matching catalog target.
 func resolveAttemptRouting(driver string, requirement routing.RoutingRequirementV1) (*routing.RoutingDecisionV1, error) {
-	catalog := routing.BuiltinCatalogV1()
+	return resolveAttemptRoutingWithCatalogs(routing.BuiltinCatalogRegistry(), driver, requirement)
+}
+
+func resolveAttemptRoutingWithCatalogs(catalogs routing.CatalogProvider, driver string, requirement routing.RoutingRequirementV1) (*routing.RoutingDecisionV1, error) {
+	catalog, catalogHash, err := catalogs.ActiveCatalog()
+	if err != nil {
+		return nil, fmt.Errorf("load active routing catalog: %w", err)
+	}
 	knownDriver := false
 	for _, model := range catalog.Models {
 		if model.Target.Driver == driver {
@@ -23,10 +32,7 @@ func resolveAttemptRouting(driver string, requirement routing.RoutingRequirement
 	if !knownDriver {
 		return nil, nil
 	}
-	catalogHash, err := routing.CatalogHash(catalog)
-	if err != nil {
-		return nil, fmt.Errorf("hash routing catalog: %w", err)
-	}
+	requirement = routing.ApplyCodexProductPreference(catalog, driver, requirement)
 	decision, err := routing.ResolveV1(routing.ResolveRequestV1{
 		Catalog: catalog, CatalogHash: catalogHash, Requirement: requirement,
 		Budget: routing.BudgetGrantV1{MaxCostUnits: requirement.MaxCostUnits, ContextBytes: requirement.MaxContextBytes, OutputBytes: requirement.MaxOutputBytes},
@@ -57,10 +63,42 @@ func routingModel(decision *routing.RoutingDecisionV1) string {
 	return decision.Selected.Model
 }
 
-func (s *Service) prepareAttemptRouting(runID string, node NodeSnapshot, driver string, requirement routing.RoutingRequirementV1) (*routing.RoutingDecisionV1, *routing.RoutingUsageV1, error) {
-	decision, err := resolveAttemptRouting(driver, requirement)
-	if err != nil || decision == nil {
-		return decision, nil, err
+func routingExecutionProfile(decision *routing.RoutingDecisionV1) (*routing.ExecutionProfileV1, error) {
+	if decision == nil {
+		return nil, nil
+	}
+	profile, err := routing.ExecutionProfileForDecision(*decision)
+	if err != nil {
+		return nil, err
+	}
+	return &profile, nil
+}
+
+func routingReasoningEffort(profile *routing.ExecutionProfileV1) string {
+	if profile == nil {
+		return ""
+	}
+	return profile.ReasoningEffort
+}
+
+func (s *Service) prepareAttemptRouting(ctx context.Context, runID string, node NodeSnapshot, driver string, requirement routing.RoutingRequirementV1) (*routing.RoutingDecisionV1, *routing.RoutingUsageV1, error) {
+	var decision *routing.RoutingDecisionV1
+	var err error
+	for probeAttempt := 0; probeAttempt < 3; probeAttempt++ {
+		decision, err = resolveAttemptRoutingWithCatalogs(s.catalogs, driver, requirement)
+		if err != nil || decision == nil {
+			return decision, nil, err
+		}
+		gate, ok := s.catalogs.(routing.TargetAvailabilityGate)
+		if !ok {
+			break
+		}
+		if err = gate.EnsureTargetAvailable(ctx, decision.Selected); err == nil {
+			break
+		}
+		if probeAttempt == 2 {
+			return nil, nil, err
+		}
 	}
 	routeIndex := 0
 	if node.PendingRoutingTarget != nil {
@@ -95,6 +133,11 @@ func (s *Service) prepareAttemptRouting(runID string, node NodeSnapshot, driver 
 			}
 		}
 	}
+	if gate, ok := s.catalogs.(routing.TargetAvailabilityGate); ok {
+		if err := gate.EnsureTargetAvailable(ctx, decision.Selected); err != nil {
+			return nil, nil, err
+		}
+	}
 	if decision.Selected.Driver != driver {
 		return nil, nil, fmt.Errorf("routing selected Driver %q for requested Driver %q", decision.Selected.Driver, driver)
 	}
@@ -102,7 +145,11 @@ func (s *Service) prepareAttemptRouting(runID string, node NodeSnapshot, driver 
 	if err != nil {
 		return nil, nil, err
 	}
-	usage, err := routing.ReserveRoutingUsageV1(routing.BuiltinCatalogV1(), *decision, priorCost, routeIndex)
+	catalog, ok := s.catalogs.CatalogByHash(decision.CatalogHash)
+	if !ok {
+		return nil, nil, fmt.Errorf("routing catalog %q is unavailable", decision.CatalogHash)
+	}
+	usage, err := routing.ReserveRoutingUsageV1(catalog, *decision, priorCost, routeIndex)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -115,11 +162,6 @@ func (s *Service) routingCostBeforeAttempt(runID, nodeID string, nextAttempt int
 		return 0, err
 	}
 	total := 0
-	catalog := routing.BuiltinCatalogV1()
-	catalogHash, err := routing.CatalogHash(catalog)
-	if err != nil {
-		return 0, err
-	}
 	for _, number := range numbers {
 		if number >= nextAttempt {
 			continue
@@ -131,6 +173,10 @@ func (s *Service) routingCostBeforeAttempt(runID, nodeID string, nextAttempt int
 		if attempt.RoutingUsage != nil {
 			if attempt.RoutingDecision == nil {
 				return 0, fmt.Errorf("routing usage requires a routing decision")
+			}
+			catalog, ok := s.catalogs.CatalogByHash(attempt.RoutingDecision.CatalogHash)
+			if !ok {
+				return 0, fmt.Errorf("historical routing catalog %q is unavailable", attempt.RoutingDecision.CatalogHash)
 			}
 			if err := routing.ValidateRoutingUsageForDecision(catalog, *attempt.RoutingDecision, *attempt.RoutingUsage); err != nil {
 				return 0, err
@@ -144,8 +190,9 @@ func (s *Service) routingCostBeforeAttempt(runID, nodeID string, nextAttempt int
 			if err := routing.ValidateDecision(*attempt.RoutingDecision); err != nil {
 				return 0, err
 			}
-			if attempt.RoutingDecision.CatalogHash != catalogHash {
-				return 0, fmt.Errorf("historical routing decision catalog hash does not match the trusted catalog")
+			catalog, ok := s.catalogs.CatalogByHash(attempt.RoutingDecision.CatalogHash)
+			if !ok {
+				return 0, fmt.Errorf("historical routing catalog %q is unavailable", attempt.RoutingDecision.CatalogHash)
 			}
 			cost, err := routing.CostUnitsForTarget(catalog, attempt.RoutingDecision.Selected)
 			if err != nil {
@@ -160,7 +207,7 @@ func (s *Service) routingCostBeforeAttempt(runID, nodeID string, nextAttempt int
 	return total, nil
 }
 
-func (s *Service) pendingRoutingTarget(run *WorkflowSnapshot, node NodeSnapshot, allowFallback bool) (*routing.Target, error) {
+func (s *Service) pendingRoutingTarget(ctx context.Context, run *WorkflowSnapshot, node NodeSnapshot, allowFallback bool) (*routing.Target, error) {
 	if node.CurrentAttempt < 1 {
 		return nil, nil
 	}
@@ -172,7 +219,9 @@ func (s *Service) pendingRoutingTarget(run *WorkflowSnapshot, node NodeSnapshot,
 		return nil, nil
 	}
 	target := previous.RoutingDecision.Selected
-	if allowFallback && previous.Conclusion == ConclusionFailed && previous.SideEffectStatus == agent.SideEffectNone {
+	_, dynamicRouting := s.catalogs.(routing.TargetAvailabilityGate)
+	classifiedUnavailable := previous.FailureClass == backend.FailureModelUnavailablePreExecution
+	if allowFallback && previous.Conclusion == ConclusionFailed && previous.SideEffectStatus == agent.SideEffectNone && (!dynamicRouting || classifiedUnavailable) {
 		next, ok, err := routing.AdvanceFallbackV1(*previous.RoutingDecision)
 		if err != nil {
 			return nil, err
@@ -195,7 +244,7 @@ func (s *Service) pendingRoutingTarget(run *WorkflowSnapshot, node NodeSnapshot,
 	}
 	preview := node
 	preview.PendingRoutingTarget = &target
-	if _, _, err := s.prepareAttemptRouting(run.ID, preview, driver, workflow.EffectiveRoutingRequirement(normalized.Document, definition)); err != nil {
+	if _, _, err := s.prepareAttemptRouting(ctx, run.ID, preview, driver, workflow.EffectiveRoutingRequirement(normalized.Document, definition)); err != nil {
 		return nil, err
 	}
 	copy := target

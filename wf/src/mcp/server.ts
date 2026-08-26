@@ -7,6 +7,7 @@ import {z} from 'zod';
 import {ApplicationCallError, callApplication, callHostMemory, type ApplicationMethod} from '../bridge/application.js';
 import {EngineBridge, type EngineClient} from '../bridge/engine.js';
 import {callTeam, TeamCallError, type TeamMethod} from '../bridge/team.js';
+import {callRouting, configApiVersion, RoutingCallError, type RoutingMethod} from '../bridge/routing.js';
 import {createWebOpenManager, type WebOpenResponse, type WebTarget} from './web.js';
 
 const scalar = z.union([z.string(), z.number(), z.boolean()]);
@@ -22,7 +23,7 @@ const memoryType = z.enum(['decision', 'constraint', 'fact', 'procedure', 'prefe
 const memorySensitivity = z.enum(['public', 'project']);
 const memoryCreate = {project: z.string(), mutationId: z.string().min(1).max(256), type: memoryType, content: z.string().min(1).max(16 * 1024), sensitivity: memorySensitivity, reason: z.string().min(1).max(1024), expiresAt: z.string().optional(), maxUses: z.number().int().min(0).max(10_000).optional()};
 
-type FishyumeMethod = ApplicationMethod | TeamMethod | 'web.open';
+type FishyumeMethod = ApplicationMethod | TeamMethod | RoutingMethod | 'web.open';
 const teamVersion = z.literal('fishyume.team/v1');
 const participant = z.object({label: z.string().min(1).max(64), role: z.string().min(1).max(2048), modelId: z.string().min(1).max(256)}).strict();
 const teamId = z.string().min(1).max(128);
@@ -63,6 +64,13 @@ const tools: Array<{name: FishyumeMethod; description: string; inputSchema: Reco
   {name: 'team.handoff.list', description: 'List immutable Handoffs in stable bounded pages without creating or changing Runs.', inputSchema: {...teamIdentity, cursor: handoffId.optional(), limit: z.number().int().min(1).max(100).optional()}},
   {name: 'team.handoff.bindRun', description: 'Idempotently bind one Handoff to at most one existing same-project formal Workflow Run. This never creates a Run.', inputSchema: {...teamIdentity, actionId: z.string().min(1).max(128), handoffId, runId: z.string().min(1).max(128), expectedStateVersion: z.number().int().positive()}},
   {name: 'web.open', description: 'Open or focus the optional local Fishyume Web client on a Host-selected Team, Handoff, or Workflow Run. This is a best-effort adapter action; it never creates business state and returns capability_unavailable when Web is not installed or cannot start.', inputSchema: {target: webTarget}},
+  {name: 'driver.list', description: 'Inspect Fishyume Driver registration and cached local model discovery without spending model tokens.', inputSchema: {schemaVersion: z.literal(configApiVersion)}},
+  {name: 'driver.models.discover', description: 'Refresh the model list exposed by the installed Codex Agent. Discovery does not prove upstream connectivity.', inputSchema: {schemaVersion: z.literal(configApiVersion)}},
+  {name: 'driver.models.probe', description: 'Run bounded read-only active Codex probes for selected qualified routes. This spends model tokens and updates availability.', inputSchema: {schemaVersion: z.literal(configApiVersion), routeIds: z.array(z.string()).max(3).optional()}},
+  {name: 'routing.config.get', description: 'Read persistent routing configuration, revision, and enabled qualified routes.', inputSchema: {schemaVersion: z.literal(configApiVersion)}},
+  {name: 'routing.config.update', description: 'Idempotently enable or disable one qualified route using optimistic revision concurrency.', inputSchema: {schemaVersion: z.literal(configApiVersion), mutationId: z.string().min(1).max(256), expectedRevision: z.number().int().positive(), routeId: z.string(), enabled: z.boolean()}},
+  {name: 'routing.availability', description: 'Inspect cached active-probe availability and expiry for qualified Codex routes.', inputSchema: {schemaVersion: z.literal(configApiVersion)}},
+  {name: 'routing.catalog.effective', description: 'Inspect the exact effective Workflow Catalog, route state intersections, and auditable Catalog hash.', inputSchema: {schemaVersion: z.literal(configApiVersion)}},
 ];
 
 export function createMCPServer(client: EngineClient, web = createWebOpenManager()): McpServer {
@@ -72,6 +80,8 @@ export function createMCPServer(client: EngineClient, web = createWebOpenManager
       try {
         const response = tool.name === 'web.open'
           ? await web.open(params.target as WebTarget) as WebOpenResponse
+          : tool.name.startsWith('driver.') || tool.name.startsWith('routing.config.') || tool.name === 'routing.availability' || tool.name === 'routing.catalog.effective'
+          ? await callRouting(client, tool.name as RoutingMethod, params)
           : tool.name.startsWith('team.')
           ? await callTeam(client, tool.name as TeamMethod, params)
           : tool.name === 'memory.create' || tool.name === 'memory.supersede' || tool.name === 'memory.delete'
@@ -80,7 +90,7 @@ export function createMCPServer(client: EngineClient, web = createWebOpenManager
         const structuredContent = response as unknown as Record<string, unknown>;
         return {content: [{type: 'text' as const, text: JSON.stringify(response)}], structuredContent};
       } catch (error) {
-        const applicationError = error instanceof ApplicationCallError ? error.applicationError : error instanceof TeamCallError ? error.teamError : {code: 'internal', message: error instanceof Error ? error.message : String(error)};
+        const applicationError = error instanceof ApplicationCallError ? error.applicationError : error instanceof TeamCallError ? error.teamError : error instanceof RoutingCallError ? error.routingError : {code: 'internal', message: error instanceof Error ? error.message : String(error)};
         return {isError: true, content: [{type: 'text' as const, text: JSON.stringify({error: applicationError})}]};
       }
     });

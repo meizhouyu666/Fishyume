@@ -1,11 +1,11 @@
 import type {IncomingMessage, ServerResponse} from 'node:http';
-import {authorizeRequest, decodeRpcEnvelope, maxConcurrentRequests, maxRequestBytes, maxResponseBytes, requestTimeoutMs, securityHeaders} from './security.js';
+import {authorizeRequest, decodeRpcEnvelope, maxConcurrentRequests, maxRequestBytes, maxResponseBytes, probeRequestTimeoutMs, requestTimeoutMs, securityHeaders} from './security.js';
 
 export interface EngineGateway {call<T>(method: string, params?: unknown): Promise<T>}
 export interface GatewayIdentity {host: string; origin: string; token: string}
-export interface GatewayLimits {maxConcurrentRequests: number; maxRequestBytes: number; maxResponseBytes: number; requestTimeoutMs: number}
+export interface GatewayLimits {maxConcurrentRequests: number; maxRequestBytes: number; maxResponseBytes: number; requestTimeoutMs: number; probeRequestTimeoutMs?: number}
 
-const defaultLimits: GatewayLimits = {maxConcurrentRequests, maxRequestBytes, maxResponseBytes, requestTimeoutMs};
+const defaultLimits: GatewayLimits = {maxConcurrentRequests, maxRequestBytes, maxResponseBytes, requestTimeoutMs, probeRequestTimeoutMs};
 
 export function createGatewayHandler(engine: EngineGateway, identity: () => GatewayIdentity, limits: GatewayLimits = defaultLimits) {
   let active = 0;
@@ -19,7 +19,8 @@ export function createGatewayHandler(engine: EngineGateway, identity: () => Gate
     try {
       const body = await readBody(request, limits.maxRequestBytes);
       const envelope = decodeRpcEnvelope(body);
-      const result = await withTimeout(engine.call(envelope.method, envelope.params), limits.requestTimeoutMs);
+      const timeout = envelope.method === 'driver.models.probe' ? limits.probeRequestTimeoutMs ?? probeRequestTimeoutMs : limits.requestTimeoutMs;
+      const result = await withTimeout(engine.call(envelope.method, envelope.params), timeout);
       writeJSON(response, 200, {result}, limits.maxResponseBytes);
     } catch (error) {
       const value = error as {applicationError?: unknown; teamError?: unknown; data?: unknown};

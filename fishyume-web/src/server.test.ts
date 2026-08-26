@@ -91,7 +91,7 @@ test('gateway enforces concurrency, body, timeout, and response limits', async (
   const engine = new FakeEngine();
   const sidecar = await startSidecar({
     engine, openBrowser: false, publicDir: directory,
-    gatewayLimits: {maxConcurrentRequests: 1, maxRequestBytes: 256, maxResponseBytes: 256, requestTimeoutMs: 30},
+    gatewayLimits: {maxConcurrentRequests: 1, maxRequestBytes: 256, maxResponseBytes: 256, requestTimeoutMs: 30, probeRequestTimeoutMs: 100},
   });
   const headers = {'Content-Type': 'application/json', Authorization: `Bearer ${sidecar.token}`, Origin: sidecar.origin};
   const request = (body: string) => fetch(`${sidecar.origin}/api/rpc`, {method: 'POST', headers, body});
@@ -118,6 +118,10 @@ test('gateway enforces concurrency, body, timeout, and response limits', async (
     const timedOut = await request(JSON.stringify({method: 'team.list', params: {}}));
     assert.equal(timedOut.status, 400);
     assert.match(await timedOut.text(), /timed out/);
+
+    engine.responder = () => new Promise(resolve => setTimeout(() => resolve({entries: []}), 50));
+    const probe = await request(JSON.stringify({method: 'driver.models.probe', params: {schemaVersion: 'fishyume.config/v1'}}));
+    assert.equal(probe.status, 200);
   } finally {
     await sidecar.close();
     rmSync(directory, {recursive: true, force: true});

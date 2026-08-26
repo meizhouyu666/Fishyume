@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"wf.local/wf-engine/internal/agent"
+	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/contextcompiler"
 	"wf.local/wf-engine/internal/routing"
 	"wf.local/wf-engine/internal/store"
@@ -286,22 +287,24 @@ type Result struct {
 }
 
 type AttemptView struct {
-	Number           int                        `json:"number"`
-	Phase            string                     `json:"phase"`
-	Conclusion       string                     `json:"conclusion,omitempty"`
-	Reason           string                     `json:"reason,omitempty"`
-	Driver           string                     `json:"driver"`
-	Target           string                     `json:"target"`
-	RoutingDecision  *routing.RoutingDecisionV1 `json:"routingDecision,omitempty"`
-	RoutingUsage     *routing.RoutingUsageV1    `json:"routingUsage,omitempty"`
-	SideEffectStatus agent.SideEffectStatus     `json:"sideEffectStatus,omitempty"`
-	ContextHash      string                     `json:"contextHash,omitempty"`
-	Context          *ContextInspect            `json:"context,omitempty"`
-	MemoryUsage      *MemoryUsageInspect        `json:"memoryUsage,omitempty"`
-	StartedAt        string                     `json:"startedAt"`
-	UpdatedAt        string                     `json:"updatedAt"`
-	CompletedAt      string                     `json:"completedAt,omitempty"`
-	Activity         *AttemptActivityView       `json:"activity,omitempty"`
+	Number           int                         `json:"number"`
+	Phase            string                      `json:"phase"`
+	Conclusion       string                      `json:"conclusion,omitempty"`
+	Reason           string                      `json:"reason,omitempty"`
+	Driver           string                      `json:"driver"`
+	Target           string                      `json:"target"`
+	RoutingDecision  *routing.RoutingDecisionV1  `json:"routingDecision,omitempty"`
+	ExecutionProfile *routing.ExecutionProfileV1 `json:"executionProfile,omitempty"`
+	RoutingUsage     *routing.RoutingUsageV1     `json:"routingUsage,omitempty"`
+	SideEffectStatus agent.SideEffectStatus      `json:"sideEffectStatus,omitempty"`
+	FailureClass     backend.FailureClass        `json:"failureClass,omitempty"`
+	ContextHash      string                      `json:"contextHash,omitempty"`
+	Context          *ContextInspect             `json:"context,omitempty"`
+	MemoryUsage      *MemoryUsageInspect         `json:"memoryUsage,omitempty"`
+	StartedAt        string                      `json:"startedAt"`
+	UpdatedAt        string                      `json:"updatedAt"`
+	CompletedAt      string                      `json:"completedAt,omitempty"`
+	Activity         *AttemptActivityView        `json:"activity,omitempty"`
 }
 
 type ActivityItemView struct {

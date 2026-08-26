@@ -1,8 +1,8 @@
 import {randomUUID} from 'node:crypto';
 import {EngineRpcError, type EngineClient} from './engine.js';
-import type {AttemptSnapshot, Conclusion, ContextInspect, ModelCapability, NodePhase, NodeResult, NodeSnapshot, Reason, RoutingBudget, RoutingDecision, RoutingFallbackPolicy, RoutingRequirement, RoutingTarget, RoutingUsage, RunPhase, RunStatusView, SideEffectStatus, WorkflowSnapshot} from './types.js';
+import type {AttemptSnapshot, Conclusion, ContextInspect, ExecutionProfile, FailureClass, ModelCapability, NodePhase, NodeResult, NodeSnapshot, Reason, RoutingBudget, RoutingDecision, RoutingFallbackPolicy, RoutingRequirement, RoutingTarget, RoutingUsage, RunPhase, RunStatusView, SideEffectStatus, WorkflowSnapshot} from './types.js';
 
-export type {ModelCapability, RoutingBudget, RoutingDecision, RoutingFallbackPolicy, RoutingRequirement, RoutingUsage, SideEffectStatus} from './types.js';
+export type {ExecutionProfile, FailureClass, ModelCapability, RoutingBudget, RoutingDecision, RoutingFallbackPolicy, RoutingRequirement, RoutingUsage, SideEffectStatus} from './types.js';
 
 export const applicationApiVersion = 'fishyume.application/v1' as const;
 export type JsonScalar = string | number | boolean;
@@ -25,7 +25,7 @@ export type ModelTarget = RoutingTarget;
 export interface ModelCapabilityDescriptor {id: string; target: ModelTarget; capabilities: ModelCapability[]; contextLimitBytes: number; maxOutputBytes: number; quality: 'economy' | 'balanced' | 'premium'; cost: 'low' | 'medium' | 'high'; latency: 'fast' | 'balanced' | 'slow'; supportsCancellation: boolean}
 export interface RoutingCatalog {schemaVersion: 'fishyume.capability-catalog/v1'; policyVersion: 'fishyume.routing-policy/v1'; models: ModelCapabilityDescriptor[]}
 export interface RoutingCatalogSummary {schemaVersion: RoutingCatalog['schemaVersion']; policyVersion: RoutingCatalog['policyVersion']; source: string; catalogHash: string; modelCount: number; inspectMethod: 'routing.catalog'}
-export interface RoutingCatalogResponse {apiVersion: typeof applicationApiVersion; source: string; catalogHash: string; catalog: RoutingCatalog; limits: {maxCatalogModels: number; maxCandidates: number; maxFallbacks: number; maxRoutingBudgetBytes: number; maxCostUnits: number}; errorCodes: string[]; dynamicAvailability: false}
+export interface RoutingCatalogResponse {apiVersion: typeof applicationApiVersion; source: string; catalogHash: string; catalog: RoutingCatalog; limits: {maxCatalogModels: number; maxCandidates: number; maxFallbacks: number; maxRoutingBudgetBytes: number; maxCostUnits: number}; errorCodes: string[]; dynamicAvailability: boolean}
 export interface RoutingPreview {nodeId: string; driver: string; target: string; requirement: RoutingRequirement; decision?: RoutingDecision; issue?: ValidationIssue}
 export interface SystemCapabilitiesResponse {apiVersion: typeof applicationApiVersion; workflowSchemaVersion: string; workflowSchema: Record<string, unknown>; nodeTypes: string[]; actionTypes: ActionType[]; drivers: Array<{driver: string; targets: string[]; ready: boolean; diagnostic?: string; maxConcurrentAgents: number; supportsConcurrentCancel: boolean}>; limits: Record<string, number>; errorCodes: ApplicationErrorCode[]; minimalExample: Record<string, unknown>; authoringGuide: AuthoringGuide; routingCatalog: RoutingCatalogSummary}
 export interface WorkflowValidateRequest {project?: string; workflow: WorkflowInput; inputs?: Record<string, JsonScalar>; driver?: string; target?: string; contextBindings?: ContextBindings}
@@ -40,7 +40,7 @@ export interface RunSummary {runId: string; workflowName: string; project: strin
 export interface RunListResponse {apiVersion: typeof applicationApiVersion; items: RunSummary[]; nextCursor?: string}
 export interface ApplicationResult {summary?: string; artifacts: string[]; warnings: string[]; checks: string[]; questions: Array<{id: string; prompt: string; choices: string[]; required: boolean}>; decision?: string; reason?: string; usage?: Record<string, number>}
 export interface AttemptActivity {schemaVersion: 'fishyume.attempt-activity/v1'; summary?: string; items: Array<{kind: string; status: string; message: string}>; truncated: boolean}
-export interface ApplicationNodeView {nodeId: string; type: 'agent' | 'approval'; phase: NodePhase; dependsOn?: string[]; parallelLayer?: number; conclusion?: Conclusion; reason?: Reason; diagnostic?: string; currentAttempt?: number; attempt?: {number: number; phase: string; conclusion?: string; reason?: string; driver: string; target: string; routingDecision?: RoutingDecision; routingUsage?: RoutingUsage; sideEffectStatus?: SideEffectStatus; contextHash?: string; context?: ContextInspect; activity?: AttemptActivity; startedAt: string; updatedAt: string; completedAt?: string}; result?: ApplicationResult}
+export interface ApplicationNodeView {nodeId: string; type: 'agent' | 'approval'; phase: NodePhase; dependsOn?: string[]; parallelLayer?: number; conclusion?: Conclusion; reason?: Reason; diagnostic?: string; currentAttempt?: number; attempt?: {number: number; phase: string; conclusion?: string; reason?: string; driver: string; target: string; routingDecision?: RoutingDecision; executionProfile?: ExecutionProfile; routingUsage?: RoutingUsage; sideEffectStatus?: SideEffectStatus; failureClass?: FailureClass; contextHash?: string; context?: ContextInspect; activity?: AttemptActivity; startedAt: string; updatedAt: string; completedAt?: string}; result?: ApplicationResult}
 export interface ApplicationRunView extends RunSummary {summary?: string; cancelRequested: boolean; effectiveConcurrency: number; topologicalOrder: string[]; parallelLayers?: string[][]; nodes: ApplicationNodeView[]; deprecationWarnings: string[]}
 export interface RunGetRequest {runId: string}
 export interface RunGetResponse {apiVersion: typeof applicationApiVersion; run: ApplicationRunView}
@@ -121,7 +121,7 @@ export function applicationRunToStatus(response: RunGetResponse): RunStatusView 
   const attempts: AttemptSnapshot[] = source.nodes.flatMap(node => node.attempt ? [{
     protocolVersion: 2 as const, runId: source.runId, nodeId: node.nodeId, number: node.attempt.number, phase: node.attempt.phase as NodePhase,
     conclusion: node.attempt.conclusion as Conclusion | undefined, reason: node.attempt.reason as Reason | undefined, resolvedDriver: node.attempt.driver, resolvedTarget: node.attempt.target,
-    routingDecision: node.attempt.routingDecision, routingUsage: node.attempt.routingUsage, sideEffectStatus: node.attempt.sideEffectStatus,
+    routingDecision: node.attempt.routingDecision, executionProfile: node.attempt.executionProfile, routingUsage: node.attempt.routingUsage, sideEffectStatus: node.attempt.sideEffectStatus, failureClass: node.attempt.failureClass,
     contextHash: node.attempt.contextHash, context: node.attempt.context, activity: node.attempt.activity, startedAt: node.attempt.startedAt, updatedAt: node.attempt.updatedAt, completedAt: node.attempt.completedAt,
   }] : []);
   return {

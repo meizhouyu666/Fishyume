@@ -39,6 +39,18 @@ type fakeCore struct {
 	cancelBeforePrecondition func(*run.WorkflowSnapshot)
 }
 
+type dynamicCatalogFixture struct{ routing.CatalogProvider }
+
+func (dynamicCatalogFixture) EnsureTargetAvailable(context.Context, routing.Target) error { return nil }
+
+func TestRoutingCatalogReportsDynamicAvailabilityForConfigProvider(t *testing.T) {
+	service := NewServiceWithCatalogs(newFakeCore(), "codex", dynamicCatalogFixture{CatalogProvider: routing.BuiltinCatalogRegistry()}, store.New(t.TempDir()))
+	response, appErr := service.RoutingCatalog(context.Background(), RoutingCatalogRequest{})
+	if appErr != nil || !response.DynamicAvailability {
+		t.Fatalf("routing catalog = %+v, error = %v", response, appErr)
+	}
+}
+
 func (f *fakeCore) DriverCapabilityReports(context.Context, string) []run.DriverCapabilityReport {
 	return append([]run.DriverCapabilityReport(nil), f.reports...)
 }

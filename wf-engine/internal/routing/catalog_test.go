@@ -27,3 +27,16 @@ func TestBuiltinCatalogV1ReturnsMutationIsolatedCopies(t *testing.T) {
 		t.Fatalf("builtin catalog was mutated through a returned value: %+v", second.Models[0])
 	}
 }
+
+func TestBuiltinCodexCatalogV2ContainsQualifiedGPT56Family(t *testing.T) {
+	catalog := BuiltinCodexCatalogV2()
+	if err := ValidateCatalog(catalog); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"}
+	for index, model := range catalog.Models {
+		if model.Target.Model != want[index] || model.Target.Driver != "codex" || model.Target.Provider != "local" {
+			t.Fatalf("model[%d] = %+v", index, model)
+		}
+	}
+}

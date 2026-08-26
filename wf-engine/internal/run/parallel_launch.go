@@ -155,7 +155,11 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 			if err != nil {
 				return err
 			}
-			routingDecision, routingUsage, err := s.prepareAttemptRouting(run.ID, *node, driver, workflow.EffectiveRoutingRequirement(normalized.Document, definition))
+			routingDecision, routingUsage, err := s.prepareAttemptRouting(ctx, run.ID, *node, driver, workflow.EffectiveRoutingRequirement(normalized.Document, definition))
+			if err != nil {
+				return err
+			}
+			executionProfile, err := routingExecutionProfile(routingDecision)
 			if err != nil {
 				return err
 			}
@@ -173,13 +177,14 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 			}
 			if routingDecision != nil {
 				compiled.Envelope.RoutingDecision = routingDecision
+				compiled.Envelope.ExecutionProfile = executionProfile
 			}
 			memoryUsage, err := s.consumeCompiledMemory(run.Project, agentIdentity(run.ID, node.ID, number), compiled.Compilation)
 			if err != nil {
 				return err
 			}
 			attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: run.ID, NodeID: node.ID, Number: number, Phase: NodePhaseRunning, LaunchState: LaunchPrepared,
-				ResolvedDriver: driver, ResolvedTarget: target, Backend: driver, RoutingDecision: routingDecision, RoutingUsage: routingUsage, ContextCompilerVersion: contextcompiler.Version, ContextCompilerVersionV2: compiled.Compilation.Manifest.CompilerVersion,
+				ResolvedDriver: driver, ResolvedTarget: target, Backend: driver, RoutingDecision: routingDecision, ExecutionProfile: executionProfile, RoutingUsage: routingUsage, ContextCompilerVersion: contextcompiler.Version, ContextCompilerVersionV2: compiled.Compilation.Manifest.CompilerVersion,
 				ContextManifest: compiled.LegacyManifest, ContextManifestV2: &compiled.Compilation.Manifest, ContextHash: compiled.Compilation.Hash, MemoryUsage: memoryUsage, StartedAt: now, UpdatedAt: now}
 			if err := s.writeAttempt(attempt, true); err != nil {
 				return err
@@ -195,7 +200,7 @@ func (s *Service) scheduleBatch(ctx context.Context, runID string, generation ui
 			}
 			launches = append(launches, pendingLaunch{runID: run.ID, nodeID: node.ID, attempt: number, backend: driver,
 				launchSpec: backend.AgentExecutionSpec{RunID: run.ID, NodeID: node.ID, Attempt: number, Workspace: run.Project, Tool: legacyToolForDriver(s.registry, driver), Runtime: target,
-					Model: routingModel(routingDecision), Instructions: compiled.Envelope.Prompt, RequiredSkills: append([]string(nil), definition.RequiredSkills...), ResultContract: backend.ResultContract{Schema: compiled.Envelope.ResultContract.Schema, MaxBytes: workflow.MaxResultBytes}, Envelope: &compiled.Envelope}})
+					Model: routingModel(routingDecision), ReasoningEffort: routingReasoningEffort(executionProfile), Instructions: compiled.Envelope.Prompt, RequiredSkills: append([]string(nil), definition.RequiredSkills...), ResultContract: backend.ResultContract{Schema: compiled.Envelope.ResultContract.Schema, MaxBytes: workflow.MaxResultBytes}, Envelope: &compiled.Envelope}})
 			progressed = true
 		}
 		if len(launches) == 0 {

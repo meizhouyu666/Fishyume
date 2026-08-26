@@ -28,6 +28,17 @@ func (d *Driver) Session() sessiondriver.Driver {
 	return codexprocess.NewSessionAdapter(d.executor)
 }
 
+type ModelInfo = codexprocess.ModelInfo
+type ProbeResult = codexprocess.ProbeResult
+
+func (d *Driver) DiscoverModels(ctx context.Context) ([]ModelInfo, error) {
+	return d.executor.DiscoverModels(ctx)
+}
+
+func (d *Driver) ProbeModel(ctx context.Context, model, effort string) ProbeResult {
+	return d.executor.ProbeModel(ctx, model, effort)
+}
+
 func (*Driver) Name() string { return "codex" }
 
 func (*Driver) Capabilities() agent.DriverCapabilities {
@@ -64,14 +75,22 @@ func (d *Driver) Start(ctx context.Context, envelope agent.AttemptEnvelope) (*ag
 	handle, err := d.executor.Start(ctx, backend.AgentExecutionSpec{
 		RunID: envelope.Identity.RunID, NodeID: envelope.Identity.NodeID, Attempt: envelope.Identity.Attempt,
 		Workspace: envelope.Workspace, Tool: "codex", Runtime: envelope.Target, Instructions: prompt,
-		Model:          selectedModel(envelope),
-		RequiredSkills: append([]string(nil), envelope.Context.RequiredSkills...),
-		ResultContract: backend.ResultContract{Schema: append(json.RawMessage(nil), envelope.ResultContract.Schema...), MaxBytes: envelope.ResultContract.MaxBytes},
+		Model:           selectedModel(envelope),
+		ReasoningEffort: selectedReasoningEffort(envelope),
+		RequiredSkills:  append([]string(nil), envelope.Context.RequiredSkills...),
+		ResultContract:  backend.ResultContract{Schema: append(json.RawMessage(nil), envelope.ResultContract.Schema...), MaxBytes: envelope.ResultContract.MaxBytes},
 	})
 	if handle == nil {
 		return nil, err
 	}
 	return &agent.ExecutionHandle{Driver: d.Name(), Target: envelope.Target, SchemaVersion: handle.SchemaVersion, ID: handle.ID, Data: append(json.RawMessage(nil), handle.Data...)}, err
+}
+
+func selectedReasoningEffort(envelope agent.AttemptEnvelope) string {
+	if envelope.ExecutionProfile == nil {
+		return ""
+	}
+	return envelope.ExecutionProfile.ReasoningEffort
 }
 
 func selectedModel(envelope agent.AttemptEnvelope) string {

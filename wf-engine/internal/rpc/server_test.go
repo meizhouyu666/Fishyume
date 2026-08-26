@@ -15,6 +15,8 @@ import (
 
 	"wf.local/wf-engine/internal/application"
 	"wf.local/wf-engine/internal/backend"
+	"wf.local/wf-engine/internal/driver/codexprocess"
+	"wf.local/wf-engine/internal/routingconfig"
 	"wf.local/wf-engine/internal/run"
 	"wf.local/wf-engine/internal/store"
 	"wf.local/wf-engine/internal/team"
@@ -41,6 +43,93 @@ type fakeBackend struct {
 	wait    chan struct{}
 	mu      sync.Mutex
 	starts  int
+}
+
+type routingInspectorFixture struct {
+	models []codexprocess.ModelInfo
+	probes map[string]bool
+}
+
+func (f *routingInspectorFixture) DiscoverModels(context.Context) ([]codexprocess.ModelInfo, error) {
+	return append([]codexprocess.ModelInfo(nil), f.models...), nil
+}
+
+func (f *routingInspectorFixture) ProbeModel(_ context.Context, model, effort string) codexprocess.ProbeResult {
+	return codexprocess.ProbeResult{Model: model, Effort: effort, Available: f.probes[model], Diagnostic: "RPC fixture"}
+}
+
+func TestM78RoutingRPCDiscoveryProbeConfigAndEffectiveCatalog(t *testing.T) {
+	root := t.TempDir()
+	config, err := routingconfig.NewService(root, &routingInspectorFixture{
+		models: []codexprocess.ModelInfo{{ID: "sol", Model: "gpt-5.6-sol", DefaultEffort: "medium", SupportedEfforts: []string{"low", "medium", "high"}}},
+		probes: map[string]bool{"gpt-5.6-sol": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := store.New(root)
+	core := run.NewServiceWithRegistryAndCatalogs(nil, "codex", config, state)
+	applicationService := application.NewServiceWithCatalogs(core, "codex", config, state)
+	call := func(id int, method string, params any) rpcTestResponse {
+		output := &safeBuffer{}
+		server := NewServerWithTeamAndConfig(strings.NewReader(request(id, method, params)), output, core, applicationService, nil, config)
+		if err := server.Serve(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return decodeResponseLines(t, output.String())[id]
+	}
+	params := map[string]any{"schemaVersion": routingconfig.APIVersion}
+	update := map[string]any{"schemaVersion": routingconfig.APIVersion, "mutationId": "disable-luna", "expectedRevision": 1, "routeId": "codex/local/gpt-5.6-luna", "enabled": false}
+	responses := map[int]rpcTestResponse{
+		1: call(1, "driver.list", params),
+		2: call(2, "driver.models.discover", params),
+		3: call(3, "driver.models.probe", map[string]any{"schemaVersion": routingconfig.APIVersion, "routeIds": []string{"codex/local/gpt-5.6-sol"}}),
+		4: call(4, "routing.config.update", update),
+		5: call(5, "routing.config.update", update),
+		6: call(6, "routing.config.update", map[string]any{"schemaVersion": routingconfig.APIVersion, "mutationId": "stale", "expectedRevision": 1, "routeId": "codex/local/gpt-5.6-terra", "enabled": false}),
+		7: call(7, "routing.catalog.effective", params),
+	}
+	for _, id := range []int{1, 2, 3, 4, 5, 7} {
+		if responses[id].Error != nil {
+			t.Fatalf("response %d error = %+v", id, responses[id].Error)
+		}
+	}
+	if responses[6].Error == nil || responses[6].Error.Code != -32009 {
+		t.Fatalf("stale update response = %+v", responses[6])
+	}
+	var first, replay routingconfig.ConfigUpdateResponse
+	decodeRPCResult(t, responses[4], &first)
+	decodeRPCResult(t, responses[5], &replay)
+	if first.Config.Revision != 2 || first.Replayed || !replay.Replayed || replay.Config.Revision != 2 {
+		t.Fatalf("updates first=%+v replay=%+v", first, replay)
+	}
+	var effective routingconfig.EffectiveCatalogResponse
+	decodeRPCResult(t, responses[7], &effective)
+	if effective.CatalogHash == "" || len(effective.Catalog.Models) != 1 || effective.Catalog.Models[0].Target.Model != "gpt-5.6-sol" || !effective.Routes[1].Routable {
+		t.Fatalf("effective catalog = %+v", effective)
+	}
+}
+
+func TestM78RoutingRPCFailsClosedWithoutConfigService(t *testing.T) {
+	output, _ := serve(t, request(1, "driver.list", map[string]any{"schemaVersion": routingconfig.APIVersion}), &fakeBackend{})
+	response := decodeResponseLines(t, output.String())[1]
+	data, _ := response.Error.Data.(map[string]any)
+	if response.Error == nil || response.Error.Code != -32010 || data["code"] != "capability_unavailable" {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func decodeResponseLines(t *testing.T, value string) map[int]rpcTestResponse {
+	t.Helper()
+	result := map[int]rpcTestResponse{}
+	for _, line := range strings.Split(strings.TrimSpace(value), "\n") {
+		var response rpcTestResponse
+		if err := json.Unmarshal([]byte(line), &response); err != nil {
+			t.Fatalf("decode response %q: %v", line, err)
+		}
+		result[response.ID] = response
+	}
+	return result
 }
 
 func TestApplicationRPCErrorBoundsOversizedData(t *testing.T) {

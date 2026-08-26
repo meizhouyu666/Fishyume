@@ -29,7 +29,7 @@ button {color: inherit}
 .topbar {display: grid; grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr); align-items: center; gap: 20px; padding: 0 22px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,.96); position: sticky; top: 0; z-index: 20}
 .brand {display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 720}
 .brand-mark {display: grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; color: white; background: var(--green); font-size: 15px}
-.view-switch {display: grid; grid-template-columns: 1fr 1fr; padding: 3px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 6px}
+.view-switch {display: grid; grid-template-columns: repeat(3, 1fr); padding: 3px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 6px}
 .view-tab {height: 34px; min-width: 102px; padding: 0 13px; border: 0; border-radius: 4px; display: flex; align-items: center; justify-content: center; gap: 7px; background: transparent; color: var(--muted); cursor: pointer}
 .view-tab svg, .icon-button svg, .command-button svg {width: 16px; height: 16px; stroke-width: 1.8}
 .view-tab.is-active {background: var(--surface); color: var(--ink); box-shadow: 0 1px 4px rgba(20,31,24,.09)}
@@ -53,6 +53,7 @@ button {color: inherit}
 .collection-item {width: 100%; min-height: 91px; padding: 12px; border: 1px solid transparent; border-radius: 6px; background: transparent; text-align: left; cursor: pointer; display: grid; gap: 8px}
 .collection-item:hover {background: #eef2ee}
 .collection-item.is-selected {background: var(--surface); border-color: #cbd4cd; box-shadow: 0 2px 8px rgba(20,31,24,.05)}
+.collection-item.route-summary {cursor: default}
 .item-topline, .item-meta, .detail-title-row, .section-title-row, .participant-topline {display: flex; align-items: center; justify-content: space-between; gap: 10px}
 .item-title {font-size: 13px; font-weight: 680; line-height: 1.35; overflow-wrap: anywhere}
 .item-meta {justify-content: flex-start; color: var(--muted); font-size: 11px}
@@ -137,6 +138,14 @@ button {color: inherit}
 .answer-form {display: grid; gap: 8px; margin-top: 10px}
 .answer-form label {font-size: 10px; color: var(--muted)}
 .answer-form input {width: 100%; height: 32px; border: 1px solid var(--line); border-radius: 4px; padding: 0 8px}
+.routing-table {display: grid; gap: 10px}
+.route-row {display: grid; grid-template-columns: minmax(180px, 1fr) minmax(300px, auto) auto; align-items: center; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--line)}
+.route-identity {display: grid; gap: 5px; min-width: 0}
+.route-identity strong {font-size: 13px; overflow-wrap: anywhere}
+.route-states {display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px}
+.status.available {background: var(--green-soft); color: var(--green)}
+.status.unavailable {background: var(--coral-soft); color: var(--coral)}
+.status.unknown {background: var(--amber-soft); color: var(--amber)}
 
 .empty-state {padding: 44px 20px; text-align: center; color: var(--muted); font-size: 12px}
 .loading-line {height: 72px; margin: 8px; border-radius: 6px; background: #edf1ed; animation: pulse 1.4s ease-in-out infinite}
@@ -156,7 +165,7 @@ button {color: inherit}
 @media (max-width: 680px) {
   .app-shell {grid-template-rows: 54px auto}
   .topbar {height: 54px; min-width: 0; gap: 8px}
-  .view-switch {justify-self: center; width: 156px}
+  .view-switch {justify-self: center; width: 204px}
   .view-tab {min-width: 74px; padding: 0 9px}
   .view-tab span {display: none}
   .workspace {display: block; width: 100%; max-width: 100%; min-height: calc(100vh - 54px); overflow-x: hidden}
@@ -181,4 +190,6 @@ button {color: inherit}
   .layer-label {padding-top: 0}
   .layer-nodes {grid-template-columns: minmax(0, 1fr)}
   .run-node {width: 100%; max-width: 100%; overflow: hidden}
+  .route-row {grid-template-columns: minmax(0, 1fr); align-items: start}
+  .route-states {justify-content: flex-start}
 }

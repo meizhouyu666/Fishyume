@@ -5,11 +5,14 @@ export const maxRequestBytes = 64 * 1024;
 export const maxResponseBytes = 2 * 1024 * 1024;
 export const maxConcurrentRequests = 8;
 export const requestTimeoutMs = 15_000;
+export const probeRequestTimeoutMs = 150_000;
 
 export const allowedMethods = new Set([
   'team.list', 'team.get', 'team.messages', 'team.action',
   'team.handoff.list', 'team.handoff.get',
   'run.list', 'run.get', 'run.action',
+  'driver.list', 'driver.models.discover', 'driver.models.probe',
+  'routing.config.get', 'routing.config.update', 'routing.availability', 'routing.catalog.effective',
 ]);
 
 export interface RpcEnvelope {method: string; params: Record<string, unknown>}

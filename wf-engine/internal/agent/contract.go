@@ -73,7 +73,8 @@ type AttemptEnvelope struct {
 	ResultContract  ResultContract    `json:"resultContract"`
 	// RoutingDecision is the immutable model-routing decision used to create
 	// this Attempt. It is absent on historical/compatibility Attempts.
-	RoutingDecision *routing.RoutingDecisionV1 `json:"routingDecision,omitempty"`
+	RoutingDecision  *routing.RoutingDecisionV1  `json:"routingDecision,omitempty"`
+	ExecutionProfile *routing.ExecutionProfileV1 `json:"executionProfile,omitempty"`
 
 	// Prompt is compiled deterministically for the external harness but is not
 	// serialized into the durable Attempt envelope or execution handle.
@@ -252,6 +253,11 @@ func ValidateAttemptEnvelope(envelope AttemptEnvelope) error {
 	if envelope.RoutingDecision != nil {
 		if err := routing.ValidateDecision(*envelope.RoutingDecision); err != nil {
 			return fmt.Errorf("routing decision is invalid: %w", err)
+		}
+	}
+	if envelope.ExecutionProfile != nil {
+		if err := routing.ValidateExecutionProfile(*envelope.ExecutionProfile, envelope.RoutingDecision); err != nil {
+			return fmt.Errorf("execution profile is invalid: %w", err)
 		}
 	}
 	for _, upstream := range envelope.Context.UpstreamResults {

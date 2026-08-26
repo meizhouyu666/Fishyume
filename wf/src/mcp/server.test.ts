@@ -9,6 +9,7 @@ import type {EngineClient, EventListener} from '../bridge/engine.js';
 import type {EngineHello} from '../bridge/types.js';
 import {runMachine} from '../commands/machine.js';
 import type {TeamCapabilities} from '../bridge/team.js';
+import type {EffectiveCatalogResponse} from '../bridge/routing.js';
 import {createMCPServer, runMCPTransport} from './server.js';
 import type {WebOpenManager} from './web.js';
 
@@ -25,6 +26,12 @@ const routingCatalog: RoutingCatalogResponse = {
   apiVersion: 'fishyume.application/v1', source: 'fishyume.builtin', catalogHash: 'a'.repeat(64), dynamicAvailability: false,
   catalog: {schemaVersion: 'fishyume.capability-catalog/v1', policyVersion: 'fishyume.routing-policy/v1', models: [{id: 'codex/local/model', target: {driver: 'codex', provider: 'local', model: 'model'}, capabilities: ['repo_read'], contextLimitBytes: 131072, maxOutputBytes: 32768, quality: 'balanced', cost: 'low', latency: 'fast', supportsCancellation: true}]},
   limits: {maxCatalogModels: 256, maxCandidates: 32, maxFallbacks: 8, maxRoutingBudgetBytes: 16777216, maxCostUnits: 1000000}, errorCodes: ['routing_invalid_contract'],
+};
+
+const effectiveCatalog: EffectiveCatalogResponse = {
+  schemaVersion: 'fishyume.config/v1', source: 'fishyume.dynamic', catalogHash: 'e'.repeat(64),
+  catalog: {schemaVersion: 'fishyume.capability-catalog/v1', policyVersion: 'fishyume.routing-policy/v1', models: [{id: 'codex/local/gpt-5.6-sol', target: {driver: 'codex', provider: 'local', model: 'gpt-5.6-sol'}, capabilities: ['repo_read', 'repo_edit'], contextLimitBytes: 131072, maxOutputBytes: 32768, quality: 'premium', cost: 'medium', latency: 'balanced', supportsCancellation: true}]},
+  routes: [{routeId: 'codex/local/gpt-5.6-sol', model: 'gpt-5.6-sol', qualified: true, defaultReasoningEffort: 'medium', reasoningEfforts: ['low', 'medium', 'high'], recommendedUseCases: ['general workflow'], discovered: true, enabled: true, availability: 'available', routable: true}],
 };
 
 const teamCapabilities: TeamCapabilities = {
@@ -62,6 +69,13 @@ class FakeApplicationClient implements EngineClient {
     if (method === 'team.handoff.get') return {schemaVersion: 'fishyume.team/v1', handoff, binding: handoffBinding} as T;
     if (method === 'team.handoff.list') return {schemaVersion: 'fishyume.team/v1', items: [handoff]} as T;
     if (method === 'team.handoff.bindRun') return {schemaVersion: 'fishyume.team/v1', binding: handoffBinding, replayed: false} as T;
+    if (method === 'driver.list') return {schemaVersion: 'fishyume.config/v1', drivers: [{driver: 'codex', provider: 'local', workflowEligible: true, modelCount: 1}]} as T;
+    if (method === 'driver.models.discover') return {schemaVersion: 'fishyume.config/v1', driver: 'codex', observedAt: '2026-08-27T00:00:00Z', models: [], routes: effectiveCatalog.routes} as T;
+    if (method === 'driver.models.probe') return {schemaVersion: 'fishyume.config/v1', entries: [{routeId: 'codex/local/gpt-5.6-sol', model: 'gpt-5.6-sol', status: 'available'}], catalogHash: effectiveCatalog.catalogHash} as T;
+    if (method === 'routing.config.get') return {schemaVersion: 'fishyume.config/v1', config: {schemaVersion: 'fishyume.config/v1', revision: 1, routes: [{routeId: 'codex/local/gpt-5.6-sol', enabled: true}], updatedAt: '2026-08-27T00:00:00Z'}} as T;
+    if (method === 'routing.config.update') return {schemaVersion: 'fishyume.config/v1', config: {schemaVersion: 'fishyume.config/v1', revision: 2, routes: [{routeId: 'codex/local/gpt-5.6-sol', enabled: false}], updatedAt: '2026-08-27T00:00:01Z'}, replayed: false} as T;
+    if (method === 'routing.availability') return {schemaVersion: 'fishyume.config/v1', entries: [{routeId: 'codex/local/gpt-5.6-sol', model: 'gpt-5.6-sol', status: 'available'}]} as T;
+    if (method === 'routing.catalog.effective') return effectiveCatalog as T;
     throw new Error(`unexpected ${method}`);
   }
   onRunEvent(_listener: EventListener): () => void {return () => undefined}
@@ -74,6 +88,14 @@ class RecordingMemoryClient extends FakeApplicationClient {
   override async call<T>(method: string, params?: unknown): Promise<T> {
     this.calls.push({method, params});
     if (method === 'memory.host.create') return {apiVersion: 'fishyume.application/v1', revision: 1, recordId: 'memory-a', affectedIds: [], replayed: false} as T;
+    return super.call<T>(method);
+  }
+}
+
+class RecordingRoutingClient extends FakeApplicationClient {
+  calls: Array<{method: string; params?: unknown}> = [];
+  override async call<T>(method: string, params?: unknown): Promise<T> {
+    this.calls.push({method, params});
     return super.call<T>(method);
   }
 }
@@ -146,7 +168,7 @@ test('MCP and Machine CLI expose identical Application response JSON', async () 
   await Promise.all([mcpServer.connect(serverTransport), mcpClient.connect(clientTransport)]);
   try {
     const listed = await mcpClient.listTools();
-    assert.deepEqual(listed.tools.map(tool => tool.name), ['system.capabilities', 'routing.catalog', 'workflow.validate', 'workflow.explain', 'run.start', 'run.list', 'run.get', 'run.events', 'run.action', 'run.result', 'memory.create', 'memory.get', 'memory.list', 'memory.supersede', 'memory.delete', 'team.capabilities', 'team.start', 'team.list', 'team.get', 'team.events', 'team.messages', 'team.action', 'team.handoff.create', 'team.handoff.get', 'team.handoff.list', 'team.handoff.bindRun', 'web.open']);
+    assert.deepEqual(listed.tools.map(tool => tool.name), ['system.capabilities', 'routing.catalog', 'workflow.validate', 'workflow.explain', 'run.start', 'run.list', 'run.get', 'run.events', 'run.action', 'run.result', 'memory.create', 'memory.get', 'memory.list', 'memory.supersede', 'memory.delete', 'team.capabilities', 'team.start', 'team.list', 'team.get', 'team.events', 'team.messages', 'team.action', 'team.handoff.create', 'team.handoff.get', 'team.handoff.list', 'team.handoff.bindRun', 'web.open', 'driver.list', 'driver.models.discover', 'driver.models.probe', 'routing.config.get', 'routing.config.update', 'routing.availability', 'routing.catalog.effective']);
     for (const tool of listed.tools) {
       const schema = JSON.stringify(tool.inputSchema);
       for (const legacy of ['"backend"', '"tool"', '"runtime"']) assert.equal(schema.includes(legacy), false, `${tool.name} exposed ${legacy}`);
@@ -159,6 +181,7 @@ test('MCP and Machine CLI expose identical Application response JSON', async () 
     assert.match(listed.tools.find(tool => tool.name === 'workflow.validate')?.description ?? '', /same workflow, inputs, driver, target/);
     assert.match(listed.tools.find(tool => tool.name === 'workflow.explain')?.description ?? '', /Context Policy/);
     assert.match(listed.tools.find(tool => tool.name === 'team.handoff.get')?.description ?? '', /workflow\.validate.*workflow\.explain.*user confirmation.*run\.start.*team\.handoff\.bindRun/);
+    assert.match(listed.tools.find(tool => tool.name === 'driver.models.probe')?.description ?? '', /spends model tokens/);
     for (const method of ['system.capabilities', 'routing.catalog', 'team.capabilities'] as const) {
       const machineClient = new FakeApplicationClient(); let machineOutput = '';
       const args = method === 'team.capabilities' ? {schemaVersion: 'fishyume.team/v1'} : {};
@@ -172,6 +195,25 @@ test('MCP and Machine CLI expose identical Application response JSON', async () 
   } finally {
     await mcpClient.close();
     await mcpServer.close();
+  }
+});
+
+test('M7.8 MCP preserves effective routing state and dispatches explicit probes', async () => {
+  const engine = new RecordingRoutingClient();
+  const server = createMCPServer(engine);
+  const host = new Client({name: 'routing-host', version: '1.0.0'});
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverTransport), host.connect(clientTransport)]);
+  try {
+    const effective = await host.callTool({name: 'routing.catalog.effective', arguments: {schemaVersion: 'fishyume.config/v1'}});
+    assert.deepEqual(effective.structuredContent, effectiveCatalog);
+    const probeArgs = {schemaVersion: 'fishyume.config/v1', routeIds: ['codex/local/gpt-5.6-sol']};
+    const probed = await host.callTool({name: 'driver.models.probe', arguments: probeArgs});
+    assert.notEqual(probed.isError, true);
+    assert.deepEqual(engine.calls.at(-1), {method: 'driver.models.probe', params: probeArgs});
+  } finally {
+    await host.close();
+    await server.close();
   }
 });
 

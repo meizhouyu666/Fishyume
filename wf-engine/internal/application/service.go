@@ -48,6 +48,7 @@ type Journal interface {
 type Service struct {
 	core          Core
 	defaultDriver string
+	catalogs      routing.CatalogProvider
 	journal       Journal
 	memory        MemoryBackend
 	now           func() time.Time
@@ -55,9 +56,16 @@ type Service struct {
 }
 
 func NewService(core Core, defaultDriver string, journals ...Journal) *Service {
+	return NewServiceWithCatalogs(core, defaultDriver, routing.BuiltinCatalogRegistry(), journals...)
+}
+
+func NewServiceWithCatalogs(core Core, defaultDriver string, catalogs routing.CatalogProvider, journals ...Journal) *Service {
 	defaultDriver = strings.TrimSpace(defaultDriver)
 	if defaultDriver == "" {
 		defaultDriver = "codex"
+	}
+	if catalogs == nil {
+		catalogs = routing.BuiltinCatalogRegistry()
 	}
 	var journal Journal
 	if len(journals) > 0 {
@@ -67,7 +75,7 @@ func NewService(core Core, defaultDriver string, journals ...Journal) *Service {
 	if candidate, ok := journal.(MemoryBackend); ok {
 		memory = candidate
 	}
-	return &Service{core: core, defaultDriver: defaultDriver, journal: journal, memory: memory, now: time.Now}
+	return &Service{core: core, defaultDriver: defaultDriver, catalogs: catalogs, journal: journal, memory: memory, now: time.Now}
 }
 
 func (s *Service) SystemCapabilities(ctx context.Context, request SystemCapabilitiesRequest) (SystemCapabilitiesResponse, *Error) {
@@ -79,7 +87,7 @@ func (s *Service) SystemCapabilities(ctx context.Context, request SystemCapabili
 		drivers = append(drivers, DriverCapability{Driver: report.Driver, Targets: targets, Ready: report.Ready, Diagnostic: report.Diagnostic, MaxConcurrentAgents: report.MaxConcurrentAgents, SupportsConcurrentCancel: report.SupportsConcurrentCancel})
 	}
 	sort.Slice(drivers, func(i, j int) bool { return drivers[i].Driver < drivers[j].Driver })
-	catalog, catalogErr := stableRoutingCatalogResponse()
+	catalog, catalogErr := s.routingCatalogResponse()
 	if catalogErr != nil {
 		return SystemCapabilitiesResponse{}, internalError(catalogErr)
 	}
@@ -91,7 +99,7 @@ func (s *Service) SystemCapabilities(ctx context.Context, request SystemCapabili
 }
 
 func (s *Service) RoutingCatalog(_ context.Context, _ RoutingCatalogRequest) (RoutingCatalogResponse, *Error) {
-	response, err := stableRoutingCatalogResponse()
+	response, err := s.routingCatalogResponse()
 	if err != nil {
 		return RoutingCatalogResponse{}, internalError(err)
 	}
@@ -101,20 +109,28 @@ func (s *Service) RoutingCatalog(_ context.Context, _ RoutingCatalogRequest) (Ro
 	return response, nil
 }
 
-func stableRoutingCatalogResponse() (RoutingCatalogResponse, error) {
-	catalog := routing.BuiltinCatalogV1()
-	if err := routing.ValidateCatalog(catalog); err != nil {
-		return RoutingCatalogResponse{}, fmt.Errorf("validate built-in routing catalog: %w", err)
-	}
-	hash, err := routing.CatalogHash(catalog)
+func (s *Service) routingCatalogResponse() (RoutingCatalogResponse, error) {
+	catalog, hash, err := s.catalogs.ActiveCatalog()
 	if err != nil {
-		return RoutingCatalogResponse{}, fmt.Errorf("hash built-in routing catalog: %w", err)
+		return RoutingCatalogResponse{}, fmt.Errorf("load active routing catalog: %w", err)
 	}
+	if err := routing.ValidateCatalog(catalog); err != nil {
+		return RoutingCatalogResponse{}, fmt.Errorf("validate active routing catalog: %w", err)
+	}
+	_, dynamicAvailability := s.catalogs.(routing.TargetAvailabilityGate)
 	return RoutingCatalogResponse{
-		APIVersion: APIVersion, Source: routing.BuiltinCatalogSourceV1, CatalogHash: hash, Catalog: catalog,
+		APIVersion: APIVersion, Source: routingCatalogSource(hash), CatalogHash: hash, Catalog: catalog,
 		Limits:     RoutingCatalogLimits{MaxCatalogModels: routing.MaxCatalogModels, MaxCandidates: routing.MaxCandidates, MaxFallbacks: routing.MaxFallbacks, MaxRoutingBudgetBytes: routing.MaxRoutingBudgetBytes, MaxCostUnits: routing.MaxCostUnits},
-		ErrorCodes: append([]routing.ErrorCode(nil), routing.StableErrorCodes...), DynamicAvailability: false,
+		ErrorCodes: append([]routing.ErrorCode(nil), routing.StableErrorCodes...), DynamicAvailability: dynamicAvailability,
 	}, nil
+}
+
+func routingCatalogSource(hash string) string {
+	legacyHash, err := routing.CatalogHash(routing.BuiltinCatalogV1())
+	if err == nil && hash == legacyHash {
+		return routing.BuiltinCatalogSourceV1
+	}
+	return routing.DynamicCatalogSourceV1
 }
 
 func (s *Service) WorkflowValidate(ctx context.Context, request WorkflowValidateRequest) (WorkflowValidateResponse, *Error) {
@@ -221,7 +237,7 @@ func (s *Service) routingPreviews(normalized workflow.Normalized, driverOverride
 			previews = append(previews, preview)
 			continue
 		}
-		decision, err := previewRoutingDecision(driver, requirement)
+		decision, err := previewRoutingDecision(s.catalogs, driver, requirement)
 		if err != nil {
 			preview.Issue = routingPreviewIssue("$.nodes."+nodeID+".agent.routing", "routing_unavailable", err)
 		} else {
@@ -232,8 +248,11 @@ func (s *Service) routingPreviews(normalized workflow.Normalized, driverOverride
 	return previews
 }
 
-func previewRoutingDecision(driver string, requirement routing.RoutingRequirementV1) (*routing.RoutingDecisionV1, error) {
-	catalog := routing.BuiltinCatalogV1()
+func previewRoutingDecision(catalogs routing.CatalogProvider, driver string, requirement routing.RoutingRequirementV1) (*routing.RoutingDecisionV1, error) {
+	catalog, catalogHash, err := catalogs.ActiveCatalog()
+	if err != nil {
+		return nil, fmt.Errorf("load active routing catalog: %w", err)
+	}
 	knownDriver := false
 	for _, model := range catalog.Models {
 		if model.Target.Driver == driver {
@@ -244,10 +263,7 @@ func previewRoutingDecision(driver string, requirement routing.RoutingRequiremen
 	if !knownDriver {
 		return nil, fmt.Errorf("driver %q has no trusted routing catalog target", driver)
 	}
-	catalogHash, err := routing.CatalogHash(catalog)
-	if err != nil {
-		return nil, fmt.Errorf("hash routing catalog: %w", err)
-	}
+	requirement = routing.ApplyCodexProductPreference(catalog, driver, requirement)
 	decision, err := routing.ResolveV1(routing.ResolveRequestV1{
 		Catalog: catalog, CatalogHash: catalogHash, Requirement: requirement,
 		Budget: routing.BudgetGrantV1{MaxCostUnits: requirement.MaxCostUnits, ContextBytes: requirement.MaxContextBytes, OutputBytes: requirement.MaxOutputBytes},
@@ -882,7 +898,7 @@ func (s *Service) mapRunView(view run.StatusView) RunView {
 			}
 			if node.CurrentAttempt > 0 {
 				if attempt, err := s.core.ReadAttempt(snapshot.ID, node.ID, node.CurrentAttempt); err == nil {
-					mapped.Attempt = &AttemptView{Number: attempt.Number, Phase: string(attempt.Phase), Conclusion: string(attempt.Conclusion), Reason: string(attempt.Reason), Driver: runAttemptDriver(attempt), Target: runAttemptTarget(attempt), RoutingDecision: attempt.RoutingDecision, RoutingUsage: attempt.RoutingUsage, SideEffectStatus: attempt.SideEffectStatus, ContextHash: attempt.ContextHash, Context: inspectContext(attempt), MemoryUsage: memoryUsageInspect(attempt), StartedAt: formatTime(attempt.StartedAt), UpdatedAt: formatTime(attempt.UpdatedAt)}
+					mapped.Attempt = &AttemptView{Number: attempt.Number, Phase: string(attempt.Phase), Conclusion: string(attempt.Conclusion), Reason: string(attempt.Reason), Driver: runAttemptDriver(attempt), Target: runAttemptTarget(attempt), RoutingDecision: attempt.RoutingDecision, ExecutionProfile: attempt.ExecutionProfile, RoutingUsage: attempt.RoutingUsage, SideEffectStatus: attempt.SideEffectStatus, FailureClass: attempt.FailureClass, ContextHash: attempt.ContextHash, Context: inspectContext(attempt), MemoryUsage: memoryUsageInspect(attempt), StartedAt: formatTime(attempt.StartedAt), UpdatedAt: formatTime(attempt.UpdatedAt)}
 					if reader, ok := s.core.(interface {
 						ReadAttemptOutput(string, string, int) (string, error)
 					}); ok {

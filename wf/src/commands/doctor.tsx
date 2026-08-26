@@ -2,6 +2,7 @@ import {Command, Option} from 'clipanion';
 import {EngineBridge, type EngineClient} from '../bridge/engine.js';
 import {commandDiagnostic, currentFishyumeMcpInvocation, isFishyumeMcpConfiguration, isMissingMcpServer, runCodex, type CodexRunner, type McpInvocation} from './codex-cli.js';
 import {hasFishyumeApprovalPolicy} from './codex-config.js';
+import {callRouting, configApiVersion} from '../bridge/routing.js';
 
 interface Writer { write(text: string): unknown }
 
@@ -14,7 +15,16 @@ export async function runDoctor(client: EngineClient, project: string | undefine
     if (hello.projectChecked) {
       output.write(`${hello.projectReady ? 'ok' : 'fail'} project ${hello.projectDiagnostic ?? project}\n`);
     }
-    return hello.backendReady && (!hello.projectChecked || hello.projectReady) ? 0 : 1;
+    let routingReady = true;
+    if (hello.supportedMethods.includes('routing.catalog.effective')) {
+      const effective = await callRouting(client, 'routing.catalog.effective', {schemaVersion: configApiVersion});
+      const usable = effective.routes.filter(route => route.routable);
+      const unknown = effective.routes.filter(route => route.enabled && route.discovered && route.availability === 'unknown');
+      routingReady = usable.length > 0;
+      output.write(`${routingReady ? 'ok' : 'fail'} routing ${usable.length} usable route(s), catalog ${effective.catalogHash.slice(0, 12)}\n`);
+      if (!routingReady && unknown.length > 0) output.write('Run: fishyume routing refresh --probe\n');
+    }
+    return hello.backendReady && (!hello.projectChecked || hello.projectReady) && routingReady ? 0 : 1;
   } catch (error) {
     output.write(`fail engine ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;

@@ -18,6 +18,7 @@ import (
 	"wf.local/wf-engine/internal/agent"
 	"wf.local/wf-engine/internal/backend"
 	"wf.local/wf-engine/internal/contextcompiler"
+	"wf.local/wf-engine/internal/routing"
 	"wf.local/wf-engine/internal/store"
 	"wf.local/wf-engine/internal/workflow"
 )
@@ -163,6 +164,7 @@ type serviceTestHooks struct {
 type Service struct {
 	registry       *backend.Registry
 	defaultBackend string
+	catalogs       routing.CatalogProvider
 	store          *store.Store
 	leases         *store.LeaseManager
 	now            func() time.Time
@@ -192,6 +194,10 @@ func NewService(b backend.AgentBackend, stores ...*store.Store) *Service {
 }
 
 func NewServiceWithRegistry(registry *backend.Registry, defaultBackend string, stores ...*store.Store) *Service {
+	return NewServiceWithRegistryAndCatalogs(registry, defaultBackend, routing.BuiltinCatalogRegistry(), stores...)
+}
+
+func NewServiceWithRegistryAndCatalogs(registry *backend.Registry, defaultBackend string, catalogs routing.CatalogProvider, stores ...*store.Store) *Service {
 	var state *store.Store
 	if len(stores) > 0 {
 		state = stores[0]
@@ -201,11 +207,14 @@ func NewServiceWithRegistry(registry *backend.Registry, defaultBackend string, s
 	if registry == nil {
 		registry = backend.NewRegistry()
 	}
+	if catalogs == nil {
+		catalogs = routing.BuiltinCatalogRegistry()
+	}
 	defaultBackend = strings.TrimSpace(defaultBackend)
 	if defaultBackend == "" {
 		defaultBackend = "codex"
 	}
-	service := &Service{registry: registry, defaultBackend: defaultBackend, store: state, now: time.Now, getenv: os.Getenv, controllers: make(map[string]*controller), eventSinks: make(map[uint64]EventSink)}
+	service := &Service{registry: registry, defaultBackend: defaultBackend, catalogs: catalogs, store: state, now: time.Now, getenv: os.Getenv, controllers: make(map[string]*controller), eventSinks: make(map[uint64]EventSink)}
 	if state != nil {
 		service.leases = store.NewLeaseManager(state)
 	}
@@ -975,7 +984,7 @@ func (s *Service) Status(runID string) (StatusView, error) {
 				if attempt.StateSchemaVersion == 0 {
 					attempt.StateSchemaVersion = 1
 				}
-				if err := validateActiveAttempt(run, node, attempt); err != nil {
+				if err := s.validateActiveAttempt(run, node, attempt); err != nil {
 					return StatusView{}, err
 				}
 				view.ActiveAttempts = append(view.ActiveAttempts, attempt)
@@ -1026,7 +1035,7 @@ func (s *Service) Get(runID string) (WorkflowSnapshot, error) {
 	return *view.Run, nil
 }
 
-func (s *Service) Resume(_ context.Context, request ResumeRequest) (WorkflowSnapshot, error) {
+func (s *Service) Resume(ctx context.Context, request ResumeRequest) (WorkflowSnapshot, error) {
 	if request.RunID == "" {
 		return WorkflowSnapshot{}, errors.New("runId is required")
 	}
@@ -1100,7 +1109,7 @@ func (s *Service) Resume(_ context.Context, request ResumeRequest) (WorkflowSnap
 		if err := validateResumeAction(*request.Action); err != nil {
 			return WorkflowSnapshot{}, err
 		}
-		if err := s.applyAction(&run, *request.Action); err != nil {
+		if err := s.applyAction(ctx, &run, *request.Action); err != nil {
 			return WorkflowSnapshot{}, err
 		}
 		if run.Phase == PhaseCompleted {
@@ -1787,7 +1796,11 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			if err != nil {
 				return err
 			}
-			routingDecision, routingUsage, err := s.prepareAttemptRouting(run.ID, *node, driver, workflow.EffectiveRoutingRequirement(normalized.Document, definition))
+			routingDecision, routingUsage, err := s.prepareAttemptRouting(ctx, run.ID, *node, driver, workflow.EffectiveRoutingRequirement(normalized.Document, definition))
+			if err != nil {
+				return err
+			}
+			executionProfile, err := routingExecutionProfile(routingDecision)
 			if err != nil {
 				return err
 			}
@@ -1805,6 +1818,7 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			}
 			if routingDecision != nil {
 				compiled.Envelope.RoutingDecision = routingDecision
+				compiled.Envelope.ExecutionProfile = executionProfile
 			}
 			memoryUsage, err := s.consumeCompiledMemory(run.Project, agentIdentity(run.ID, node.ID, number), compiled.Compilation)
 			if err != nil {
@@ -1812,7 +1826,7 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			}
 			attempt := AttemptSnapshot{ProtocolVersion: protocolVersion, StateSchemaVersion: stateSchemaVersion, RunID: run.ID, NodeID: node.ID, Number: number, Phase: NodePhaseRunning, LaunchState: LaunchPrepared,
 				ResolvedDriver: driver, ResolvedTarget: target, Backend: driver,
-				RoutingDecision: routingDecision, RoutingUsage: routingUsage,
+				RoutingDecision: routingDecision, ExecutionProfile: executionProfile, RoutingUsage: routingUsage,
 				ContextCompilerVersion: contextcompiler.Version, ContextCompilerVersionV2: compiled.Compilation.Manifest.CompilerVersion, ContextManifest: compiled.LegacyManifest, ContextManifestV2: &compiled.Compilation.Manifest, ContextHash: compiled.Compilation.Hash, MemoryUsage: memoryUsage, StartedAt: now, UpdatedAt: now}
 			if err := s.writeAttempt(attempt, true); err != nil {
 				return err
@@ -1828,7 +1842,7 @@ func (s *Service) scheduleOne(ctx context.Context, runID string, generation uint
 			}
 			launch = &pendingLaunch{runID: run.ID, nodeID: node.ID, attempt: number, backend: driver,
 				launchSpec: backend.AgentExecutionSpec{RunID: run.ID, NodeID: node.ID, Attempt: number, Workspace: run.Project, Tool: legacyToolForDriver(s.registry, driver), Runtime: target,
-					Model: routingModel(routingDecision), Instructions: compiled.Envelope.Prompt, RequiredSkills: append([]string(nil), definition.RequiredSkills...), ResultContract: backend.ResultContract{Schema: compiled.Envelope.ResultContract.Schema, MaxBytes: workflow.MaxResultBytes}, Envelope: &compiled.Envelope}}
+					Model: routingModel(routingDecision), ReasoningEffort: routingReasoningEffort(executionProfile), Instructions: compiled.Envelope.Prompt, RequiredSkills: append([]string(nil), definition.RequiredSkills...), ResultContract: backend.ResultContract{Schema: compiled.Envelope.ResultContract.Schema, MaxBytes: workflow.MaxResultBytes}, Envelope: &compiled.Envelope}}
 			progressed = true
 			return nil
 		}
@@ -2148,6 +2162,7 @@ func (s *Service) finishResult(runID, nodeID string, attemptNumber int, generati
 			now := s.now().UTC()
 			attempt.Phase, attempt.Conclusion, attempt.ResultConsumed, attempt.UpdatedAt, attempt.CompletedAt = NodePhaseCompleted, ConclusionFailed, true, now, &now
 			attempt.SideEffectStatus = result.SideEffectStatus
+			attempt.FailureClass = result.FailureClass
 			if attempt.SideEffectStatus == "" {
 				attempt.SideEffectStatus = agent.SideEffectUnknown
 			}
@@ -2313,7 +2328,7 @@ func (s *Service) finishIndeterminate(runID, nodeID string, attemptNumber int, g
 	})
 }
 
-func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error {
+func (s *Service) applyAction(ctx context.Context, run *WorkflowSnapshot, action ResumeAction) error {
 	if action.NodeID == "" {
 		return errors.New("resume action nodeId is required")
 	}
@@ -2364,7 +2379,7 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 		if node.Conclusion == ConclusionIndeterminate && !action.AcknowledgeDuplicateRisk {
 			return fmt.Errorf("retrying indeterminate node %q requires acknowledgeDuplicateRisk", node.ID)
 		}
-		pendingRoute, err := s.pendingRoutingTarget(run, node, true)
+		pendingRoute, err := s.pendingRoutingTarget(ctx, run, node, true)
 		if err != nil {
 			return fmt.Errorf("prepare retry route: %w", err)
 		}
@@ -2389,7 +2404,7 @@ func (s *Service) applyAction(run *WorkflowSnapshot, action ResumeAction) error 
 		if err != nil {
 			return err
 		}
-		pendingRoute, err := s.pendingRoutingTarget(run, node, false)
+		pendingRoute, err := s.pendingRoutingTarget(ctx, run, node, false)
 		if err != nil {
 			return fmt.Errorf("prepare answer route: %w", err)
 		}
@@ -2735,7 +2750,7 @@ func (s *Service) publishEvent(event WorkflowEvent) {
 }
 
 func (s *Service) writeAttempt(attempt AttemptSnapshot, create bool) error {
-	if err := ValidateAttemptSnapshot(attempt); err != nil {
+	if err := ValidateAttemptSnapshotWithCatalogs(attempt, s.catalogs); err != nil {
 		return err
 	}
 	if create {
@@ -2795,8 +2810,8 @@ func summarizeNode(node NodeSnapshot) NodeSummary {
 	return NodeSummary{ID: node.ID, Type: node.Type, Phase: node.Phase, Conclusion: node.Conclusion, Reason: node.Reason, Diagnostic: node.Diagnostic, CurrentAttempt: node.CurrentAttempt}
 }
 
-func validateActiveAttempt(run WorkflowSnapshot, node NodeSnapshot, attempt AttemptSnapshot) error {
-	if err := ValidateAttemptSnapshot(attempt); err != nil {
+func (s *Service) validateActiveAttempt(run WorkflowSnapshot, node NodeSnapshot, attempt AttemptSnapshot) error {
+	if err := ValidateAttemptSnapshotWithCatalogs(attempt, s.catalogs); err != nil {
 		return fmt.Errorf("invalid active Attempt for node %q: %w", node.ID, err)
 	}
 	if attempt.RunID != run.ID || attempt.NodeID != node.ID || attempt.Number != node.CurrentAttempt {

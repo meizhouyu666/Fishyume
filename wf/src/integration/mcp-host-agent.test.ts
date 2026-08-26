@@ -130,7 +130,7 @@ test('MCP Host Agent completes capabilities, authoring, approval, answer, events
     const catalog = await callTool<RoutingCatalogResponse>(host, 'routing.catalog', {});
     assert.equal(catalog.catalogHash, capabilities.routingCatalog.catalogHash);
     assert.equal(catalog.catalog.models.length, capabilities.routingCatalog.modelCount);
-    assert.equal(catalog.dynamicAvailability, false);
+    assert.equal(catalog.dynamicAvailability, true);
 
     const includedMarker = 'M5_6_INCLUDED_MEMORY_CONTENT_MUST_NOT_LEAK';
     const omittedMarker = 'M5_6_OMITTED_MEMORY_CONTENT_MUST_NOT_LEAK';

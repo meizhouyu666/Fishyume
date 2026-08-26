@@ -1,9 +1,10 @@
-import {createIcons, MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox} from 'lucide';
+import {createIcons, MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox, Route} from 'lucide';
 import type {ApplicationNodeView, RunGetResponse, RunListResponse, RunSummary} from '../../../wf/src/bridge/application.js';
 import type {HandoffArtifact, Participant, ParticipantTurn, TeamGetResponse, TeamListResponse, TeamMessage, TeamMessagesResponse, TeamSummary} from '../../../wf/src/bridge/team.js';
+import type {EffectiveCatalogResponse, RoutingConfig} from '../../../wf/src/bridge/routing.js';
 
 const teamVersion = 'fishyume.team/v1';
-type View = 'teams' | 'runs';
+type View = 'teams' | 'runs' | 'routing';
 type Filter = 'all' | 'active' | 'closed';
 type DetailTab = 'discussion' | 'handoffs' | 'run';
 interface ApiErrorShape {code: string; message: string}
@@ -15,6 +16,7 @@ const state: {
   token: string; view: View; filter: Filter; tab: DetailTab; teams: TeamSummary[]; runs: RunSummary[];
   selectedTeam?: string; selectedRun?: string; teamView?: TeamGetResponse; messages?: TeamMessagesResponse;
   handoffs: HandoffArtifact[]; runView?: RunGetResponse; busy: boolean; refreshing: boolean; focusRevision: number; pendingFocus?: FocusTarget;
+  routingView?: EffectiveCatalogResponse; routingConfig?: RoutingConfig;
 } = {token: launch.token, view: launch.view, filter: 'all', tab: launch.target?.kind === 'handoff' ? 'handoffs' : 'discussion', teams: [], runs: [], handoffs: [], busy: false, refreshing: false, focusRevision: 0, pendingFocus: launch.target};
 
 const collection = element('collection-list');
@@ -28,7 +30,9 @@ function readLaunchContext(): {token: string; view: View; target?: FocusTarget} 
   if (!token || token.length < 32) throw new Error('Fishyume Web launch token is missing');
   const kind = parameters.get('targetKind');
   const target: FocusTarget | undefined = kind === 'team' && parameters.get('teamId') ? {kind: 'team', teamId: parameters.get('teamId')!} : kind === 'handoff' && parameters.get('teamId') && parameters.get('handoffId') ? {kind: 'handoff', teamId: parameters.get('teamId')!, handoffId: parameters.get('handoffId')!} : kind === 'run' && parameters.get('runId') ? {kind: 'run', runId: parameters.get('runId')!} : undefined;
-  return {token, view: target?.kind === 'run' || parameters.get('view') === 'runs' ? 'runs' : 'teams', target};
+  const requested = parameters.get('view');
+  const view: View = target?.kind === 'run' ? 'runs' : target ? 'teams' : requested === 'runs' || requested === 'routing' ? requested : 'teams';
+  return {token, view, target};
 }
 
 async function rpc<T>(method: string, params: Record<string, unknown>): Promise<T> {
@@ -47,7 +51,7 @@ async function refresh(): Promise<void> {
   if (state.busy || state.refreshing) return;
   state.refreshing = true;
   try {
-    if (state.view === 'teams') await refreshTeams(); else await refreshRuns();
+    if (state.view === 'teams') await refreshTeams(); else if (state.view === 'runs') await refreshRuns(); else await refreshRouting();
   } catch (error) {showError(error)} finally {state.refreshing = false}
 }
 
@@ -98,6 +102,60 @@ async function refreshRuns(): Promise<void> {
   if (state.selectedRun) await loadRun(state.selectedRun); else renderEmptyDetail('workflow', '暂无工作流运行');
 }
 
+async function refreshRouting(): Promise<void> {
+  const [effective, config] = await Promise.all([
+    rpc<EffectiveCatalogResponse>('routing.catalog.effective', {schemaVersion: 'fishyume.config/v1'}),
+    rpc<{config: RoutingConfig}>('routing.config.get', {schemaVersion: 'fishyume.config/v1'}),
+  ]);
+  state.routingView = effective; state.routingConfig = config.config;
+  renderRoutingCollection(); renderRoutingDetail();
+}
+
+function renderRoutingCollection(): void {
+  element('collection-eyebrow').textContent = '配置'; element('collection-title').textContent = '模型路由';
+  element('filter-row').style.display = 'none'; collection.replaceChildren();
+  const view = state.routingView; if (!view) {collection.append(loading()); return}
+  for (const route of view.routes) {
+    const item = div('collection-item route-summary');
+    const top = div('item-topline'); top.append(text('span', 'item-title', route.model), status(route.routable ? 'available' : route.availability));
+    const meta = div('item-meta'); meta.append(text('span', '', route.enabled ? '已启用' : '已停用'), text('span', '', route.discovered ? 'Codex 已发现' : '未发现'));
+    item.append(top, meta); collection.append(item);
+  }
+}
+
+function renderRoutingDetail(): void {
+  const view = state.routingView; const config = state.routingConfig; if (!view || !config) return;
+  detail.replaceChildren(); const header = div('detail-header'); const row = div('detail-title-row');
+  const title = document.createElement('div'); title.append(text('span', 'eyebrow', `CATALOG · ${view.catalogHash.slice(0, 12)}`), text('h2', 'detail-title', 'Codex 动态路由'), text('div', 'detail-subtitle', `配置修订 ${config.revision} · 发现不等于上游可用`));
+  const actions = div('header-actions'); actions.append(actionButton('refresh-cw', '刷新发现', 'discover-models'), actionButton('route', '主动探针', 'probe-models', 'primary')); row.append(title, actions); header.append(row); detail.append(header);
+  detail.append(metrics([['产品画像', String(view.routes.filter(route => route.qualified).length)], ['已发现', String(view.routes.filter(route => route.discovered).length)], ['已启用', String(view.routes.filter(route => route.enabled).length)], ['可路由', String(view.routes.filter(route => route.routable).length)]]));
+  const content = div('detail-content'); const section = div('section routing-table'); section.append(text('h3', 'section-title', '合格路由'));
+  for (const route of view.routes) {
+    const item = div('route-row'); const identity = div('route-identity'); identity.append(text('strong', '', route.model), text('span', 'section-note', route.recommendedUseCases.join(' · ')));
+    const states = div('route-states'); states.append(stateMark('产品画像', route.qualified), stateMark('Codex 发现', route.discovered), stateMark('配置启用', route.enabled), status(route.availability));
+    const toggle = actionButton(route.enabled ? 'x' : 'check', route.enabled ? '停用' : '启用', 'toggle-route', '', route.routeId); item.append(identity, states, toggle); section.append(item);
+  }
+  content.append(section); detail.append(content); wireRoutingActions(); refreshIcons();
+}
+
+function stateMark(label: string, active: boolean): HTMLElement {return text('span', `status ${active ? 'available' : 'unknown'}`, `${label} ${active ? '是' : '否'}`)}
+
+function wireRoutingActions(): void {
+  detail.querySelector<HTMLButtonElement>('[data-action="discover-models"]')?.addEventListener('click', () => void routingRefresh(false));
+  detail.querySelector<HTMLButtonElement>('[data-action="probe-models"]')?.addEventListener('click', () => {if (window.confirm('主动探针会实际调用已启用的 Codex 模型并产生少量模型费用。继续吗？')) void routingRefresh(true)});
+  for (const button of detail.querySelectorAll<HTMLButtonElement>('[data-action="toggle-route"]')) button.addEventListener('click', () => void toggleRoute(button.dataset.value!));
+}
+
+async function routingRefresh(probe: boolean): Promise<void> {
+  if (state.busy) return; state.busy = true; setButtonsDisabled(true);
+  try {await rpc('driver.models.discover', {schemaVersion: 'fishyume.config/v1'}); if (probe) await rpc('driver.models.probe', {schemaVersion: 'fishyume.config/v1'})} catch (error) {showError(error)} finally {await refreshRouting().catch(() => undefined); state.busy = false; setButtonsDisabled(false)}
+}
+
+async function toggleRoute(routeId: string): Promise<void> {
+  const config = state.routingConfig; if (!config) return; const enabled = !config.routes.find(route => route.routeId === routeId)?.enabled;
+  await mutate(`routing:${routeId}:${enabled}`, 'routing.config.update', {schemaVersion: 'fishyume.config/v1', expectedRevision: config.revision, routeId, enabled}, 'mutationId');
+}
+
 async function loadRun(runId: string): Promise<void> {
   const view = await rpc<RunGetResponse>('run.get', {runId});
   if (state.selectedRun !== runId) return;
@@ -107,6 +165,8 @@ async function loadRun(runId: string): Promise<void> {
 }
 
 function renderCollection(): void {
+  if (state.view === 'routing') {renderRoutingCollection(); return}
+  element('filter-row').style.display = '';
   element('collection-eyebrow').textContent = state.view === 'teams' ? '探索' : '执行';
   element('collection-title').textContent = state.view === 'teams' ? '团队' : '工作流运行';
   const items = state.view === 'teams' ? filteredTeams() : filteredRuns();
@@ -315,11 +375,11 @@ async function mutate(key: string, method: string, request: Record<string, unkno
   sessionStorage.setItem(storageKey, JSON.stringify({key, fingerprint, id}));
   try {
     await rpc(method, {...request, [idField]: id}); sessionStorage.removeItem(storageKey);
-    if (state.view === 'teams') await refreshTeams(); else await refreshRuns();
+    if (state.view === 'teams') await refreshTeams(); else if (state.view === 'runs') await refreshRuns(); else await refreshRouting();
   } catch (error) {
     if (error instanceof ApiError) sessionStorage.removeItem(storageKey);
     showError(error);
-    await (state.view === 'teams' ? refreshTeams() : refreshRuns()).catch(() => undefined);
+    await (state.view === 'teams' ? refreshTeams() : state.view === 'runs' ? refreshRuns() : refreshRouting()).catch(() => undefined);
   } finally {state.busy = false; setButtonsDisabled(false)}
 }
 
@@ -364,7 +424,7 @@ function relativeTime(value: string): string {const seconds = Math.round((new Da
 function renderEmptyDetail(icon: string, label: string): void {detail.replaceChildren(); const root = div('detail-empty'); const box = document.createElement('div'); const i = document.createElement('i'); i.dataset.lucide = icon; box.append(i, text('div', '', label)); root.append(box); detail.append(root); refreshIcons()}
 function setButtonsDisabled(disabled: boolean): void {for (const button of detail.querySelectorAll<HTMLButtonElement>('button')) button.disabled = disabled}
 function showError(error: unknown): void {if (error instanceof ApiError) {connection.className = 'connection-state is-online'; connectionLabel.textContent = '本地控制面'} else {connection.className = 'connection-state is-error'; connectionLabel.textContent = '连接异常'} const toast = text('div', 'toast', error instanceof Error ? error.message : String(error)); element('toast-region').append(toast); setTimeout(() => toast.remove(), 7000)}
-function refreshIcons(): void {createIcons({icons: {MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox}})}
+function refreshIcons(): void {createIcons({icons: {MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox, Route}})}
 
 for (const button of document.querySelectorAll<HTMLButtonElement>('.view-tab')) button.addEventListener('click', () => {state.view = button.dataset.view as View; state.filter = 'all'; updateViewControls(); void refresh()});
 for (const button of document.querySelectorAll<HTMLButtonElement>('.filter')) button.addEventListener('click', () => {state.filter = button.dataset.filter as Filter; for (const candidate of document.querySelectorAll('.filter')) candidate.classList.toggle('is-active', candidate === button); renderCollection()});

@@ -47,6 +47,24 @@ fishyume doctor --project "E:\project"
 
 `fishyume setup codex` 仍是兼容写法。setup 只修改 Fishyume 自己的 Codex MCP 配置，不会改动其他 MCP、Provider 或认证信息。
 
+### 检查 Workflow 模型路由
+
+Fishyume 会读取本机 Codex Agent 暴露的模型列表，但“已发现”不等于当前上游可以实际执行。首次使用或上游发生变化时，先刷新发现结果：
+
+```powershell
+fishyume drivers inspect --refresh
+fishyume routing show
+```
+
+需要验证真实连通性时再运行主动探针。探针会为每个已启用、已发现的产品路由启动一次最小只读 Codex 请求，因此会产生少量模型用量：
+
+```powershell
+fishyume routing refresh --probe
+fishyume doctor --project "E:\project"
+```
+
+当前 Workflow 产品画像覆盖 `gpt-5.6-sol`、`gpt-5.6-terra` 和 `gpt-5.6-luna`。实际路由只会从 Fishyume 已认证、Codex 已发现、配置已启用且探针可用的交集中选择；上游只开放其中一个模型时，其余模型失败不会阻止可用模型继续工作。持久配置可通过 `fishyume routing enable|disable <model-or-route>` 修改，配置文件不保存 API Key、Base URL 或其他凭据。
+
 ### 运行与接管
 
 先运行一个默认双 Agent 视角、只读的比较 Panel：
@@ -144,6 +162,7 @@ fishyume examples show repository-hardening > repository-hardening.yaml
 Fishyume MCP 和 Machine CLI 同时暴露独立的 `fishyume.team/v1` Team API 和冻结的 `fishyume.application/v1` Workflow API。Host Agent 的典型 Workflow 顺序是：
 
 ```text
+driver.list / routing.catalog.effective
 system.capabilities
 workflow.validate -> workflow.explain
 run.start -> run.events/run.get
@@ -173,6 +192,8 @@ fishyume mcp
 ```powershell
 fishyume machine system.capabilities --params '{}'
 fishyume machine routing.catalog --params '{}'
+fishyume machine driver.list --params '{"schemaVersion":"fishyume.config/v1"}'
+fishyume machine routing.catalog.effective --params '{"schemaVersion":"fishyume.config/v1"}'
 fishyume machine run.get --params '{"runId":"<run-id>"}'
 fishyume machine team.capabilities --params '{"schemaVersion":"fishyume.team/v1"}'
 ```
@@ -221,7 +242,7 @@ read -> plan -> edit -> test -> summarize
 
 ## 当前边界
 
-M7.4 已开放公共多轮 TeamSession、follow-up、单 Turn 取消和主动 close；M7.5 提供独立的可选 Web Team 客户端。Team Driver 采用显式可信 Route 配置，不做动态 Driver 扫描；Workflow Backend 仍不扩展到 Claude Code/OpenCode，也不包含通用 Shell/HTTP/容器节点。真实 Provider smoke 是显式本地 gate，不是公共 CI 的前置条件。
+M7.4 已开放公共多轮 TeamSession、follow-up、单 Turn 取消和主动 close；M7.5 提供独立的可选 Web Team 客户端。Team Driver 采用显式可信 Route 配置，不做动态 Driver 扫描；Workflow Backend 仍不扩展到 Claude Code/OpenCode，也不包含通用 Shell/HTTP/容器节点。M7.8 为 Codex Workflow 增加持久模型配置、`model/list` 发现、真实连通性探针、Reasoning Effort 和安全可用性回退。真实 Provider smoke 是显式本地 gate，不是公共 CI 的前置条件。
 M7.6 补齐 Host-Web Continuity：Host Agent 可在创建 Team、冻结 Handoff 或启动 Run 后打开/聚焦可选 Web 客户端；Web 仍只是同一 Control Plane 的投影，TUI 继续只支持 Workflow Run。
 
 ## 文档
@@ -238,6 +259,8 @@ M7.6 补齐 Host-Web Continuity：Host Agent 可在创建 Team、冻结 Handoff 
 - [M7.5 可选 Web 客户端验收记录](./docs/fishyume-m7.5-acceptance.md)
 - [M7.6 Host-Web Continuity](./docs/fishyume-m7.6-host-web-continuity.md)
 - [M7.7 三 Agent 真实测试与修复验收](./docs/fishyume-m7.7-live-team-repair-acceptance.md)
+- [M7.8 Codex 动态路由方案](./docs/fishyume-m7.8-codex-dynamic-routing-plan.md)
+- [M7.8 Codex 动态路由验收](./docs/fishyume-m7.8-acceptance.md)
 - [首次使用与安装说明](./docs/fishyume-distribution-first-run.md)
 - [开发与验证](./docs/fishyume-development.md)
 - [Live Provider smoke](./docs/fishyume-m4-live-smoke.md)

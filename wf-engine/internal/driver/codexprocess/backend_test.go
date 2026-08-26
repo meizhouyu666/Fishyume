@@ -144,9 +144,9 @@ func TestDirectBackendContract(t *testing.T) {
 }
 
 func TestCodexExecArgsPropagateSelectedModel(t *testing.T) {
-	spec := backend.AgentExecutionSpec{Model: "gpt-5.6-luna"}
+	spec := backend.AgentExecutionSpec{Model: "gpt-5.6-luna", ReasoningEffort: "low"}
 	args := codexExecArgs(spec, "workspace-write", "schema.json", "result.json", "C:/workspace")
-	want := []string{"exec", "--ephemeral", "--model", "gpt-5.6-luna", "--sandbox", "workspace-write", "--json", "--color", "never", "--output-schema", "schema.json", "--output-last-message", "result.json", "-C", "C:/workspace", "-"}
+	want := []string{"exec", "--ephemeral", "--model", "gpt-5.6-luna", "-c", "model_reasoning_effort=\"low\"", "--sandbox", "workspace-write", "--json", "--color", "never", "--output-schema", "schema.json", "--output-last-message", "result.json", "-C", "C:/workspace", "-"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("Codex args = %v, want %v", args, want)
 	}

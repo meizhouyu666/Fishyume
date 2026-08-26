@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"wf.local/wf-engine/internal/application"
+	"wf.local/wf-engine/internal/routingconfig"
 	"wf.local/wf-engine/internal/run"
 	"wf.local/wf-engine/internal/team"
 	"wf.local/wf-engine/internal/teamcontract"
@@ -24,7 +25,7 @@ const (
 	MaxMessageSize = 1 << 20
 )
 
-var supportedMethods = append(append([]string{"engine.hello"}, application.StableMethods...), teamcontract.StableMethods...)
+var supportedMethods = append(append(append([]string{"engine.hello"}, application.StableMethods...), teamcontract.StableMethods...), routingconfig.StableMethods...)
 
 type Server struct {
 	reader               *bufio.Reader
@@ -32,6 +33,7 @@ type Server struct {
 	service              *run.Service
 	application          *application.Service
 	teams                *team.Service
+	routingConfig        *routingconfig.Service
 	writeMu              sync.Mutex
 	mutationMu           *sync.Mutex
 	requestWG            sync.WaitGroup
@@ -43,11 +45,15 @@ type Server struct {
 }
 
 func NewServer(input io.Reader, output io.Writer, service *run.Service, applications ...*application.Service) *Server {
-	return newServer(input, output, service, selectApplication(service, applications), nil, nil, true)
+	return newServer(input, output, service, selectApplication(service, applications), nil, nil, nil, true)
 }
 
 func NewServerWithTeam(input io.Reader, output io.Writer, service *run.Service, applicationService *application.Service, teamService *team.Service) *Server {
-	return newServer(input, output, service, applicationService, teamService, nil, true)
+	return newServer(input, output, service, applicationService, teamService, nil, nil, true)
+}
+
+func NewServerWithTeamAndConfig(input io.Reader, output io.Writer, service *run.Service, applicationService *application.Service, teamService *team.Service, config *routingconfig.Service) *Server {
+	return newServer(input, output, service, applicationService, teamService, config, nil, true)
 }
 
 func NewConnectionServer(input io.Reader, output io.Writer, service *run.Service, applicationService *application.Service, mutationMu *sync.Mutex, teams ...*team.Service) *Server {
@@ -55,7 +61,11 @@ func NewConnectionServer(input io.Reader, output io.Writer, service *run.Service
 	if len(teams) > 0 {
 		teamService = teams[0]
 	}
-	return newServer(input, output, service, applicationService, teamService, mutationMu, false)
+	return newServer(input, output, service, applicationService, teamService, nil, mutationMu, false)
+}
+
+func NewConnectionServerWithConfig(input io.Reader, output io.Writer, service *run.Service, applicationService *application.Service, mutationMu *sync.Mutex, teamService *team.Service, config *routingconfig.Service) *Server {
+	return newServer(input, output, service, applicationService, teamService, config, mutationMu, false)
 }
 
 func selectApplication(service *run.Service, applications []*application.Service) *application.Service {
@@ -65,8 +75,8 @@ func selectApplication(service *run.Service, applications []*application.Service
 	return application.NewService(service, "codex", service.ApplicationJournal())
 }
 
-func newServer(input io.Reader, output io.Writer, service *run.Service, applicationService *application.Service, teamService *team.Service, mutationMu *sync.Mutex, waitControllersOnEOF bool) *Server {
-	server := &Server{reader: bufio.NewReaderSize(input, 64*1024), writer: output, service: service, application: applicationService, teams: teamService, mutationMu: mutationMu, waitControllersOnEOF: waitControllersOnEOF}
+func newServer(input io.Reader, output io.Writer, service *run.Service, applicationService *application.Service, teamService *team.Service, config *routingconfig.Service, mutationMu *sync.Mutex, waitControllersOnEOF bool) *Server {
+	server := &Server{reader: bufio.NewReaderSize(input, 64*1024), writer: output, service: service, application: applicationService, teams: teamService, routingConfig: config, mutationMu: mutationMu, waitControllersOnEOF: waitControllersOnEOF}
 	sink := func(event run.WorkflowEvent) {
 		_ = server.write(Notification{JSONRPC: "2.0", ProtocolVersion: ProtocolVersion, Method: "run.event", Params: event})
 	}
@@ -171,6 +181,20 @@ func (s *Server) handle(ctx context.Context, request Request) {
 		invokeApplication(ctx, s, id, request.Params, application.SystemCapabilitiesRequest{}, s.application.SystemCapabilities)
 	case "routing.catalog":
 		invokeApplication(ctx, s, id, request.Params, application.RoutingCatalogRequest{}, s.application.RoutingCatalog)
+	case "driver.list":
+		s.invokeRoutingRead(id, request.Params, func() any { return s.routingConfig.DriverList() })
+	case "driver.models.discover":
+		s.invokeRoutingDiscover(ctx, id, request.Params)
+	case "driver.models.probe":
+		s.invokeRoutingProbe(ctx, id, request.Params)
+	case "routing.config.get":
+		s.invokeRoutingRead(id, request.Params, func() any { return s.routingConfig.ConfigGet() })
+	case "routing.config.update":
+		s.invokeRoutingConfigUpdate(id, request.Params)
+	case "routing.availability":
+		s.invokeRoutingRead(id, request.Params, func() any { return s.routingConfig.Availability() })
+	case "routing.catalog.effective":
+		s.invokeRoutingEffectiveCatalog(id, request.Params)
 	case "workflow.validate":
 		invokeApplication(ctx, s, id, request.Params, application.WorkflowValidateRequest{}, s.application.WorkflowValidate)
 	case "workflow.explain":
@@ -280,11 +304,117 @@ func (s *Server) handle(ctx context.Context, request Request) {
 
 func isMutation(method string) bool {
 	switch method {
-	case "run.start", "run.action", "memory.create", "memory.supersede", "memory.delete", "memory.host.create", "memory.host.supersede", "memory.host.delete", "team.start", "team.action", "team.handoff.create", "team.handoff.bindRun":
+	case "run.start", "run.action", "memory.create", "memory.supersede", "memory.delete", "memory.host.create", "memory.host.supersede", "memory.host.delete", "team.start", "team.action", "team.handoff.create", "team.handoff.bindRun", "driver.models.discover", "driver.models.probe", "routing.config.update":
 		return true
 	default:
 		return false
 	}
+}
+
+func (s *Server) invokeRoutingRead(id any, raw json.RawMessage, response func() any) {
+	if s.routingConfig == nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "capability_unavailable", Message: "routing configuration service is unavailable"})
+		return
+	}
+	var request routingconfig.ReadRequest
+	if err := decodeParams(raw, &request); err != nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "invalid_argument", Message: "invalid routing request: " + err.Error()})
+		return
+	}
+	if err := routingconfig.ValidateReadRequest(request); err != nil {
+		s.writeRoutingError(id, err)
+		return
+	}
+	s.writeResult(id, response())
+}
+
+func (s *Server) invokeRoutingDiscover(ctx context.Context, id any, raw json.RawMessage) {
+	if s.routingConfig == nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "capability_unavailable", Message: "routing configuration service is unavailable"})
+		return
+	}
+	var request routingconfig.ReadRequest
+	if err := decodeParams(raw, &request); err != nil || routingconfig.ValidateReadRequest(request) != nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "invalid_argument", Message: "valid config schemaVersion is required"})
+		return
+	}
+	response, err := s.routingConfig.Discover(ctx)
+	if err != nil {
+		s.writeRoutingError(id, err)
+		return
+	}
+	s.writeResult(id, response)
+}
+
+func (s *Server) invokeRoutingProbe(ctx context.Context, id any, raw json.RawMessage) {
+	if s.routingConfig == nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "capability_unavailable", Message: "routing configuration service is unavailable"})
+		return
+	}
+	var request routingconfig.ProbeRequest
+	if err := decodeParams(raw, &request); err != nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "invalid_argument", Message: "invalid probe request: " + err.Error()})
+		return
+	}
+	response, err := s.routingConfig.Probe(ctx, request)
+	if err != nil {
+		s.writeRoutingError(id, err)
+		return
+	}
+	s.writeResult(id, response)
+}
+
+func (s *Server) invokeRoutingConfigUpdate(id any, raw json.RawMessage) {
+	if s.routingConfig == nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "capability_unavailable", Message: "routing configuration service is unavailable"})
+		return
+	}
+	var request routingconfig.ConfigUpdateRequest
+	if err := decodeParams(raw, &request); err != nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "invalid_argument", Message: "invalid routing config update: " + err.Error()})
+		return
+	}
+	response, err := s.routingConfig.ConfigUpdate(request)
+	if err != nil {
+		s.writeRoutingError(id, err)
+		return
+	}
+	s.writeResult(id, response)
+}
+
+func (s *Server) invokeRoutingEffectiveCatalog(id any, raw json.RawMessage) {
+	if s.routingConfig == nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "capability_unavailable", Message: "routing configuration service is unavailable"})
+		return
+	}
+	var request routingconfig.ReadRequest
+	if err := decodeParams(raw, &request); err != nil || routingconfig.ValidateReadRequest(request) != nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "invalid_argument", Message: "valid config schemaVersion is required"})
+		return
+	}
+	response, err := s.routingConfig.EffectiveCatalog()
+	if err != nil {
+		s.writeRoutingError(id, err)
+		return
+	}
+	s.writeResult(id, response)
+}
+
+func (s *Server) writeRoutingError(id any, err error) {
+	code, message, rpcCode := "internal", err.Error(), -32603
+	var contract *routingconfig.ContractError
+	if errors.As(err, &contract) {
+		code, message = contract.Code, contract.Message
+		switch code {
+		case "invalid_argument", "unsupported_version", "invalid_config":
+			rpcCode = -32602
+		case "conflict":
+			rpcCode = -32009
+		case "capability_unavailable", "model_unavailable":
+			rpcCode = -32010
+		}
+	}
+	s.writeError(id, rpcCode, message, map[string]string{"code": code})
 }
 
 func invokeTeam[Request any, Response any](ctx context.Context, s *Server, id any, raw json.RawMessage, request Request, call func(context.Context, Request) (Response, error)) {

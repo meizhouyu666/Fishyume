@@ -17,8 +17,10 @@ export interface RoutingRequirement {schemaVersion: 'fishyume.routing-requiremen
 export interface RoutingBudget {maxCostUnits: number; contextBytes: number; outputBytes: number}
 export interface RoutingFallbackPolicy {mode: 'none' | 'eligible'; maxAttempts: number; requireNoSideEffect: boolean; requireApproval: boolean}
 export interface RoutingDecision {schemaVersion: 'fishyume.routing-decision/v1'; catalogHash: string; requirement: RoutingRequirement; selected: RoutingTarget; reasonCodes: string[]; budget: RoutingBudget; fallback?: RoutingTarget[]; fallbackPolicy: RoutingFallbackPolicy; promptProfile?: string}
+export interface ExecutionProfile {schemaVersion: 'fishyume.execution-profile/v1'; target: RoutingTarget; reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'}
 export interface RoutingUsage {schemaVersion: 'fishyume.routing-usage/v1'; target: RoutingTarget; routeIndex: number; costUnits: number; cumulativeCostUnits: number}
 export type SideEffectStatus = 'none' | 'unknown';
+export type FailureClass = 'model_unavailable_pre_execution';
 
 export type RunPhase = 'created' | 'running' | 'waiting' | 'paused' | 'cancelling' | 'completed';
 export type NodePhase = 'pending' | 'ready' | 'running' | 'waiting' | 'completed' | 'skipped';
@@ -44,7 +46,7 @@ export interface AttemptSnapshot {
   conclusion?: Conclusion; reason?: Reason; resolvedDriver?: string; resolvedTarget?: string; backend?: string;
   launchState?: 'prepared' | 'dispatching' | 'handle_persisted' | 'finished_without_handle' | 'session_persisted' | 'finished_without_session';
   execution?: ExecutionHandle; resultConsumed?: boolean;
-  routingDecision?: RoutingDecision; routingUsage?: RoutingUsage; sideEffectStatus?: SideEffectStatus;
+  routingDecision?: RoutingDecision; executionProfile?: ExecutionProfile; routingUsage?: RoutingUsage; sideEffectStatus?: SideEffectStatus; failureClass?: FailureClass;
   contextCompilerVersion?: string; contextCompilerVersionV2?: string; contextManifest?: {compilerVersion: string; components: Array<{name: string; source: string; version: string}>}; contextHash?: string; memoryUsage?: {schemaVersion: string; recordIds: string[]; committed: boolean}; context?: ContextInspect; promptHash?: string;
   activity?: {schemaVersion: 'fishyume.attempt-activity/v1'; summary?: string; items: Array<{kind: string; status: string; message: string}>; truncated: boolean};
   startedAt: string; updatedAt: string; completedAt?: string;

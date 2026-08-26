@@ -10,6 +10,7 @@ import (
 )
 
 const BuiltinCatalogSourceV1 = "fishyume.builtin"
+const DynamicCatalogSourceV1 = "fishyume.dynamic"
 
 const (
 	AgentRoutesFileEnv  = "FISHYUME_AGENT_ROUTES_FILE"
@@ -40,6 +41,29 @@ func BuiltinCatalogV1() CapabilityCatalogV1 {
 				Quality: QualityBalanced, Cost: CostLow, Latency: LatencyFast,
 				SupportsCancellation: true,
 			},
+		},
+	})
+}
+
+// BuiltinCodexCatalogV2 is the M7.8 product-qualified Codex family. Its v1
+// wire shape is retained for resolver compatibility; the function name marks
+// product policy generation rather than a new capability-catalog schema.
+func BuiltinCodexCatalogV2() CapabilityCatalogV1 {
+	capabilities := []Capability{CapabilityNeedsInput, CapabilityRepoEdit, CapabilityRepoRead, CapabilityStreaming, CapabilityStructuredOutput, CapabilityToolUse}
+	model := func(name string, quality QualityClass, cost CostClass, latency LatencyClass, contextBytes, outputBytes int) ModelCapabilityV1 {
+		return ModelCapabilityV1{
+			ID: "codex/local/" + name, Target: Target{Driver: "codex", Provider: "local", Model: name},
+			Capabilities: append([]Capability(nil), capabilities...), ContextLimitBytes: contextBytes, MaxOutputBytes: outputBytes,
+			Quality: quality, Cost: cost, Latency: latency, SupportsCancellation: true,
+		}
+	}
+	return CanonicalCatalogV1(CapabilityCatalogV1{
+		SchemaVersion: CapabilityCatalogV1Version,
+		PolicyVersion: RoutingPolicyV1Version,
+		Models: []ModelCapabilityV1{
+			model("gpt-5.6-sol", QualityPremium, CostMedium, LatencyBalanced, 256*1024, 64*1024),
+			model("gpt-5.6-terra", QualityPremium, CostHigh, LatencySlow, 256*1024, 64*1024),
+			model("gpt-5.6-luna", QualityEconomy, CostLow, LatencyFast, 128*1024, 32*1024),
 		},
 	})
 }

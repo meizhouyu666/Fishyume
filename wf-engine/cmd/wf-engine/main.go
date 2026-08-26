@@ -14,6 +14,7 @@ import (
 	"wf.local/wf-engine/internal/driver/harnesssession"
 	"wf.local/wf-engine/internal/driver/scheduleradapter"
 	"wf.local/wf-engine/internal/routing"
+	"wf.local/wf-engine/internal/routingconfig"
 	"wf.local/wf-engine/internal/rpc"
 	"wf.local/wf-engine/internal/run"
 	"wf.local/wf-engine/internal/store"
@@ -31,12 +32,17 @@ func main() {
 	}
 	registry := backend.NewRegistry()
 	codexDriver := codex.New(codex.Config{StateRoot: state.Root()})
+	routingService, err := routingconfig.NewService(state.Root(), codexDriver)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if err := registry.Register(scheduleradapter.New(codexDriver)); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	service := run.NewServiceWithRegistry(registry, "codex", state)
-	applicationService := application.NewService(service, "codex", state)
+	service := run.NewServiceWithRegistryAndCatalogs(registry, "codex", routingService, state)
+	applicationService := application.NewServiceWithCatalogs(service, "codex", routingService, state)
 	teamCatalog, err := routing.LoadCatalogFromEnvironment()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -93,7 +99,7 @@ func main() {
 		}
 	}
 	if len(os.Args) == 2 && os.Args[1] == "serve" {
-		if err := serveControlPlane(state, service, applicationService, teamService); err != nil {
+		if err := serveControlPlane(state, service, applicationService, teamService, routingService); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -107,7 +113,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	server := rpc.NewServerWithTeam(os.Stdin, os.Stdout, service, applicationService, teamService)
+	server := rpc.NewServerWithTeamAndConfig(os.Stdin, os.Stdout, service, applicationService, teamService, routingService)
 	if err := server.Serve(context.Background()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -123,13 +129,13 @@ func catalogHasDriver(catalog routing.CapabilityCatalogV1, name string) bool {
 	return false
 }
 
-func serveControlPlane(state *store.Store, service *run.Service, applicationService *application.Service, teamService *team.Service) error {
+func serveControlPlane(state *store.Store, service *run.Service, applicationService *application.Service, teamService *team.Service, routingService *routingconfig.Service) error {
 	owner, err := controlplane.AcquireOwner(state.Root(), rpc.EngineVersion, rpc.ProtocolVersion)
 	if err != nil {
 		return err
 	}
 	defer owner.Close()
-	server, err := controlplane.NewServerWithTeam(owner, service, applicationService, teamService)
+	server, err := controlplane.NewServerWithTeamAndConfig(owner, service, applicationService, teamService, routingService)
 	if err != nil {
 		return err
 	}

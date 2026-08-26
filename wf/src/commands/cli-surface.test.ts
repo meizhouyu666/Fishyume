@@ -41,6 +41,10 @@ test('command help remains available', () => {
     assert.equal(result.status, 0, `team handoff ${command}: ${result.stderr}`);
     assert.match(result.stdout, new RegExp(`fishyume team handoff ${command}`));
   }
+  for (const command of [['drivers', 'inspect'], ['routing', 'show'], ['routing', 'enable'], ['routing', 'disable'], ['routing', 'refresh']]) {
+    const result = invoke(...command, '--help');
+    assert.equal(result.status, 0, `${command.join(' ')}: ${result.stderr}`);
+  }
   const createMemory = invoke('memory', 'create', '--help');
   assert.match(createMemory.stdout, /--stdin/);
   assert.match(createMemory.stdout, /--file/);
@@ -96,7 +100,7 @@ test('command help describes the Agent-facing control-plane surface', () => {
     ['doctor', /Check the Engine, Application protocol, Driver/],
     ['status', /Read a durable Run snapshot or watch it in the human TUI/],
     ['attach', /Attach the human TUI to an existing durable Run/],
-    ['machine', /Call one Agent-facing Application or Team API method/],
+    ['machine', /Call one Agent-facing Application, Team, or Routing API method/],
     ['mcp', /Serve the Agent-facing Application API as MCP tools over stdio/],
     ['setup codex', /Connect Fishyume to Codex as a local stdio MCP server/],
     ['setup', /Set up Fishyume for the local Codex Host/],

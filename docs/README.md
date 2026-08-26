@@ -32,6 +32,12 @@ links and review evidence stay stable.
 - [M7.6 Host-Web Continuity](fishyume-m7.6-host-web-continuity.md):
   Host-directed Web launch, sidecar reuse, protected focus handoff, and
   Team/Handoff/Run continuity.
+- [M7.8 Codex dynamic routing correction](fishyume-m7.8-codex-dynamic-routing-plan.md):
+  persistent route configuration, Codex model discovery and active probes,
+  product-qualified GPT-5.6 profiles, historical Catalog compatibility, and
+  safe availability fallback.
+- [M7.8 Codex dynamic routing acceptance](fishyume-m7.8-acceptance.md):
+  automated cross-layer gates and isolated live Codex discovery/probe evidence.
 - [Core contract freeze](fishyume-m6-core-contract-freeze.md): frozen public
   contracts and compatibility policy for the closed M6 baseline.
 - [Core stabilization record](fishyume-core-stabilization.md): M6 closure,
