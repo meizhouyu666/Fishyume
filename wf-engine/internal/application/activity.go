@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -32,10 +33,19 @@ type activityEvent struct {
 }
 
 type activityItem struct {
-	Type    string `json:"type"`
-	Status  string `json:"status"`
-	Command string `json:"command"`
-	Text    string `json:"text"`
+	Type      string           `json:"type"`
+	Status    string           `json:"status"`
+	Command   string           `json:"command"`
+	Text      string           `json:"text"`
+	Path      string           `json:"path"`
+	FilePath  string           `json:"file_path"`
+	Operation string           `json:"operation"`
+	Changes   []activityChange `json:"changes"`
+}
+
+type activityChange struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
 }
 
 // parseAttemptActivity converts bounded Codex JSONL into a deliberately small
@@ -50,7 +60,7 @@ func parseAttemptActivity(output string) *AttemptActivityView {
 		output = output[len(output)-maxActivityInputBytes:]
 		view.Truncated = true
 	}
-	add := func(kind, status, message string) {
+	add := func(kind, status, message string, details ...any) {
 		message = activityText(message)
 		if message == "" {
 			return
@@ -59,7 +69,16 @@ func parseAttemptActivity(output string) *AttemptActivityView {
 			view.Items = view.Items[1:]
 			view.Truncated = true
 		}
-		view.Items = append(view.Items, ActivityItemView{Kind: kind, Status: status, Message: message})
+		item := ActivityItemView{Kind: kind, Status: status, Message: message}
+		for _, detail := range details {
+			switch value := detail.(type) {
+			case *ActivityCommandView:
+				item.Command = value
+			case *ActivityResourceView:
+				item.Resource = value
+			}
+		}
+		view.Items = append(view.Items, item)
 		view.Summary = message
 	}
 	scanner := bufio.NewScanner(strings.NewReader(output))
@@ -112,7 +131,7 @@ func parseAttemptActivity(output string) *AttemptActivityView {
 	return view
 }
 
-func parseActivityItem(add func(string, string, string), item activityItem, started bool) {
+func parseActivityItem(add func(string, string, string, ...any), item activityItem, started bool) {
 	switch item.Type {
 	case "command_execution":
 		status := item.Status
@@ -132,10 +151,14 @@ func parseActivityItem(add func(string, string, string), item activityItem, star
 		} else if status == "failed" {
 			message = "\u547d\u4ee4\u6267\u884c\u5931\u8d25"
 		}
-		if strings.TrimSpace(item.Command) != "" {
-			message += "\uff1a" + item.Command
+		commandText := strings.TrimSpace(item.Command)
+		var command *ActivityCommandView
+		if commandText != "" {
+			message += "\uff1a" + commandText
+			program := commandProgram(commandText)
+			command = &ActivityCommandView{Program: program, Category: commandCategory(program, commandText)}
 		}
-		add("command", status, message)
+		add("command", status, message, command)
 	case "reasoning":
 		add("reasoning", "running", "Codex \u6b63\u5728\u5206\u6790")
 	case "agent_message":
@@ -144,9 +167,84 @@ func parseActivityItem(add func(string, string, string), item activityItem, star
 		} else if strings.TrimSpace(item.Text) != "" {
 			add("message", "completed", item.Text)
 		}
-	case "file_change", "file_search", "web_search", "tool_call":
+	case "file_change":
+		if len(item.Changes) > 0 {
+			for _, change := range item.Changes {
+				resource := &ActivityResourceView{Operation: firstNonEmpty(item.Operation, "change"), Path: activityPath(change.Path), Kind: activityText(change.Kind)}
+				add("file", "completed", "Codex \u4fee\u6539\u6587\u4ef6"+activityPathSuffix(resource.Path), resource)
+			}
+			return
+		}
+		resource := &ActivityResourceView{Operation: firstNonEmpty(item.Operation, "change"), Path: activityPath(firstNonEmpty(item.Path, item.FilePath)), Kind: "file"}
+		add("file", "completed", "Codex \u4fee\u6539\u6587\u4ef6"+activityPathSuffix(resource.Path), resource)
+	case "file_search":
+		resource := &ActivityResourceView{Operation: "search", Path: activityPath(firstNonEmpty(item.Path, item.FilePath)), Kind: "file"}
+		add("file", "completed", "Codex \u641c\u7d22\u6587\u4ef6"+activityPathSuffix(resource.Path), resource)
+	case "web_search", "tool_call":
 		add("tool", "completed", "Codex \u6b63\u5728\u4f7f\u7528\u5de5\u5177\uff1a"+item.Type)
 	}
+}
+
+func commandProgram(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return "unknown"
+	}
+	if command[0] == '"' {
+		if end := strings.Index(command[1:], "\""); end >= 0 {
+			command = command[1 : end+1]
+		}
+	} else {
+		command = strings.Fields(command)[0]
+	}
+	command = strings.TrimPrefix(command, "&")
+	command = path.Base(strings.ReplaceAll(command, "\\", "/"))
+	command = strings.TrimSuffix(strings.ToLower(command), ".exe")
+	if command == "" {
+		return "unknown"
+	}
+	return command
+}
+
+func commandCategory(program, command string) string {
+	command = strings.ToLower(command)
+	if strings.Contains(command, "go test") || strings.Contains(command, "pytest") || strings.Contains(command, "npm test") || strings.Contains(command, "pnpm test") || strings.Contains(command, "yarn test") {
+		return "test"
+	}
+	switch strings.ToLower(program) {
+	case "bash", "sh", "zsh", "fish", "pwsh", "powershell", "cmd":
+		return "shell"
+	case "pytest", "go-test":
+		return "test"
+	case "go", "cargo", "mvn", "gradle", "make", "npm", "pnpm", "yarn", "pip", "poetry":
+		return "build"
+	case "git":
+		return "version_control"
+	case "python", "python3", "node", "deno":
+		return "script"
+	default:
+		return "unknown"
+	}
+}
+
+func activityPath(value string) string {
+	return activityText(value)
+}
+
+func activityPathSuffix(value string) string {
+	if value == "" {
+		return ""
+	}
+	return "\uff1a" + value
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func activityText(value string) string {

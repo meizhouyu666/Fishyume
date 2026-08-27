@@ -32,6 +32,21 @@ func TestParseAttemptActivityNormalizesCodexEvents(t *testing.T) {
 	if strings.Contains(encoded, "secret raw output") || strings.Contains(encoded, "input_tokens") {
 		t.Fatalf("raw output leaked: %q", encoded)
 	}
+	command := activity.Items[2]
+	if command.Command == nil || command.Command.Program != "go" || command.Command.Category != "test" {
+		t.Fatalf("command metadata = %+v", command)
+	}
+}
+
+func TestParseAttemptActivityNormalizesFileResources(t *testing.T) {
+	activity := parseAttemptActivity(`{"type":"item.completed","item":{"type":"file_change","operation":"write","changes":[{"path":"enterprise/app.py","kind":"source"}]}}`)
+	if activity == nil || len(activity.Items) != 1 {
+		t.Fatalf("activity=%+v", activity)
+	}
+	item := activity.Items[0]
+	if item.Kind != "file" || item.Resource == nil || item.Resource.Operation != "write" || item.Resource.Path != "enterprise/app.py" || item.Resource.Kind != "source" {
+		t.Fatalf("file metadata = %+v", item)
+	}
 }
 
 func TestParseAttemptActivityRedactsAndBoundsUTF8(t *testing.T) {

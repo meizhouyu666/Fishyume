@@ -1,4 +1,4 @@
-import {createIcons, MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox, Route, Maximize2, Scan} from 'lucide';
+import {createIcons, MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox, Route, Maximize2, Scan, Terminal, FileCode2, FileText, FileJson, FileCog, Wrench} from 'lucide';
 import type {ApplicationEvent, ApplicationNodeView, RunEventsResponse, RunGetResponse, RunListResponse, RunSummary} from '../../../wf/src/bridge/application.js';
 import type {HandoffArtifact, Participant, ParticipantTurn, TeamGetResponse, TeamListResponse, TeamMessage, TeamMessagesResponse, TeamSummary} from '../../../wf/src/bridge/team.js';
 import type {DriverListResponse, EffectiveCatalogResponse, RoutingConfig, TeamRoutesResponse} from '../../../wf/src/bridge/routing.js';
@@ -525,7 +525,11 @@ function renderActivity(activityView: NonNullable<NonNullable<ApplicationNodeVie
     const content = div('activity-content');
     const meta = div('activity-item-head');
     meta.append(text('span', 'activity-kind', activityKindLabel(item.kind)), status(item.status));
+    if (item.command) meta.append(text('span', `activity-tag activity-tag-${safeState(item.command.category)}`, `${item.command.category} · ${item.command.program}`));
+    if (item.resource) meta.append(text('span', 'activity-tag activity-tag-resource', item.resource.operation));
     content.append(meta, text('p', 'activity-message', item.message));
+    if (item.command?.program) content.append(text('code', 'activity-command', item.command.program));
+    if (item.resource?.path) content.append(text('code', 'activity-resource-path', item.resource.path));
     row.append(marker, content); timeline.append(row);
   }
   if (!activityView.items.length) timeline.append(text('div', 'section-note', '暂无可显示的执行活动'));
@@ -548,11 +552,44 @@ function renderContextSummary(context: NonNullable<NonNullable<ApplicationNodeVi
 function renderResultDetails(node: ApplicationNodeView): HTMLElement {
   const result = node.result!; const block = div('inspector-block'); block.append(text('h4', 'inspector-label', '节点结果'));
   if (result.summary) block.append(text('p', 'inspector-copy', result.summary));
+  if (result.artifacts?.length) block.append(renderArtifactCards(result.artifacts));
   if (result.decision) block.append(text('div', 'detail-value', `决定: ${result.decision}`));
   for (const [label, values] of [['产物', result.artifacts], ['检查', result.checks], ['警告', result.warnings]] as const) if (values?.length) {const list = div('inspector-list'); list.append(text('h5', 'inspector-sublabel', label)); for (const value of values) list.append(text('div', 'list-item', value)); block.append(list)}
   if (result.reason) block.append(text('div', 'detail-value', `原因: ${result.reason}`));
+  if (result.artifacts?.length) for (const list of block.querySelectorAll('.inspector-list')) {
+    const values = [...list.querySelectorAll('.list-item')].map(item => item.textContent ?? '');
+    if (values.some(value => result.artifacts.includes(value))) list.remove();
+  }
   if (result.questions?.length && node.phase === 'waiting') block.append(answerForm(node));
   return block;
+}
+
+function renderArtifactCards(artifacts: string[]): HTMLElement {
+  const block = div('artifact-block');
+  block.append(text('h5', 'inspector-sublabel', '\u4ea7\u7269'));
+  const grid = div('artifact-grid');
+  for (const value of artifacts) {
+    const info = artifactInfo(value);
+    const card = div('artifact-card'); card.dataset.kind = info.kind;
+    const icon = document.createElement('i'); icon.dataset.lucide = info.icon;
+    const body = div('artifact-body'); body.append(text('strong', 'artifact-name', artifactName(value)), text('span', 'artifact-kind', info.label), text('span', 'artifact-path', value));
+    card.append(icon, body); grid.append(card);
+  }
+  block.append(grid);
+  return block;
+}
+
+function artifactName(value: string): string {
+  const normalized = value.replaceAll('\\', '/');
+  return normalized.slice(normalized.lastIndexOf('/') + 1) || value;
+}
+
+function artifactInfo(value: string): {kind: string; label: string; icon: string} {
+  const extension = artifactName(value).split('.').pop()?.toLowerCase() ?? '';
+  if (['md', 'txt', 'rst'].includes(extension)) return {kind: 'document', label: 'Document', icon: 'file-text'};
+  if (['json', 'yaml', 'yml', 'toml', 'ini', 'env'].includes(extension)) return {kind: 'config', label: 'Config / data', icon: extension === 'json' ? 'file-json' : 'file-cog'};
+  if (['py', 'ts', 'tsx', 'js', 'jsx', 'go', 'rs', 'java', 'rb', 'c', 'cpp', 'h'].includes(extension)) return {kind: 'source', label: 'Source code', icon: 'file-code-2'};
+  return {kind: 'file', label: 'File', icon: 'file-text'};
 }
 
 function renderNodeActions(node: ApplicationNodeView): HTMLElement {
@@ -663,7 +700,7 @@ function renderEmptyDetail(icon: string, label: string): void {detail.replaceChi
 function setButtonsDisabled(disabled: boolean): void {for (const button of detail.querySelectorAll<HTMLButtonElement>('button')) button.disabled = disabled}
 function showError(error: unknown): void {if (error instanceof ApiError) {connection.className = 'connection-state is-online'; connectionLabel.textContent = '本地控制面'} else {connection.className = 'connection-state is-error'; connectionLabel.textContent = '连接异常'} const toast = text('div', 'toast', error instanceof Error ? error.message : String(error)); element('toast-region').append(toast); setTimeout(() => toast.remove(), 7000)}
 function errorMessage(error: unknown): string {return error instanceof Error ? error.message : String(error)}
-function refreshIcons(): void {createIcons({icons: {MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox, Route, Maximize2, Scan}})}
+function refreshIcons(): void {createIcons({icons: {MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox, Route, Maximize2, Scan, Terminal, FileCode2, FileText, FileJson, FileCog, Wrench}})}
 
 for (const button of document.querySelectorAll<HTMLButtonElement>('.view-tab')) button.addEventListener('click', () => {state.view = button.dataset.view as View; state.filter = 'all'; updateViewControls(); void refresh()});
 for (const button of document.querySelectorAll<HTMLButtonElement>('.filter')) button.addEventListener('click', () => {state.filter = button.dataset.filter as Filter; for (const candidate of document.querySelectorAll('.filter')) candidate.classList.toggle('is-active', candidate === button); renderCollection()});

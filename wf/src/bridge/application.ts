@@ -39,7 +39,10 @@ export interface RunListRequest {filter?: {project?: string; phase?: string; con
 export interface RunSummary {runId: string; workflowName: string; project: string; driver: string; target: string; phase: RunPhase; conclusion?: Conclusion; stateVersion: number; createdAt: string; updatedAt: string}
 export interface RunListResponse {apiVersion: typeof applicationApiVersion; items: RunSummary[]; nextCursor?: string}
 export interface ApplicationResult {summary?: string; artifacts: string[]; warnings: string[]; checks: string[]; questions: Array<{id: string; prompt: string; choices: string[]; required: boolean}>; decision?: string; reason?: string; usage?: Record<string, number>}
-export interface AttemptActivity {schemaVersion: 'fishyume.attempt-activity/v1'; summary?: string; items: Array<{kind: string; status: string; message: string}>; truncated: boolean}
+export interface AttemptActivityCommand {program: string; category: string}
+export interface AttemptActivityResource {operation: string; path?: string; kind?: string}
+export interface AttemptActivityItem {kind: string; status: string; message: string; command?: AttemptActivityCommand; resource?: AttemptActivityResource}
+export interface AttemptActivity {schemaVersion: 'fishyume.attempt-activity/v1'; summary?: string; items: AttemptActivityItem[]; truncated: boolean}
 export interface ApplicationNodeView {nodeId: string; type: 'agent' | 'approval'; phase: NodePhase; dependsOn?: string[]; parallelLayer?: number; conclusion?: Conclusion; reason?: Reason; diagnostic?: string; currentAttempt?: number; attempt?: {number: number; phase: string; conclusion?: string; reason?: string; driver: string; target: string; routingDecision?: RoutingDecision; executionProfile?: ExecutionProfile; routingUsage?: RoutingUsage; sideEffectStatus?: SideEffectStatus; failureClass?: FailureClass; contextHash?: string; context?: ContextInspect; activity?: AttemptActivity; startedAt: string; updatedAt: string; completedAt?: string}; result?: ApplicationResult}
 export interface ApplicationRunView extends RunSummary {summary?: string; cancelRequested: boolean; effectiveConcurrency: number; topologicalOrder: string[]; parallelLayers?: string[][]; nodes: ApplicationNodeView[]; deprecationWarnings: string[]}
 export interface RunGetRequest {runId: string}

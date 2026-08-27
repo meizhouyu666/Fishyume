@@ -308,9 +308,22 @@ type AttemptView struct {
 }
 
 type ActivityItemView struct {
-	Kind    string `json:"kind"`
-	Status  string `json:"status"`
-	Message string `json:"message"`
+	Kind     string                `json:"kind"`
+	Status   string                `json:"status"`
+	Message  string                `json:"message"`
+	Command  *ActivityCommandView  `json:"command,omitempty"`
+	Resource *ActivityResourceView `json:"resource,omitempty"`
+}
+
+type ActivityCommandView struct {
+	Program  string `json:"program"`
+	Category string `json:"category"`
+}
+
+type ActivityResourceView struct {
+	Operation string `json:"operation"`
+	Path      string `json:"path,omitempty"`
+	Kind      string `json:"kind,omitempty"`
 }
 
 type AttemptActivityView struct {
