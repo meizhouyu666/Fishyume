@@ -2,6 +2,9 @@ import {spawn, type ChildProcess} from 'node:child_process';
 import {request as httpRequest} from 'node:http';
 import {request as httpsRequest} from 'node:https';
 import {randomUUID} from 'node:crypto';
+import {existsSync} from 'node:fs';
+import {dirname, join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 
 export type WebTarget =
   | {kind: 'team'; teamId: string}
@@ -21,6 +24,8 @@ export interface WebProcessLike {
 export interface WebLauncher {
   spawn(command: string, args: string[]): WebProcessLike;
   command: string;
+  /** Arguments inserted before the target-specific Web arguments. */
+  argsPrefix?: string[];
 }
 
 export interface WebOpenManagerOptions {
@@ -58,7 +63,7 @@ export function createWebOpenManager(options: WebOpenManagerOptions = {}): WebOp
   };
 
   const start = (target: WebTarget): Promise<SidecarIdentity> => new Promise((resolve, reject) => {
-    const child = launcher.spawn(launcher.command, targetArgs(target));
+    const child = launcher.spawn(launcher.command, [...(launcher.argsPrefix ?? []), ...targetArgs(target)]);
     let output = '';
     let settled = false;
     const timer = setTimeout(() => finish(new Error('Fishyume Web sidecar did not publish a launch URL')), waitMs);
@@ -103,7 +108,22 @@ function targetArgs(target: WebTarget): string[] {
 function isAlive(process: WebProcessLike): boolean {return process.exitCode === null && !process.killed}
 
 function defaultLauncher(): WebLauncher {
-  return {command: process.env.FISHYUME_WEB_COMMAND ?? 'fishyume-web', spawn: (command, args) => spawn(command, args, {stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true})};
+  const configured = process.env.FISHYUME_WEB_COMMAND;
+  if (configured) return launcherFor(configured);
+  const localEntrypoint = resolveLocalWebEntrypoint();
+  return localEntrypoint
+    ? launcherFor(process.execPath, [localEntrypoint])
+    : launcherFor('fishyume-web');
+}
+
+function launcherFor(command: string, argsPrefix: string[] = []): WebLauncher {
+  return {command, argsPrefix, spawn: (resolvedCommand, args) => spawn(resolvedCommand, args, {stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true})};
+}
+
+/** Resolve the sibling Web package for source checkouts and npm workspaces. */
+export function resolveLocalWebEntrypoint(moduleDir = dirname(fileURLToPath(import.meta.url))): string | undefined {
+  const candidate = join(moduleDir, '..', '..', '..', 'fishyume-web', 'dist', 'server.js');
+  return existsSync(candidate) ? candidate : undefined;
 }
 
 async function postFocus(origin: string, token: string, target?: WebTarget): Promise<boolean> {

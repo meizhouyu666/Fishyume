@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import test from 'node:test';
-import {createWebOpenManager, type WebLauncher, type WebProcessLike, type WebTarget} from './web.js';
+import {createWebOpenManager, resolveLocalWebEntrypoint, type WebLauncher, type WebProcessLike, type WebTarget} from './web.js';
 
 class FakeProcess extends EventEmitter implements WebProcessLike {
   exitCode: number | null = null;
@@ -39,4 +39,24 @@ test('web.open returns unavailable when the optional client cannot start', async
   });
   assert.deepEqual(await manager.open({kind: 'team', teamId: 'team-1'}), {status: 'unavailable', target: {kind: 'team', teamId: 'team-1'}, reason: 'not installed'});
   await manager.close();
+});
+
+test('web.open prepends launcher arguments for a local Node entrypoint', async () => {
+  const fakeProcess = new FakeProcess();
+  let command = '';
+  let args: string[] = [];
+  const manager = createWebOpenManager({
+    launcher: {command: globalThis.process.execPath, argsPrefix: ['local-server.js'], spawn(resolvedCommand, resolvedArgs) {command = resolvedCommand; args = resolvedArgs; return fakeProcess}} as WebLauncher,
+    waitMs: 100,
+  });
+  const opening = manager.open({kind: 'run', runId: 'run-1'});
+  fakeProcess.stdout.emit('data', 'Fishyume Web: http://127.0.0.1:63995/#token=token-value\n');
+  await opening;
+  assert.equal(command, globalThis.process.execPath);
+  assert.deepEqual(args, ['local-server.js', '--target-kind', 'run', '--run-id', 'run-1']);
+  await manager.close();
+});
+
+test('local Web entrypoint resolves from the compiled wf package directory', () => {
+  assert.equal(resolveLocalWebEntrypoint('E:/meizhouyu/agentstudy/my-agent/wf/dist/mcp')?.replaceAll('\\', '/'), 'E:/meizhouyu/agentstudy/my-agent/fishyume-web/dist/server.js');
 });

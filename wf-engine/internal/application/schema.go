@@ -112,8 +112,9 @@ func StableAuthoringGuide() AuthoringGuide {
 			"Pass identical workflow, inputs, driver, and target to workflow.validate, workflow.explain, and run.start.",
 			"Reuse a clientRequestId only for an identical run.start request; a changed payload is a conflict.",
 			"Read run.get before run.action and derive expectedStateVersion and expectedAttempt from the latest durable state.",
-			"Use run.events with afterSequence for bounded pagination, then run.get for authoritative current state.",
-			"Use run.result only after the Run is terminal; not_ready means continue observing.",
+			"After run.start, open the returned Run in the optional Web client and yield control; do not make the Host Agent a background watcher or loop on run.events.",
+			"Use run.events with afterSequence for one on-demand bounded read when the user requests progress or a pending action/terminal transition is expected; call run.get only after an event requires authoritative state.",
+			"Use run.result only after a terminal event or an explicit user request; not_ready is not a reason to spin a polling loop.",
 			"The attach value returned by run.start opens the human TUI on the same durable Run.",
 		},
 	}
