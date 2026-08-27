@@ -39,7 +39,7 @@ export interface RunListRequest {filter?: {project?: string; phase?: string; con
 export interface RunSummary {runId: string; workflowName: string; project: string; driver: string; target: string; phase: RunPhase; conclusion?: Conclusion; stateVersion: number; createdAt: string; updatedAt: string}
 export interface RunListResponse {apiVersion: typeof applicationApiVersion; items: RunSummary[]; nextCursor?: string}
 export interface ApplicationResult {summary?: string; artifacts: string[]; warnings: string[]; checks: string[]; questions: Array<{id: string; prompt: string; choices: string[]; required: boolean}>; decision?: string; reason?: string; usage?: Record<string, number>}
-export interface AttemptActivityCommand {program: string; category: string}
+export interface AttemptActivityCommand {program: string; category: string; text?: string}
 export interface AttemptActivityResource {operation: string; path?: string; kind?: string}
 export interface AttemptActivityItem {kind: string; status: string; message: string; command?: AttemptActivityCommand; resource?: AttemptActivityResource}
 export interface AttemptActivity {schemaVersion: 'fishyume.attempt-activity/v1'; summary?: string; items: AttemptActivityItem[]; truncated: boolean}

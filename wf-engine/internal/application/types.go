@@ -318,6 +318,7 @@ type ActivityItemView struct {
 type ActivityCommandView struct {
 	Program  string `json:"program"`
 	Category string `json:"category"`
+	Text     string `json:"text,omitempty"`
 }
 
 type ActivityResourceView struct {

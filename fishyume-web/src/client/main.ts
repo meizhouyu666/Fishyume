@@ -16,7 +16,7 @@ type FocusTarget = {kind: 'team'; teamId: string} | {kind: 'handoff'; teamId: st
 
 const state: {
   token: string; view: View; filter: Filter; tab: DetailTab; teams: TeamSummary[]; runs: RunSummary[];
-  selectedTeam?: string; selectedRun?: string; selectedNode?: string; teamView?: TeamGetResponse; messages?: TeamMessagesResponse;
+  selectedTeam?: string; selectedRun?: string; selectedNode?: string; selectedParticipant?: string; teamView?: TeamGetResponse; messages?: TeamMessagesResponse;
   handoffs: HandoffArtifact[]; runView?: RunGetResponse; busy: boolean; refreshing: boolean; focusRevision: number; pendingFocus?: FocusTarget;
   eventRunId?: string; eventCursor: number; lastRunEvent?: ApplicationEvent; eventsBusy: boolean; graphScale: 'actual' | 'fit';
   routingView?: EffectiveCatalogResponse; routingConfig?: RoutingConfig; teamRoutes?: TeamRoutesResponse; drivers?: DriverListResponse; routingErrors: string[];
@@ -233,8 +233,8 @@ function renderCollection(): void {
 }
 
 function filteredTeams(): TeamSummary[] {
-  if (state.filter === 'all') return state.teams;
-  return state.teams.filter(team => state.filter === 'closed' ? team.state === 'closed' : team.state !== 'closed');
+  const items = state.filter === 'all' ? state.teams : state.teams.filter(team => state.filter === 'closed' ? team.state === 'closed' : team.state !== 'closed');
+  return items.slice().sort((left, right) => compareDates(right.updatedAt, left.updatedAt) || compareDates(right.createdAt, left.createdAt) || left.teamId.localeCompare(right.teamId));
 }
 
 function filteredRuns(): RunSummary[] {
@@ -245,7 +245,8 @@ function filteredRuns(): RunSummary[] {
 function teamListItem(team: TeamSummary): HTMLButtonElement {
   const button = document.createElement('button'); button.className = `collection-item${team.teamId === state.selectedTeam ? ' is-selected' : ''}`;
   button.dataset.id = team.teamId;
-  const top = div('item-topline'); top.append(text('span', 'item-title', team.topic), status(team.state));
+  const title = text('span', 'item-title', team.topic); title.title = team.topic;
+  const top = div('item-topline'); top.append(title, status(team.state));
   const meta = div('item-meta'); meta.append(text('span', '', `${modeLabel(team.mode)} · ${team.participants} 位参与者`), text('span', '', relativeTime(team.updatedAt)));
   const progress = div('item-progress'); const bar = document.createElement('span'); bar.style.width = `${Math.min(100, Math.round(team.costUsed / team.costGrant * 100))}%`; progress.append(bar);
   button.append(top, meta, progress); button.addEventListener('click', () => selectTeam(team.teamId)); return button;
@@ -292,6 +293,8 @@ function renderDiscussion(view: TeamGetResponse, messages: TeamMessagesResponse)
   const grid = div('participant-grid');
   for (const participant of view.team.participants) grid.append(participantView(participant, view.turns, view.team.mode === 'session'));
   participants.append(grid); fragment.append(participants);
+  const selectedParticipant = view.team.participants.find(participant => participant.participantId === state.selectedParticipant);
+  if (selectedParticipant) fragment.append(renderParticipantContribution(selectedParticipant, view.turns, messages.messages));
   const discussion = div('section discussion'); discussion.append(text('h3', 'section-title', '讨论'));
   if (!messages.messages.length) discussion.append(empty('暂无已提交消息')); else for (const message of messages.messages) discussion.append(messageView(message));
   if (view.team.mode === 'session' && view.team.state === 'open') discussion.append(followUpComposer(view.team.participants));
@@ -299,7 +302,11 @@ function renderDiscussion(view: TeamGetResponse, messages: TeamMessagesResponse)
 }
 
 function participantView(participant: Participant, turns: ParticipantTurn[], allowTurnCancel: boolean): HTMLElement {
-  const item = div('participant'); const top = div('participant-topline'); top.append(text('span', 'participant-label', participant.label), status(participant.state)); item.append(top, text('div', 'participant-role', participant.role), text('div', 'participant-model', participant.modelId));
+  const selected = participant.participantId === state.selectedParticipant;
+  const item = div(`participant${selected ? ' is-selected' : ''}`); item.tabIndex = 0; item.setAttribute('role', 'button'); item.setAttribute('aria-pressed', String(selected)); item.title = `查看 ${participant.label} 的产出`;
+  item.addEventListener('click', event => {if ((event.target as HTMLElement).closest('button')) return; state.selectedParticipant = selected ? undefined : participant.participantId; renderTeamDetail()});
+  item.addEventListener('keydown', event => {if ((event.target as HTMLElement).closest('button')) return; if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); state.selectedParticipant = selected ? undefined : participant.participantId; renderTeamDetail()}});
+  const top = div('participant-topline'); top.append(text('span', 'participant-label', participant.label), status(participant.state)); item.append(top, text('div', 'participant-role', participant.role), text('div', 'participant-model', participant.modelId));
   const relevant = turns.filter(turn => turn.participantId === participant.participantId).sort((a, b) => b.number - a.number).slice(0, 2);
   for (const turn of relevant) {
     const row = div('turn-row'); row.append(text('span', '', `第 ${turn.number} 轮`), status(turn.state));
@@ -307,6 +314,23 @@ function participantView(participant: Participant, turns: ParticipantTurn[], all
     item.append(row);
   }
   return item;
+}
+
+function renderParticipantContribution(participant: Participant, turns: ParticipantTurn[], messages: TeamMessage[]): HTMLElement {
+  const section = div('participant-contribution');
+  const heading = div('section-title-row'); heading.append(text('h3', 'section-title', `${participant.label} 的产出`), text('span', 'section-note', participant.role)); section.append(heading);
+  const participantTurns = turns.filter(turn => turn.participantId === participant.participantId).sort((left, right) => right.number - left.number);
+  if (!participantTurns.length) {section.append(empty('该成员尚未开始执行')); return section}
+  for (const turn of participantTurns) {
+    const card = div('contribution-entry');
+    const head = div('contribution-head'); head.append(text('strong', '', `第 ${turn.number} 轮`), status(turn.state), text('span', 'message-time', formatTime(turn.updatedAt))); card.append(head);
+    const message = messages.find(candidate => candidate.turnId === turn.turnId || candidate.messageId === turn.contributionMessageId);
+    if (message) card.append(text('div', 'contribution-content', messageContent(message)));
+    else if (turn.diagnostic) card.append(text('div', 'contribution-content contribution-diagnostic', turn.diagnostic));
+    else card.append(text('div', 'section-note', '暂无已提交产出'));
+    section.append(card);
+  }
+  return section;
 }
 
 function messageView(message: TeamMessage): HTMLElement {
@@ -525,10 +549,10 @@ function renderActivity(activityView: NonNullable<NonNullable<ApplicationNodeVie
     const content = div('activity-content');
     const meta = div('activity-item-head');
     meta.append(text('span', 'activity-kind', activityKindLabel(item.kind)), status(item.status));
-    if (item.command) meta.append(text('span', `activity-tag activity-tag-${safeState(item.command.category)}`, `${item.command.category} · ${item.command.program}`));
+    if (item.command) meta.append(text('span', `activity-tag activity-tag-${safeState(item.command.category)}`, activityCategoryLabel(item.command.category)));
     if (item.resource) meta.append(text('span', 'activity-tag activity-tag-resource', item.resource.operation));
-    content.append(meta, text('p', 'activity-message', item.message));
-    if (item.command?.program) content.append(text('code', 'activity-command', item.command.program));
+    content.append(meta);
+    if (item.command) content.append(renderCommandActivity(item.command, item.message)); else content.append(text('p', 'activity-message', item.message));
     if (item.resource?.path) content.append(text('code', 'activity-resource-path', item.resource.path));
     row.append(marker, content); timeline.append(row);
   }
@@ -536,6 +560,21 @@ function renderActivity(activityView: NonNullable<NonNullable<ApplicationNodeVie
   activity.append(timeline);
   if (activityView.truncated) activity.append(text('div', 'activity-truncated', '活动记录已截断，仅显示最近事件'));
   return activity;
+}
+
+function renderCommandActivity(command: NonNullable<NonNullable<NonNullable<ApplicationNodeView['attempt']>['activity']>['items'][number]['command']>, fallbackMessage: string): HTMLElement {
+  const card = div('activity-command-card');
+  const icon = document.createElement('i'); icon.dataset.lucide = 'terminal'; icon.setAttribute('aria-hidden', 'true');
+  const body = div('activity-command-body');
+  const head = div('activity-command-head'); head.append(text('strong', 'activity-command-label', '命令执行'), text('span', 'activity-command-program', command.program));
+  const commandText = command.text || fallbackMessage;
+  body.append(head, text('code', 'activity-command', commandText)); card.append(icon, body);
+  return card;
+}
+
+function activityCategoryLabel(category: string): string {
+  const labels: Record<string, string> = {shell: 'Shell', test: '测试', build: '构建', version_control: '版本控制', script: '脚本', unknown: '命令'};
+  return labels[category] ?? category.replaceAll('_', ' ');
 }
 
 function activityKindLabel(kind: string): string {
@@ -662,7 +701,7 @@ async function mutate(key: string, method: string, request: Record<string, unkno
   } finally {state.busy = false; setButtonsDisabled(false)}
 }
 
-function selectTeam(id: string): void {state.selectedTeam = id; state.tab = 'discussion'; renderCollection(); detail.replaceChildren(loading()); void loadTeam(id).catch(showError)}
+function selectTeam(id: string): void {state.selectedTeam = id; state.selectedParticipant = undefined; state.tab = 'discussion'; renderCollection(); detail.replaceChildren(loading()); void loadTeam(id).catch(showError)}
 function selectRun(id: string): void {state.selectedRun = id; state.selectedNode = undefined; state.eventRunId = undefined; state.eventCursor = 0; state.lastRunEvent = undefined; state.graphScale = 'actual'; renderCollection(); detail.replaceChildren(loading()); void loadRun(id).catch(showError)}
 function openRun(id: string): void {state.view = 'runs'; state.selectedRun = id; updateViewControls(); void refresh()}
 function selectNode(nodeId: string): void {if (!state.runView || !findWorkflowNode(state.runView.run, nodeId)) return; state.selectedNode = nodeId; renderRunDetail()}
@@ -695,6 +734,13 @@ function empty(value: string): HTMLElement {return text('div', 'empty-state', va
 function loading(): HTMLElement {const root = document.createElement('div'); for (let i = 0; i < 4; i++) root.append(div('loading-line')); return root}
 function element(id: string): HTMLElement {const value = document.getElementById(id); if (!value) throw new Error(`missing element ${id}`); return value}
 function formatTime(value: string): string {return new Intl.DateTimeFormat(undefined, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}).format(new Date(value))}
+function compareDates(left: string, right: string): number {
+  const leftTime = Date.parse(left); const rightTime = Date.parse(right);
+  if (Number.isNaN(leftTime) && Number.isNaN(rightTime)) return 0;
+  if (Number.isNaN(leftTime)) return -1;
+  if (Number.isNaN(rightTime)) return 1;
+  return leftTime - rightTime;
+}
 function relativeTime(value: string): string {const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1000); const formatter = new Intl.RelativeTimeFormat(undefined, {numeric: 'auto'}); if (Math.abs(seconds) < 60) return formatter.format(seconds, 'second'); const minutes = Math.round(seconds / 60); if (Math.abs(minutes) < 60) return formatter.format(minutes, 'minute'); const hours = Math.round(minutes / 60); if (Math.abs(hours) < 24) return formatter.format(hours, 'hour'); return formatter.format(Math.round(hours / 24), 'day')}
 function renderEmptyDetail(icon: string, label: string): void {detail.replaceChildren(); const root = div('detail-empty'); const box = document.createElement('div'); const i = document.createElement('i'); i.dataset.lucide = icon; box.append(i, text('div', '', label)); root.append(box); detail.append(root); refreshIcons()}
 function setButtonsDisabled(disabled: boolean): void {for (const button of detail.querySelectorAll<HTMLButtonElement>('button')) button.disabled = disabled}

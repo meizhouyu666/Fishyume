@@ -60,7 +60,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {outline: 2px 
 .collection-item.is-selected {background: #161b22; border-color: #484f58; box-shadow: inset 3px 0 0 var(--blue), 0 4px 12px rgba(0,0,0,.24)}
 .collection-item.route-summary {cursor: default}
 .item-topline, .item-meta, .detail-title-row, .section-title-row, .participant-topline {display: flex; align-items: center; justify-content: space-between; gap: 10px}
-.item-title {font-size: 13px; font-weight: 680; line-height: 1.35; overflow-wrap: anywhere}
+.item-title {display: -webkit-box; overflow: hidden; font-size: 13px; font-weight: 680; line-height: 1.35; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2}
 .item-meta {justify-content: flex-start; color: var(--muted); font-size: 11px}
 .item-progress {height: 3px; overflow: hidden; border-radius: 2px; background: #30363d}
 .item-progress span {display: block; height: 100%; background: var(--green)}
@@ -100,11 +100,19 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {outline: 2px 
 .status.closed {background: #21262d; border-color: #30363d; color: #8b949e}
 
 .participant-grid {display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px}
-.participant {border: 1px solid var(--line); border-radius: 6px; padding: 13px 14px; min-width: 0; background: var(--surface-raised)}
+.participant {position: relative; border: 1px solid var(--line); border-radius: 6px; padding: 13px 14px; min-width: 0; background: var(--surface-raised); cursor: pointer; outline: none; transition: border-color .15s ease, background .15s ease, box-shadow .15s ease}
+.participant:hover, .participant:focus-visible {border-color: #6e8299; background: #19232e; box-shadow: 0 8px 18px rgba(0,0,0,.2)}
+.participant.is-selected {border-color: var(--blue); background: #19293a; box-shadow: 0 0 0 2px rgba(88,166,255,.16)}
 .participant-label {font-weight: 680; font-size: 13px}
 .participant-role {margin-top: 6px; color: var(--muted); font-size: 11px; line-height: 1.45}
 .participant-model {margin-top: 8px; color: var(--blue); font-size: 10px; overflow-wrap: anywhere}
 .turn-row {display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line-soft); font-size: 11px}
+.participant-contribution {display: grid; gap: 10px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line-soft)}
+.contribution-entry {display: grid; gap: 8px; padding: 12px 14px; border-radius: 7px; background: #171d25}
+.contribution-head {display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 11px}
+.contribution-head strong {color: var(--ink); font-size: 12px}
+.contribution-content {font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere}
+.contribution-diagnostic {color: #ffb4ab}
 
 .discussion {position: relative}
 .message {display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--line-soft)}
@@ -210,8 +218,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {outline: 2px 
 .activity-tag-version-control {background: #2d2340; color: #d2a8ff}
 .activity-tag-resource {background: #263238; color: #9ad9d9}
 .activity-message {margin: 0; color: #d3dae3; font-size: 11px; line-height: 1.48; overflow-wrap: anywhere}
-.activity-command, .activity-resource-path {display: block; max-width: 100%; overflow: hidden; padding: 5px 7px; border-radius: 4px; background: #0d1117; color: #9daab8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap}
-.activity-resource-path {color: #8ddbdb}
+.activity-command-card {display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 9px; align-items: start; padding: 9px 10px; border-radius: 6px; background: #121922; box-shadow: inset 3px 0 0 #58a6ff}
+.activity-command-card > svg {width: 17px; height: 17px; margin-top: 2px; color: #79c0ff; stroke-width: 1.8}
+.activity-command-body {display: grid; gap: 6px; min-width: 0}
+.activity-command-head {display: flex; align-items: center; flex-wrap: wrap; gap: 8px}
+.activity-command-label {color: #d3dae3; font-size: 10px}
+.activity-command-program {color: #79c0ff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px}
+.activity-command {display: block; max-width: 100%; overflow: hidden; padding: 6px 8px; border-radius: 4px; background: #0d1117; color: #c9d1d9; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap}
+.activity-resource-path {display: block; max-width: 100%; overflow: hidden; padding: 5px 7px; border-radius: 4px; background: #0d1117; color: #8ddbdb; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap}
 .activity-truncated {margin-top: 2px; color: #d29922; font-size: 10px}
 .artifact-block {display: grid; gap: 10px}
 .artifact-grid {display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px}

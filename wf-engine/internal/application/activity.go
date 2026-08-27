@@ -156,7 +156,7 @@ func parseActivityItem(add func(string, string, string, ...any), item activityIt
 		if commandText != "" {
 			message += "\uff1a" + commandText
 			program := commandProgram(commandText)
-			command = &ActivityCommandView{Program: program, Category: commandCategory(program, commandText)}
+			command = &ActivityCommandView{Program: program, Category: commandCategory(program, commandText), Text: activityText(commandText)}
 		}
 		add("command", status, message, command)
 	case "reasoning":

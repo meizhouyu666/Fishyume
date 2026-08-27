@@ -33,7 +33,7 @@ func TestParseAttemptActivityNormalizesCodexEvents(t *testing.T) {
 		t.Fatalf("raw output leaked: %q", encoded)
 	}
 	command := activity.Items[2]
-	if command.Command == nil || command.Command.Program != "go" || command.Command.Category != "test" {
+	if command.Command == nil || command.Command.Program != "go" || command.Command.Category != "test" || command.Command.Text != "go test ./..." {
 		t.Fatalf("command metadata = %+v", command)
 	}
 }
