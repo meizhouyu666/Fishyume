@@ -752,11 +752,28 @@ func bounded(value string, max int) string {
 	return string(data)
 }
 func contribution(content string) (string, error) {
+	trimmed := strings.TrimSpace(content)
+	if strings.HasPrefix(trimmed, "{") {
+		var candidate teamcontract.ContributionV1
+		decodeErr := teamcontract.DecodeStrict([]byte(trimmed), &candidate)
+		if decodeErr == nil {
+			if validateErr := teamcontract.ValidateContribution(candidate); validateErr != nil {
+				return "", validateErr
+			}
+			return string([]byte(trimmed)), nil
+		}
+		var marker struct {
+			SchemaVersion string `json:"schemaVersion"`
+		}
+		if json.Unmarshal([]byte(trimmed), &marker) == nil && marker.SchemaVersion == teamcontract.SchemaVersion {
+			return "", fmt.Errorf("invalid Team contribution envelope: %w", decodeErr)
+		}
+	}
 	data, err := json.Marshal(teamcontract.ContributionV1{SchemaVersion: teamcontract.SchemaVersion, Status: teamcontract.ContributionCompleted, ContentMarkdown: content})
 	return string(data), err
 }
 func sessionPrompt(prompt string) string {
-	return prompt + "\n\nFishyume Team contribution protocol:\nReturn only the public Markdown contribution. Do not modify files, run shell commands, use the network, delegate work, or include hidden reasoning."
+	return prompt + "\n\nFishyume Team contribution protocol:\nReturn either a public Markdown answer or a JSON contribution envelope with schemaVersion, status, resultType (report|decision|artifact|data|question), and output. Do not modify files, run shell commands, use the network, delegate work, or include hidden reasoning. Plain text is wrapped as legacy Markdown for compatibility."
 }
 
 var _ sessiondriver.Driver = (*Driver)(nil)

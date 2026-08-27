@@ -344,7 +344,7 @@ func codexExplorationExecArgs(model, sandbox, resultPath, workspace string) []st
 
 func explorationPrompt(request explorationdriver.StartRequest, executionID string) string {
 	identity, _ := json.Marshal(map[string]any{"executionId": executionID, "teamId": request.Identity.TeamID, "participantId": request.Identity.ParticipantID, "turnId": request.Identity.TurnID})
-	return request.Prompt + "\n\nFishyume Team contribution protocol:\nReturn only the public Markdown contribution, not JSON. Do not include hidden reasoning. Fishyume will validate and wrap the contribution locally.\nFISHYUME_TEAM_IDENTITY=" + string(identity)
+	return request.Prompt + "\n\nFishyume Team contribution protocol:\nReturn either a public Markdown answer or a JSON contribution envelope with schemaVersion, status, resultType (report|decision|artifact|data|question), and output. Do not include hidden reasoning. Plain text is wrapped as legacy Markdown for compatibility.\nFISHYUME_TEAM_IDENTITY=" + string(identity)
 }
 
 func modelName(modelID string) string {

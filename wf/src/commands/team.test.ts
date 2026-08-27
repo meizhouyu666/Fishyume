@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type {EngineClient, EventListener} from '../bridge/engine.js';
 import type {EngineHello} from '../bridge/types.js';
-import {parseParticipant, startTeam, submitCurrentTeamAction} from './team.js';
+import {parseParticipant, renderTeam, startTeam, submitCurrentTeamAction} from './team.js';
+import type {TeamGetResponse, TeamMessagesResponse} from '../bridge/team.js';
 
 class TeamClient implements EngineClient {
   closed = false;
@@ -67,4 +68,13 @@ test('Host action reads the latest Team version before follow-up', async () => {
 test('explicit participants use the frozen modelId:label spelling', () => {
   assert.deepEqual(parseParticipant('codex/local/gpt-5.6:architect'), {modelId: 'codex/local/gpt-5.6', label: 'architect', role: 'propose a coherent architecture and tradeoffs'});
   assert.throws(() => parseParticipant('missing-label'), /modelId:label/);
+});
+
+test('team renderer displays structured contribution output and metadata', () => {
+  const view = {schemaVersion: 'fishyume.team/v1', team: team('closed'), turns: []} as TeamGetResponse;
+  const messages: TeamMessagesResponse = {schemaVersion: 'fishyume.team/v1', teamId: 'team-1', nextAfterSequence: 1, more: false, messages: [{schemaVersion: 'fishyume.team/v1', messageId: 'message-1', teamId: 'team-1', sequence: 1, kind: 'participant_contribution', actor: 'participant-1', turnId: 'turn-1', content: JSON.stringify({schemaVersion: 'fishyume.team/v1', status: 'completed', resultType: 'decision', output: {decision: 'adopt-a'}, openQuestions: ['verify rollout']}), createdAt: now, contentHash: 'b'.repeat(64)}]};
+  const output = renderTeam(view, messages);
+  assert.match(output, /\[decision\]/);
+  assert.match(output, /"decision": "adopt-a"/);
+  assert.match(output, /Open question: verify rollout/);
 });

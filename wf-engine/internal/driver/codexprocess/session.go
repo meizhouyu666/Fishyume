@@ -515,10 +515,31 @@ func isTransientThreadReadError(err error) bool {
 
 func sessionPrompt(request sessiondriver.StartTurnRequest, sessionID string) string {
 	identity, _ := json.Marshal(map[string]any{"sessionId": sessionID, "turnId": request.Identity.TurnID, "sessionGeneration": request.Identity.ExpectedSessionGeneration})
-	return request.Prompt + "\n\nFishyume Team contribution protocol:\nReturn only the public Markdown contribution, not JSON. Do not include hidden reasoning. Fishyume will validate and wrap the contribution locally.\nFISHYUME_SESSION_TURN_IDENTITY=" + string(identity)
+	return request.Prompt + "\n\nFishyume Team contribution protocol:\nReturn either a public Markdown answer or a JSON contribution envelope with schemaVersion, status, resultType (report|decision|artifact|data|question), and output. Do not include hidden reasoning. Plain text is wrapped as legacy Markdown for compatibility.\nFISHYUME_SESSION_TURN_IDENTITY=" + string(identity)
 }
 
 func encodeTeamContribution(content string) (string, error) {
+	trimmed := strings.TrimSpace(content)
+	if strings.HasPrefix(trimmed, "{") {
+		var contribution teamcontract.ContributionV1
+		decodeErr := teamcontract.DecodeStrict([]byte(trimmed), &contribution)
+		if decodeErr == nil {
+			if validateErr := teamcontract.ValidateContribution(contribution); validateErr != nil {
+				return "", validateErr
+			}
+			canonical, marshalErr := teamcontract.CanonicalJSON(contribution)
+			if marshalErr != nil {
+				return "", fmt.Errorf("encode Codex Team contribution: %w", marshalErr)
+			}
+			return string(canonical), nil
+		}
+		var marker struct {
+			SchemaVersion string `json:"schemaVersion"`
+		}
+		if json.Unmarshal([]byte(trimmed), &marker) == nil && marker.SchemaVersion == teamcontract.SchemaVersion {
+			return "", fmt.Errorf("invalid Codex Team contribution envelope: %w", decodeErr)
+		}
+	}
 	encoded, err := json.Marshal(teamcontract.ContributionV1{
 		SchemaVersion:   teamcontract.SchemaVersion,
 		Status:          teamcontract.ContributionCompleted,

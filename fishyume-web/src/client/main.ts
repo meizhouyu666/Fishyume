@@ -1,7 +1,9 @@
-import {createIcons, MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox, Route} from 'lucide';
-import type {ApplicationNodeView, RunGetResponse, RunListResponse, RunSummary} from '../../../wf/src/bridge/application.js';
+import {createIcons, MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox, Route, Maximize2, Scan} from 'lucide';
+import type {ApplicationEvent, ApplicationNodeView, RunEventsResponse, RunGetResponse, RunListResponse, RunSummary} from '../../../wf/src/bridge/application.js';
 import type {HandoffArtifact, Participant, ParticipantTurn, TeamGetResponse, TeamListResponse, TeamMessage, TeamMessagesResponse, TeamSummary} from '../../../wf/src/bridge/team.js';
 import type {DriverListResponse, EffectiveCatalogResponse, RoutingConfig, TeamRoutesResponse} from '../../../wf/src/bridge/routing.js';
+import {findWorkflowNode, relatedWorkflowNodeIds, workflowEdges, workflowGraphLayout} from './workflow-view.js';
+import {messageContent} from './team-view.js';
 
 const teamVersion = 'fishyume.team/v1';
 type View = 'teams' | 'runs' | 'routing';
@@ -14,10 +16,11 @@ type FocusTarget = {kind: 'team'; teamId: string} | {kind: 'handoff'; teamId: st
 
 const state: {
   token: string; view: View; filter: Filter; tab: DetailTab; teams: TeamSummary[]; runs: RunSummary[];
-  selectedTeam?: string; selectedRun?: string; teamView?: TeamGetResponse; messages?: TeamMessagesResponse;
+  selectedTeam?: string; selectedRun?: string; selectedNode?: string; teamView?: TeamGetResponse; messages?: TeamMessagesResponse;
   handoffs: HandoffArtifact[]; runView?: RunGetResponse; busy: boolean; refreshing: boolean; focusRevision: number; pendingFocus?: FocusTarget;
-  routingView?: EffectiveCatalogResponse; routingConfig?: RoutingConfig; teamRoutes?: TeamRoutesResponse; drivers?: DriverListResponse;
-} = {token: launch.token, view: launch.view, filter: 'all', tab: launch.target?.kind === 'handoff' ? 'handoffs' : 'discussion', teams: [], runs: [], handoffs: [], busy: false, refreshing: false, focusRevision: 0, pendingFocus: launch.target};
+  eventRunId?: string; eventCursor: number; lastRunEvent?: ApplicationEvent; eventsBusy: boolean; graphScale: 'actual' | 'fit';
+  routingView?: EffectiveCatalogResponse; routingConfig?: RoutingConfig; teamRoutes?: TeamRoutesResponse; drivers?: DriverListResponse; routingErrors: string[];
+} = {token: launch.token, view: launch.view, filter: 'all', tab: launch.target?.kind === 'handoff' ? 'handoffs' : 'discussion', teams: [], runs: [], handoffs: [], busy: false, refreshing: false, focusRevision: 0, pendingFocus: launch.target, eventCursor: 0, eventsBusy: false, graphScale: 'actual', routingErrors: []};
 
 const collection = element('collection-list');
 const detail = element('detail-pane');
@@ -103,20 +106,27 @@ async function refreshRuns(): Promise<void> {
 }
 
 async function refreshRouting(): Promise<void> {
-  const [effective, config, teamRoutes, drivers] = await Promise.all([
+  const methods = ['routing.catalog.effective', 'routing.config.get', 'team.routes.get', 'driver.list'] as const;
+  const [effective, config, teamRoutes, drivers] = await Promise.allSettled([
     rpc<EffectiveCatalogResponse>('routing.catalog.effective', {schemaVersion: 'fishyume.config/v1'}),
     rpc<{config: RoutingConfig}>('routing.config.get', {schemaVersion: 'fishyume.config/v1'}),
     rpc<TeamRoutesResponse>('team.routes.get', {schemaVersion: 'fishyume.config/v1'}),
     rpc<DriverListResponse>('driver.list', {schemaVersion: 'fishyume.config/v1'}),
   ]);
-  state.routingView = effective; state.routingConfig = config.config; state.teamRoutes = teamRoutes; state.drivers = drivers;
+  const results = [effective, config, teamRoutes, drivers];
+  state.routingErrors = results.flatMap((result, index) => result.status === 'rejected' ? [`${methods[index]}: ${errorMessage(result.reason)}`] : []);
+  state.routingView = effective.status === 'fulfilled' ? effective.value : undefined;
+  state.routingConfig = config.status === 'fulfilled' ? config.value.config : undefined;
+  state.teamRoutes = teamRoutes.status === 'fulfilled' ? teamRoutes.value : undefined;
+  state.drivers = drivers.status === 'fulfilled' ? drivers.value : undefined;
   renderRoutingCollection(); renderRoutingDetail();
 }
 
 function renderRoutingCollection(): void {
   element('collection-eyebrow').textContent = '配置'; element('collection-title').textContent = 'Agent 路由';
   element('filter-row').style.display = 'none'; collection.replaceChildren();
-  const drivers = state.drivers; if (!drivers) {collection.append(loading()); return}
+  const drivers = state.drivers; if (!drivers) {collection.append(empty(state.routingErrors.length ? '当前 Engine 未提供路由信息' : '暂无本机 Agent')); return}
+  if (!drivers.drivers.length) {collection.append(empty('未检测到本机 Agent')); return}
   for (const driver of drivers.drivers) {
     const item = div('collection-item route-summary');
     const top = div('item-topline'); top.append(text('span', 'item-title', driver.driver), status(driver.available ? 'available' : 'unavailable'));
@@ -126,27 +136,39 @@ function renderRoutingCollection(): void {
 }
 
 function renderRoutingDetail(): void {
-  const view = state.routingView; const config = state.routingConfig; const teamRoutes = state.teamRoutes; const drivers = state.drivers; if (!view || !config || !teamRoutes || !drivers) return;
+  const view = state.routingView; const teamRoutes = state.teamRoutes; const drivers = state.drivers;
   detail.replaceChildren(); const header = div('detail-header'); const row = div('detail-title-row');
-  const title = document.createElement('div'); title.append(text('span', 'eyebrow', `TEAM ${teamRoutes.catalogHash?.slice(0, 12) || 'UNAVAILABLE'}`), text('h2', 'detail-title', '本机 Agent 与模型路由'), text('div', 'detail-subtitle', `Team 配置修订 ${teamRoutes.config.revision} · Agent 认证由各自 CLI 管理`));
-  const actions = div('header-actions'); actions.append(actionButton('refresh-cw', '刷新 Agent', 'refresh-team-routes'), actionButton('refresh-cw', '刷新模型', 'discover-models'), actionButton('route', '主动探针', 'probe-models', 'primary')); row.append(title, actions); header.append(row); detail.append(header);
-  detail.append(metrics([['本机 Agent', String(drivers.drivers.filter(driver => driver.available).length)], ['Team 路由', String(teamRoutes.routes.filter(route => route.effective).length)], ['Codex 已发现', String(view.routes.filter(route => route.discovered).length)], ['Workflow 可路由', String(view.routes.filter(route => route.routable).length)]]));
+  const title = document.createElement('div'); title.append(text('span', 'eyebrow', `ROUTING · ${teamRoutes?.catalogHash?.slice(0, 12) || view?.catalogHash?.slice(0, 12) || 'LOCAL'}`), text('h2', 'detail-title', '本机 Agent 与模型路由'), text('div', 'detail-subtitle', teamRoutes ? `Team 配置修订 ${teamRoutes.config.revision} · Agent 认证由各自 CLI 管理` : '检查本机 Driver、Team 与 Workflow 的可用路由'));
+  const actions = div('header-actions'); if (teamRoutes) actions.append(actionButton('refresh-cw', '刷新 Agent', 'refresh-team-routes')); if (view) actions.append(actionButton('refresh-cw', '刷新模型', 'discover-models'), actionButton('route', '主动探针', 'probe-models', 'primary')); row.append(title, actions); header.append(row); detail.append(header);
+  detail.append(metrics([['本机 Agent', String(drivers?.drivers.filter(driver => driver.available).length ?? 0)], ['Team 路由', String(teamRoutes?.routes.filter(route => route.effective).length ?? 0)], ['Codex 已发现', String(view?.routes.filter(route => route.discovered).length ?? 0)], ['Workflow 可路由', String(view?.routes.filter(route => route.routable).length ?? 0)]]));
   const content = div('detail-content');
-  const teamSection = div('section routing-table'); teamSection.append(text('h3', 'section-title', 'Team Agent 路由'));
-  for (const route of teamRoutes.routes) {
+  if (state.routingErrors.length) content.append(routingNotice(state.routingErrors));
+  const driverSection = div('section routing-table'); const driverHeading = div('section-title-row'); driverHeading.append(text('h3', 'section-title', '本机 Agent'), text('span', 'section-note', `${drivers?.drivers.length ?? 0} 个 Driver`)); driverSection.append(driverHeading);
+  if (!drivers?.drivers.length) driverSection.append(empty('暂无可显示的本机 Agent'));
+  for (const driver of drivers?.drivers ?? []) {
+    const item = div('route-row driver-route-row'); const identity = div('route-identity'); identity.append(text('strong', '', driver.driver), text('span', 'section-note', `${driver.provider} · ${driver.modelCount} 个模型`));
+    const states = div('route-states'); states.append(stateMark('Team', driver.teamEligible), stateMark('Workflow', driver.workflowEligible), status(driver.available ? 'available' : 'unavailable')); item.append(identity, states); driverSection.append(item);
+  }
+  content.append(driverSection);
+  const teamSection = div('section routing-table'); const teamHeading = div('section-title-row'); teamHeading.append(text('h3', 'section-title', 'Team Agent 路由'), text('span', 'section-note', `${teamRoutes?.routes.length ?? 0} 条`)); teamSection.append(teamHeading);
+  if (!teamRoutes?.routes.length) teamSection.append(empty('暂无 Team 路由'));
+  for (const route of teamRoutes?.routes ?? []) {
     const item = div('route-row'); const identity = div('route-identity'); identity.append(text('strong', '', route.routeId), text('span', 'section-note', `${route.driver} / ${route.provider} / ${route.model}`));
     const states = div('route-states'); states.append(stateMark('已安装', route.driverAvailable), stateMark('已启用', route.enabled), status(route.effective ? 'available' : 'unavailable'));
     const toggle = actionButton(route.enabled ? 'x' : 'check', route.enabled ? '停用' : '启用', 'toggle-team-route', '', route.routeId); item.append(identity, states, toggle); teamSection.append(item);
   }
   content.append(teamSection);
-  const section = div('section routing-table'); section.append(text('h3', 'section-title', 'Codex Workflow 路由'));
-  for (const route of view.routes) {
+  const section = div('section routing-table'); const workflowHeading = div('section-title-row'); workflowHeading.append(text('h3', 'section-title', 'Codex Workflow 路由'), text('span', 'section-note', `${view?.routes.length ?? 0} 条`)); section.append(workflowHeading);
+  if (!view?.routes.length) section.append(empty('暂无 Workflow 路由'));
+  for (const route of view?.routes ?? []) {
     const item = div('route-row'); const identity = div('route-identity'); identity.append(text('strong', '', route.model), text('span', 'section-note', route.recommendedUseCases.join(' · ')));
     const states = div('route-states'); states.append(stateMark('产品画像', route.qualified), stateMark('Codex 发现', route.discovered), stateMark('配置启用', route.enabled), status(route.availability));
     const toggle = actionButton(route.enabled ? 'x' : 'check', route.enabled ? '停用' : '启用', 'toggle-route', '', route.routeId); item.append(identity, states, toggle); section.append(item);
   }
   content.append(section); detail.append(content); wireRoutingActions(); refreshIcons();
 }
+
+function routingNotice(errors: string[]): HTMLElement {const notice = div('routing-notice'); notice.append(text('strong', '', '部分路由能力不可用'), text('p', '', errors.join('\n'))); return notice}
 
 function stateMark(label: string, active: boolean): HTMLElement {return text('span', `status ${active ? 'available' : 'unknown'}`, `${label} ${active ? '是' : '否'}`)}
 
@@ -181,9 +203,22 @@ async function toggleRoute(routeId: string): Promise<void> {
 async function loadRun(runId: string): Promise<void> {
   const view = await rpc<RunGetResponse>('run.get', {runId});
   if (state.selectedRun !== runId) return;
+  if (state.eventRunId !== runId) {state.eventRunId = runId; state.eventCursor = 0; state.lastRunEvent = undefined; state.selectedNode = undefined}
   state.runView = view;
-  renderRunDetail();
+  if (!findWorkflowNode(view.run, state.selectedNode)) state.selectedNode = view.run.topologicalOrder.find(id => findWorkflowNode(view.run, id)) ?? view.run.nodes[0]?.nodeId;
+  renderRunDetail(true);
   if (state.pendingFocus?.kind === 'run' && state.pendingFocus.runId === runId) state.pendingFocus = undefined;
+}
+
+async function pollRunEvents(runId: string): Promise<void> {
+  if (state.eventsBusy || state.busy || state.view !== 'runs' || state.selectedRun !== runId) return;
+  state.eventsBusy = true;
+  try {
+    const response = await rpc<RunEventsResponse>('run.events', {runId, afterSequence: state.eventCursor, limit: 100, waitMs: 1000});
+    if (state.selectedRun !== runId) return;
+    state.eventCursor = Math.max(state.eventCursor, response.nextAfterSequence);
+    if (response.events.length) {state.lastRunEvent = response.events[response.events.length - 1]; await loadRun(runId)}
+  } catch (error) {showError(error)} finally {state.eventsBusy = false}
 }
 
 function renderCollection(): void {
@@ -318,33 +353,218 @@ function renderLinkedRuns(): HTMLElement {
   const section = div('section'); section.append(text('h3', 'section-title', '关联的工作流运行'));
   if (!state.handoffs.length) {section.append(empty('暂无已绑定的交接')); return section}
   const list = div('handoff-list');
-  for (const handoff of state.handoffs) {const item = div('handoff'); item.append(text('h3', '', handoff.goal), text('p', '', handoff.handoffId)); item.addEventListener('click', () => {void inspectHandoff(handoff.handoffId, item)}); list.append(item)}
+  for (const handoff of state.handoffs) {const item = div('handoff'); item.append(text('h3', '', handoff.goal), text('p', '', handoff.handoffId)); item.addEventListener('click', () => {void inspectHandoff(handoff.handoffId, item)}); list.append(item); void hydrateLinkedRun(item, handoff.handoffId)}
   section.append(list); return section;
 }
 
-function renderRunDetail(): void {
+async function hydrateLinkedRun(item: HTMLElement, handoffId: string): Promise<void> {
+  try {
+    const response = await rpc<{binding?: {runId: string}}>('team.handoff.get', {schemaVersion: teamVersion, teamId: state.selectedTeam, handoffId});
+    if (!response.binding || !item.isConnected) return;
+    const button = actionButton('link', `打开运行 ${response.binding.runId}`, 'open-linked-run'); button.addEventListener('click', event => {event.stopPropagation(); openRun(response.binding!.runId)}); item.append(button); refreshIcons();
+  } catch (error) {if (item.isConnected) showError(error)}
+}
+
+function renderRunDetail(preserveScroll = false): void {
   const response = state.runView; if (!response) return; const run = response.run;
+  const previousInspector = detail.querySelector<HTMLElement>('.node-inspector');
+  const previousGraph = detail.querySelector<HTMLElement>('.dag-viewport');
+  const previousScroll = preserveScroll ? {
+    detailTop: detail.scrollTop,
+    inspectorTop: previousInspector?.scrollTop ?? 0,
+    graphTop: previousGraph?.scrollTop ?? 0,
+    graphLeft: previousGraph?.scrollLeft ?? 0,
+  } : undefined;
   detail.replaceChildren();
   const header = div('detail-header'); const row = div('detail-title-row'); const title = document.createElement('div'); title.append(text('span', 'eyebrow', `WORKFLOW · ${run.runId}`), text('h2', 'detail-title', run.workflowName), text('div', 'detail-subtitle', run.project));
   const actions = div('header-actions'); if (run.phase !== 'completed') actions.append(actionButton('x-circle', '取消运行', 'cancel-run', 'danger')); row.append(title, actions); header.append(row); detail.append(header);
-  detail.append(metrics([['阶段', statusLabel(run.phase)], ['结论', statusLabel(run.conclusion ?? 'pending')], ['并发数', String(run.effectiveConcurrency)], ['更新时间', relativeTime(run.updatedAt)]]));
-  const content = div('detail-content'); const section = div('section'); const heading = div('section-title-row'); heading.append(text('h3', 'section-title', '运行拓扑'), text('span', 'section-note', `${run.nodes.length} 个节点`)); section.append(heading);
-  const topology = div('topology'); const layers = run.parallelLayers?.length ? run.parallelLayers : run.topologicalOrder.map(nodeId => [nodeId]);
-  for (let index = 0; index < layers.length; index++) {const layer = div('topology-layer'); layer.append(text('div', 'layer-label', `阶段 ${index + 1}`)); const nodes = div('layer-nodes'); for (const id of layers[index] ?? []) {const node = run.nodes.find(candidate => candidate.nodeId === id); if (node) nodes.append(runNode(node))} layer.append(nodes); topology.append(layer)}
-  section.append(topology); content.append(section); detail.append(content); wireRunActions(); refreshIcons();
+  detail.append(metrics([['阶段', statusLabel(run.phase)], ['结论', statusLabel(run.conclusion ?? 'pending')], ['并发数', String(run.effectiveConcurrency)], ['最近事件', state.lastRunEvent ? `${state.lastRunEvent.type} · ${relativeTime(state.lastRunEvent.timestamp)}` : '等待事件']]));
+  const content = div('detail-content'); const console = div('workflow-console');
+  const graphSection = div('section workflow-graph-section'); const heading = div('section-title-row'); const graphMeta = div('dag-heading-meta'); graphMeta.append(text('span', 'section-note', `${run.nodes.length} 个节点 · ${workflowEdges(run).length} 条依赖边`), graphScaleControl()); heading.append(text('h3', 'section-title', '运行 DAG'), graphMeta); graphSection.append(heading, renderWorkflowGraph(run));
+  const inspectorSection = div('section node-inspector-section'); inspectorSection.append(renderNodeInspector(run));
+  console.append(graphSection, inspectorSection); content.append(console); detail.append(content); wireRunActions(); refreshIcons();
+  if (previousScroll) requestAnimationFrame(() => {
+    detail.scrollTop = previousScroll.detailTop;
+    const inspector = detail.querySelector<HTMLElement>('.node-inspector');
+    if (inspector) inspector.scrollTop = previousScroll.inspectorTop;
+    const graph = detail.querySelector<HTMLElement>('.dag-viewport');
+    if (graph) {graph.scrollTop = previousScroll.graphTop; graph.scrollLeft = previousScroll.graphLeft;}
+  });
 }
 
-function runNode(node: ApplicationNodeView): HTMLElement {
-  const item = div('run-node'); const top = div('participant-topline'); top.append(text('h3', '', node.nodeId), status(node.conclusion ?? node.phase)); item.append(top);
+function renderWorkflowGraph(run: RunGetResponse['run']): HTMLElement {
+  const root = div('workflow-graph');
+  const layout = workflowGraphLayout(run);
+  const related = relatedWorkflowNodeIds(run, state.selectedNode);
+  const hasFocus = related.size > 0;
+  const viewport = div('dag-viewport');
+  const shell = div('dag-canvas-shell');
+  const canvas = div('dag-canvas');
+  canvas.style.width = `${layout.width}px`;
+  canvas.style.height = `${layout.height}px`;
+  canvas.setAttribute('aria-label', `工作流依赖图，共 ${layout.nodes.length} 个节点`);
+
+  for (const stage of layout.stages) {
+    const label = text('span', 'dag-stage-label', `阶段 ${stage.index + 1}`);
+    label.style.left = `${stage.x}px`;
+    label.style.width = `${layout.nodeWidth}px`;
+    canvas.append(label);
+  }
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.classList.add('dag-edge-layer');
+  svg.setAttribute('width', String(layout.width));
+  svg.setAttribute('height', String(layout.height));
+  svg.setAttribute('viewBox', `0 0 ${layout.width} ${layout.height}`);
+  svg.setAttribute('aria-hidden', 'true');
+  const definitions = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+  marker.id = 'workflow-arrowhead';
+  marker.setAttribute('viewBox', '0 0 8 8');
+  marker.setAttribute('refX', '7');
+  marker.setAttribute('refY', '4');
+  marker.setAttribute('markerWidth', '7');
+  marker.setAttribute('markerHeight', '7');
+  marker.setAttribute('orient', 'auto-start-reverse');
+  const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  arrow.setAttribute('d', 'M 0 0 L 8 4 L 0 8 z');
+  marker.append(arrow); definitions.append(marker); svg.append(definitions);
+  for (const edge of layout.edges) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const active = hasFocus && related.has(edge.from) && related.has(edge.to);
+    path.setAttribute('d', edge.path);
+    path.setAttribute('marker-end', 'url(#workflow-arrowhead)');
+    path.dataset.active = String(active);
+    path.dataset.dimmed = String(hasFocus && !active);
+    svg.append(path);
+  }
+  canvas.append(svg);
+  for (const item of layout.nodes) {
+    const node = runNode(item.node, hasFocus && related.has(item.node.nodeId), hasFocus && !related.has(item.node.nodeId));
+    node.style.left = `${item.x}px`;
+    node.style.top = `${item.y}px`;
+    node.style.width = `${layout.nodeWidth}px`;
+    node.style.height = `${layout.nodeHeight}px`;
+    canvas.append(node);
+  }
+  shell.append(canvas); viewport.append(shell); root.append(viewport);
+  requestAnimationFrame(() => {
+    if (!viewport.isConnected) return;
+    const scale = state.graphScale === 'fit' ? Math.min(1, Math.max(.2, (viewport.clientWidth - 24) / layout.width)) : 1;
+    canvas.style.transform = `scale(${scale})`;
+    shell.style.width = `${layout.width * scale}px`;
+    shell.style.height = `${layout.height * scale}px`;
+    viewport.dataset.scale = state.graphScale;
+  });
+  if (hasFocus) root.append(text('p', 'dag-focus-note', '已突出显示所选节点的完整上下游链路'));
+  return root;
+}
+
+function graphScaleControl(): HTMLElement {
+  const root = div('graph-scale-switch');
+  for (const [mode, icon, label] of [['fit', 'maximize-2', '适配画布'], ['actual', 'scan', '实际大小']] as const) {
+    const button = document.createElement('button'); button.type = 'button'; button.className = state.graphScale === mode ? 'is-active' : ''; button.title = label; button.setAttribute('aria-label', label); button.setAttribute('aria-pressed', String(state.graphScale === mode)); const glyph = document.createElement('i'); glyph.dataset.lucide = icon; button.append(glyph); button.addEventListener('click', () => {state.graphScale = mode; renderRunDetail()}); root.append(button);
+  }
+  return root;
+}
+
+function runNode(node: ApplicationNodeView, related = false, dimmed = false): HTMLElement {
+  const item = div(`run-node${state.selectedNode === node.nodeId ? ' is-selected' : ''}`); item.tabIndex = 0; item.setAttribute('role', 'button'); item.setAttribute('aria-pressed', String(state.selectedNode === node.nodeId)); item.dataset.state = safeState(node.conclusion ?? node.phase); item.dataset.related = String(related); item.dataset.dimmed = String(dimmed); item.title = `查看节点 ${node.nodeId}`; item.addEventListener('click', event => {if (!(event.target as HTMLElement).closest('button')) selectNode(node.nodeId)}); item.addEventListener('keydown', event => {if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); selectNode(node.nodeId)}});
+  const top = div('participant-topline'); top.append(text('h3', '', node.nodeId), status(node.conclusion ?? node.phase)); item.append(top);
   const meta = div('node-meta'); meta.append(text('span', '', nodeTypeLabel(node.type)), text('span', '', node.attempt ? `${node.attempt.driver}/${node.attempt.target}` : '尚未开始')); item.append(meta);
   if (node.result?.summary) item.append(text('div', 'node-summary', node.result.summary));
   if (node.diagnostic) item.append(text('div', 'node-summary', node.diagnostic));
+  return item;
+}
+
+function renderNodeInspector(run: RunGetResponse['run']): HTMLElement {
+  const node = findWorkflowNode(run, state.selectedNode);
+  if (!node) return empty('请选择一个节点查看详情');
+  const root = div('node-inspector'); const heading = div('section-title-row'); heading.append(text('h3', 'section-title', '节点详情'), status(node.conclusion ?? node.phase)); root.append(heading);
+  const identity = div('inspector-identity'); identity.append(text('h4', '', node.nodeId), text('span', 'section-note', nodeTypeLabel(node.type))); root.append(identity);
+  root.append(keyValueList([
+    ['阶段', statusLabel(node.phase)], ['结论', statusLabel(node.conclusion ?? 'pending')], ['当前 Attempt', node.currentAttempt ? String(node.currentAttempt) : '尚未启动'], ['并行阶段', node.parallelLayer === undefined ? '未知' : String(node.parallelLayer + 1)],
+  ]));
+  const dependencies = div('inspector-block'); dependencies.append(text('h4', 'inspector-label', '关系'));
+  const upstream = div('inspector-relation'); upstream.append(text('span', 'inspector-sublabel', '上游'));
+  if (node.dependsOn?.length) upstream.append(nodeLinks(node.dependsOn)); else upstream.append(text('span', 'section-note', '无前置依赖'));
+  const dependentIds = run.nodes.filter(candidate => candidate.dependsOn?.includes(node.nodeId)).map(candidate => candidate.nodeId);
+  const downstream = div('inspector-relation'); downstream.append(text('span', 'inspector-sublabel', '下游'));
+  if (dependentIds.length) downstream.append(nodeLinks(dependentIds)); else downstream.append(text('span', 'section-note', '无后续节点'));
+  dependencies.append(upstream, downstream); root.append(dependencies);
+  if (node.reason || node.diagnostic) {const diagnostics = div('inspector-block'); diagnostics.append(text('h4', 'inspector-label', '诊断')); if (node.reason) diagnostics.append(text('div', 'detail-value', statusLabel(node.reason))); if (node.diagnostic) diagnostics.append(text('p', 'inspector-copy', node.diagnostic)); root.append(diagnostics)}
+  if (node.attempt) root.append(renderAttemptDetails(node));
+  if (node.result) root.append(renderResultDetails(node));
+  const actions = renderNodeActions(node); if (actions.childElementCount) {const block = div('inspector-block'); block.append(text('h4', 'inspector-label', '可用操作'), actions); root.append(block)}
+  return root;
+}
+
+function renderAttemptDetails(node: ApplicationNodeView): HTMLElement {
+  const attempt = node.attempt!; const block = div('inspector-block'); block.append(text('h4', 'inspector-label', `Attempt ${attempt.number}`));
+  block.append(keyValueList([['状态', statusLabel(attempt.phase)], ['驱动', attempt.driver], ['目标', attempt.target], ['开始时间', formatTime(attempt.startedAt)], ['更新时间', formatTime(attempt.updatedAt)], ['副作用', attempt.sideEffectStatus ?? '未知']]));
+  if (attempt.routingDecision) block.append(keyValueList([['路由选择', routeLabel(attempt.routingDecision.selected)], ['路由原因', attempt.routingDecision.reasonCodes.join(', ') || '未提供'], ['回退策略', attempt.routingDecision.fallbackPolicy.mode]]));
+  if (attempt.executionProfile) block.append(keyValueList([['推理强度', attempt.executionProfile.reasoningEffort], ['执行模型', routeLabel(attempt.executionProfile.target)]]));
+  if (attempt.routingUsage) block.append(keyValueList([['本次成本', String(attempt.routingUsage.costUnits)], ['累计成本', String(attempt.routingUsage.cumulativeCostUnits)], ['路由序号', String(attempt.routingUsage.routeIndex)]]));
+  if (attempt.failureClass) block.append(text('div', 'detail-value', `失败类别: ${attempt.failureClass}`));
+  if (attempt.context) block.append(renderContextSummary(attempt.context));
+  if (attempt.activity) block.append(renderActivity(attempt.activity));
+  return block;
+}
+
+function renderActivity(activityView: NonNullable<NonNullable<ApplicationNodeView['attempt']>['activity']>): HTMLElement {
+  const activity = div('activity-list');
+  const heading = div('activity-heading');
+  heading.append(text('h4', 'inspector-label', '执行活动'), text('span', 'activity-count', `${activityView.items.length}${activityView.truncated ? '+' : ''} 条`));
+  activity.append(heading);
+  if (activityView.summary) activity.append(text('p', 'activity-summary', activityView.summary));
+  const timeline = div('activity-timeline');
+  for (const [index, item] of activityView.items.entries()) {
+    const row = div('activity-item');
+    row.dataset.state = safeState(item.status);
+    const marker = div('activity-marker'); marker.append(text('span', 'activity-index', String(index + 1))); marker.setAttribute('aria-hidden', 'true');
+    const content = div('activity-content');
+    const meta = div('activity-item-head');
+    meta.append(text('span', 'activity-kind', activityKindLabel(item.kind)), status(item.status));
+    content.append(meta, text('p', 'activity-message', item.message));
+    row.append(marker, content); timeline.append(row);
+  }
+  if (!activityView.items.length) timeline.append(text('div', 'section-note', '暂无可显示的执行活动'));
+  activity.append(timeline);
+  if (activityView.truncated) activity.append(text('div', 'activity-truncated', '活动记录已截断，仅显示最近事件'));
+  return activity;
+}
+
+function activityKindLabel(kind: string): string {
+  const labels: Record<string, string> = {session: '会话', turn: '处理轮次', command: '命令', reasoning: '分析', message: '消息', tool: '工具'};
+  return labels[kind] ?? kind.replaceAll('_', ' ');
+}
+
+function renderContextSummary(context: NonNullable<NonNullable<ApplicationNodeView['attempt']>['context']>): HTMLElement {
+  const block = div('context-summary'); block.append(text('h4', 'inspector-label', '上下文摘要')); block.append(keyValueList([['编译器', context.compilerVersion], ['上下文 Hash', context.hash ?? '未提供'], ['组件数', String(context.components.length)], ['省略项', String(context.omissions?.length ?? 0)], ['已截断', context.truncated ? '是' : '否']]));
+  if (context.memoryUsage) block.append(keyValueList([['Memory 记录数', String(context.memoryUsage.recordIds.length)], ['Memory 已提交', context.memoryUsage.committed ? '是' : '否']]));
+  return block;
+}
+
+function renderResultDetails(node: ApplicationNodeView): HTMLElement {
+  const result = node.result!; const block = div('inspector-block'); block.append(text('h4', 'inspector-label', '节点结果'));
+  if (result.summary) block.append(text('p', 'inspector-copy', result.summary));
+  if (result.decision) block.append(text('div', 'detail-value', `决定: ${result.decision}`));
+  for (const [label, values] of [['产物', result.artifacts], ['检查', result.checks], ['警告', result.warnings]] as const) if (values?.length) {const list = div('inspector-list'); list.append(text('h5', 'inspector-sublabel', label)); for (const value of values) list.append(text('div', 'list-item', value)); block.append(list)}
+  if (result.reason) block.append(text('div', 'detail-value', `原因: ${result.reason}`));
+  if (result.questions?.length && node.phase === 'waiting') block.append(answerForm(node));
+  return block;
+}
+
+function renderNodeActions(node: ApplicationNodeView): HTMLElement {
   const actions = div('node-actions');
   if (node.type === 'approval' && node.phase === 'waiting') actions.append(actionButton('check', '批准', 'approve-node', 'primary', node.nodeId), actionButton('x', '拒绝', 'reject-node', 'danger', node.nodeId));
   if (node.phase === 'completed' && (node.conclusion === 'failed' || node.conclusion === 'indeterminate')) actions.append(actionButton('rotate-ccw', '重试', 'retry-node', '', node.nodeId));
-  if (node.result?.questions?.length && node.phase === 'waiting') item.append(answerForm(node));
-  if (actions.childElementCount) item.append(actions); return item;
+  return actions;
 }
+
+function keyValueList(values: Array<[string, string]>): HTMLElement {const list = div('key-value-list'); for (const [label, value] of values) {const row = div('key-value-row'); row.append(text('span', 'key-value-label', label), text('span', 'detail-value', value)); list.append(row)} return list}
+function nodeLinks(nodeIds: string[]): HTMLElement {const list = div('inspector-links'); for (const nodeId of nodeIds) {const button = document.createElement('button'); button.className = 'link-button node-link'; button.textContent = nodeId; button.addEventListener('click', () => selectNode(nodeId)); list.append(button)} return list}
+function routeLabel(route: {driver: string; provider: string; model: string}): string {return `${route.driver}/${route.provider}/${route.model}`}
 
 function answerForm(node: ApplicationNodeView): HTMLElement {
   const form = document.createElement('form'); form.className = 'answer-form'; form.dataset.nodeId = node.nodeId; form.dataset.attempt = String(node.currentAttempt ?? node.attempt?.number ?? 0);
@@ -406,8 +626,9 @@ async function mutate(key: string, method: string, request: Record<string, unkno
 }
 
 function selectTeam(id: string): void {state.selectedTeam = id; state.tab = 'discussion'; renderCollection(); detail.replaceChildren(loading()); void loadTeam(id).catch(showError)}
-function selectRun(id: string): void {state.selectedRun = id; renderCollection(); detail.replaceChildren(loading()); void loadRun(id).catch(showError)}
+function selectRun(id: string): void {state.selectedRun = id; state.selectedNode = undefined; state.eventRunId = undefined; state.eventCursor = 0; state.lastRunEvent = undefined; state.graphScale = 'actual'; renderCollection(); detail.replaceChildren(loading()); void loadRun(id).catch(showError)}
 function openRun(id: string): void {state.view = 'runs'; state.selectedRun = id; updateViewControls(); void refresh()}
+function selectNode(nodeId: string): void {if (!state.runView || !findWorkflowNode(state.runView.run, nodeId)) return; state.selectedNode = nodeId; renderRunDetail()}
 
 function updateViewControls(): void {
   const parameters = new URLSearchParams(location.hash.slice(1));
@@ -419,11 +640,6 @@ function updateViewControls(): void {
 
 function syncViewControls(): void {
   for (const button of document.querySelectorAll<HTMLButtonElement>('.view-tab')) button.classList.toggle('is-active', button.dataset.view === state.view);
-}
-
-function messageContent(message: TeamMessage): string {
-  if (message.kind === 'host_message') return message.content;
-  try {const contribution = JSON.parse(message.content) as {contentMarkdown?: string}; return contribution.contentMarkdown ?? message.content} catch {return message.content}
 }
 
 function metrics(values: Array<[string, string]>): HTMLElement {const root = div('metrics'); for (const [label, value] of values) {const item = div('metric'); item.append(text('span', 'metric-label', label), text('span', 'metric-value', value)); root.append(item)} return root}
@@ -446,11 +662,12 @@ function relativeTime(value: string): string {const seconds = Math.round((new Da
 function renderEmptyDetail(icon: string, label: string): void {detail.replaceChildren(); const root = div('detail-empty'); const box = document.createElement('div'); const i = document.createElement('i'); i.dataset.lucide = icon; box.append(i, text('div', '', label)); root.append(box); detail.append(root); refreshIcons()}
 function setButtonsDisabled(disabled: boolean): void {for (const button of detail.querySelectorAll<HTMLButtonElement>('button')) button.disabled = disabled}
 function showError(error: unknown): void {if (error instanceof ApiError) {connection.className = 'connection-state is-online'; connectionLabel.textContent = '本地控制面'} else {connection.className = 'connection-state is-error'; connectionLabel.textContent = '连接异常'} const toast = text('div', 'toast', error instanceof Error ? error.message : String(error)); element('toast-region').append(toast); setTimeout(() => toast.remove(), 7000)}
-function refreshIcons(): void {createIcons({icons: {MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox, Route}})}
+function errorMessage(error: unknown): string {return error instanceof Error ? error.message : String(error)}
+function refreshIcons(): void {createIcons({icons: {MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox, Route, Maximize2, Scan}})}
 
 for (const button of document.querySelectorAll<HTMLButtonElement>('.view-tab')) button.addEventListener('click', () => {state.view = button.dataset.view as View; state.filter = 'all'; updateViewControls(); void refresh()});
 for (const button of document.querySelectorAll<HTMLButtonElement>('.filter')) button.addEventListener('click', () => {state.filter = button.dataset.filter as Filter; for (const candidate of document.querySelectorAll('.filter')) candidate.classList.toggle('is-active', candidate === button); renderCollection()});
 element('refresh-button').addEventListener('click', () => void refresh());
 document.addEventListener('visibilitychange', () => {if (!document.hidden) void refresh()});
-setInterval(() => {if (!document.hidden) {void refresh(); void pollFocus()}}, 3000);
+setInterval(() => {if (!document.hidden) {void refresh(); void pollFocus(); if (state.view === 'runs' && state.selectedRun) void pollRunEvents(state.selectedRun)}}, 3000);
 refreshIcons(); syncViewControls(); collection.append(loading()); detail.append(loading()); void refresh();

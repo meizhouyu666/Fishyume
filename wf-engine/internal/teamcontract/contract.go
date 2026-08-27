@@ -106,6 +106,18 @@ const (
 	ContributionUnable    ContributionStatus = "unable"
 )
 
+// ContributionType identifies the stable first-party result renderers. The
+// payload remains JSON so clients can evolve their presentation independently.
+type ContributionType string
+
+const (
+	ContributionReport   ContributionType = "report"
+	ContributionDecision ContributionType = "decision"
+	ContributionArtifact ContributionType = "artifact"
+	ContributionData     ContributionType = "data"
+	ContributionQuestion ContributionType = "question"
+)
+
 type ActionType string
 
 const (
@@ -240,7 +252,9 @@ type TeamEventV1 struct {
 type ContributionV1 struct {
 	SchemaVersion   string             `json:"schemaVersion"`
 	Status          ContributionStatus `json:"status"`
-	ContentMarkdown string             `json:"contentMarkdown"`
+	ResultType      ContributionType   `json:"resultType,omitempty"`
+	Output          json.RawMessage    `json:"output,omitempty"`
+	ContentMarkdown string             `json:"contentMarkdown,omitempty"`
 	Warnings        []string           `json:"warnings,omitempty"`
 	OpenQuestions   []string           `json:"openQuestions,omitempty"`
 	UsageEstimates  *UsageEstimateV1   `json:"usageEstimates,omitempty"`
@@ -651,8 +665,25 @@ func ValidateContribution(value ContributionV1) error {
 	if value.Status != ContributionCompleted && value.Status != ContributionPartial && value.Status != ContributionUnable {
 		return fmt.Errorf("unsupported contribution status %q", value.Status)
 	}
-	if err := validateBounded(value.ContentMarkdown, MaxMessageBytes, "contribution content"); err != nil {
-		return err
+	if value.ContentMarkdown == "" && len(bytes.TrimSpace(value.Output)) == 0 {
+		return fmt.Errorf("contribution must include contentMarkdown or output")
+	}
+	if value.ContentMarkdown != "" {
+		if err := validateBounded(value.ContentMarkdown, MaxMessageBytes, "contribution content"); err != nil {
+			return err
+		}
+	}
+	if len(value.Output) > 0 {
+		switch value.ResultType {
+		case ContributionReport, ContributionDecision, ContributionArtifact, ContributionData, ContributionQuestion:
+		default:
+			return fmt.Errorf("unsupported contribution resultType %q", value.ResultType)
+		}
+		if len(value.Output) > MaxMessageBytes || !json.Valid(value.Output) || string(bytes.TrimSpace(value.Output)) == "null" {
+			return fmt.Errorf("contribution output must be valid JSON within %d bytes", MaxMessageBytes)
+		}
+	} else if value.ResultType != "" {
+		return fmt.Errorf("contribution resultType requires output")
 	}
 	for _, warning := range value.Warnings {
 		if err := validateBounded(warning, MaxWarningBytes, "warning"); err != nil {

@@ -58,7 +58,7 @@ export function renderTeam(view: TeamGetResponse, messages: TeamMessagesResponse
     let contribution: Contribution | undefined;
     try {contribution = JSON.parse(message.content) as Contribution} catch { /* Engine contract validation owns malformed data */ }
     lines.push(`${participant?.label ?? message.actor}  ${participant?.modelId ?? ''}  ${contribution?.status ?? 'invalid'}`.trimEnd());
-    lines.push(contribution?.contentMarkdown ?? '[invalid contribution]');
+    lines.push(renderContributionContent(contribution));
     for (const warning of contribution?.warnings ?? []) lines.push(`Warning: ${warning}`);
     for (const question of contribution?.openQuestions ?? []) lines.push(`Open question: ${question}`);
     lines.push('');
@@ -69,6 +69,16 @@ export function renderTeam(view: TeamGetResponse, messages: TeamMessagesResponse
     lines.push(`${participant?.label ?? turn.participantId}  ${turn.modelId}  ${turn.state}${turn.diagnostic ? `: ${turn.diagnostic}` : ''}`);
   }
   return `${lines.join('\n').trimEnd()}\n`;
+}
+
+function renderContributionContent(contribution: Contribution | undefined): string {
+  if (!contribution) return '[invalid contribution]';
+  if (contribution.contentMarkdown) return contribution.contentMarkdown;
+  if (contribution.resultType && contribution.output !== undefined) {
+    const rendered = typeof contribution.output === 'string' ? contribution.output : JSON.stringify(contribution.output, null, 2);
+    return `[${contribution.resultType}]\n${rendered}`;
+  }
+  return '[empty contribution]';
 }
 
 export class TeamStartCommand extends Command {

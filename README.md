@@ -38,6 +38,8 @@ Host Agent
   Handoff 提升为 Workflow。
 - **Web**：Control Plane 的浏览器投影，用于查看 Team、Handoff 和 Run；它不是
   独立的执行引擎。
+- **Team 结果**：贡献以结构化 `resultType/output` envelope 为主，兼容旧的
+  `contentMarkdown`；完成状态仍由 `status` 决定。
 
 ## 快速开始
 
@@ -176,6 +178,8 @@ Fishyume 已完成 M6 核心合同冻结、M7 Team/Web 能力和 M7.9 Team 零�
 - [M6 核心合同冻结](./docs/fishyume-m6-core-contract-freeze.md)
 - [M7.9 开发方案](./docs/fishyume-m7.9-team-zero-config-routing-plan.md)
 - [M7.9 验收记录](./docs/fishyume-m7.9-acceptance.md)
+- [Web Workflow Operator Console](./docs/fishyume-web-workflow-operator-console.md)
+- [Team 结构化贡献协议](./docs/fishyume-team-structured-contributions.md)
 
 开发者验证命令和包发布说明见 [wf/README.md](./wf/README.md) 与
 [开发与验证](./docs/fishyume-development.md)。

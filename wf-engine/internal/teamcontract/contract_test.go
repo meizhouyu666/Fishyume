@@ -105,6 +105,21 @@ func TestValidateContributionAndMessageOwnershipShape(t *testing.T) {
 	}
 }
 
+func TestValidateStructuredContribution(t *testing.T) {
+	contribution := ContributionV1{SchemaVersion: SchemaVersion, Status: ContributionCompleted, ResultType: ContributionDecision, Output: json.RawMessage(`{"decision":"adopt-a","confidence":0.9}`)}
+	if err := ValidateContribution(contribution); err != nil {
+		t.Fatal(err)
+	}
+	contribution.ResultType = "unknown"
+	if err := ValidateContribution(contribution); err == nil {
+		t.Fatal("unknown contribution result type was accepted")
+	}
+	contribution = ContributionV1{SchemaVersion: SchemaVersion, Status: ContributionCompleted}
+	if err := ValidateContribution(contribution); err == nil {
+		t.Fatal("empty contribution was accepted")
+	}
+}
+
 func TestValidateAllFrozenActionShapes(t *testing.T) {
 	base := TeamActionV1{SchemaVersion: SchemaVersion, ActionID: "action-1", TeamID: "team-1", ExpectedStateVersion: 2}
 	valid := []TeamActionV1{

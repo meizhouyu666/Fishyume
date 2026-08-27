@@ -46,10 +46,14 @@ function stageCurrentEngine() {
 }
 
 function invoke(cli, args, allowed = [0]) {
+  const smokeEnv = {...process.env, FISHYUME_STATE_DIR: stateRoot, WF_STATE_DIR: stateRoot};
+  // The packed install gate must not inherit a developer's legacy route file;
+  // that file is intentionally an opt-in compatibility import.
+  delete smokeEnv.FISHYUME_AGENT_ROUTES_FILE;
   const result = spawnSync(process.execPath, [cli, ...args], {
     encoding: 'utf8',
     windowsHide: true,
-    env: {...process.env, FISHYUME_STATE_DIR: stateRoot, WF_STATE_DIR: stateRoot},
+    env: smokeEnv,
   });
   if (!allowed.includes(result.status)) throw new Error(`fishyume ${args.join(' ')} failed (${result.status}): ${result.stderr || result.stdout}`);
   return `${result.stdout ?? ''}${result.stderr ?? ''}`;
@@ -112,6 +116,20 @@ function stopControlPlane() {
     }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
   }
+  // Windows does not reliably deliver SIGTERM to a detached Go process.
+  // The owner record was validated above, so force only this verified process
+  // tree and wait briefly for filesystem handles to be released.
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/PID', String(owner.pid), '/T', '/F'], {encoding: 'utf8', windowsHide: true});
+    const forcedDeadline = Date.now() + 3000;
+    while (Date.now() < forcedDeadline) {
+      try {process.kill(owner.pid, 0)} catch (error) {
+        if (error?.code === 'ESRCH') return;
+        throw error;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
   throw new Error(`temporary Fishyume Control Plane ${owner.pid} did not exit after termination`);
 }
 
@@ -131,7 +149,7 @@ try {
   const compatibleSetup = invoke(cli, ['setup', 'codex', '--print']);
   if (compatibleSetup !== setup) throw new Error('historical setup codex alias does not match product setup');
   const routing = JSON.parse(invoke(cli, ['machine', 'routing.catalog', '--params', '{}']));
-  if (routing.apiVersion !== 'fishyume.application/v1' || routing.dynamicAvailability !== false || !routing.catalogHash || !Array.isArray(routing.catalog?.models) || routing.catalog.models.length < 1) throw new Error('installed routing catalog Application surface is incomplete');
+  if (routing.apiVersion !== 'fishyume.application/v1' || routing.dynamicAvailability !== true || !routing.catalogHash || !Array.isArray(routing.catalog?.models) || routing.catalog.models.length < 1) throw new Error('installed routing catalog Application surface is incomplete');
   const demo = invoke(cli, ['demo', '--width', '80', '--ascii']);
   if (!/阶段 2 · 并行 2/.test(demo) || !/依赖 plan/.test(demo) || !/需要人工审批/.test(demo)) throw new Error(`installed offline topology demo is incomplete: ${demo}`);
   const exampleList = invoke(cli, ['examples', 'list']);

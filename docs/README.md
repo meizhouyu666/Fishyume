@@ -61,6 +61,7 @@ links and review evidence stay stable.
 ## Operator and developer guides
 
 - [Team Agent routes: Codex, Claude Code, and OpenCode](fishyume-team-agent-routes.md)
+- [Team structured contributions](fishyume-team-structured-contributions.md)
 - [M7.9 Team zero-configuration routing plan](fishyume-m7.9-team-zero-config-routing-plan.md)
 - [M7.7 live three-Agent test and repair acceptance](fishyume-m7.7-live-team-repair-acceptance.md)
 - [Workflow authoring and Node granularity](fishyume-workflow-authoring.md)

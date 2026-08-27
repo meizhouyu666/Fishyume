@@ -11,6 +11,7 @@ import (
 )
 
 func TestTeamRoutesAutoDiscoverPersistAndMutate(t *testing.T) {
+	t.Setenv(routing.AgentRoutesFileEnv, "")
 	bin := t.TempDir()
 	writeDiscoveryFixture(t, bin, "codex")
 	t.Setenv("PATH", bin)
@@ -67,6 +68,7 @@ func TestTeamRoutesAutoDiscoverPersistAndMutate(t *testing.T) {
 }
 
 func TestTeamRoutesRemainInspectableWithoutEnoughDrivers(t *testing.T) {
+	t.Setenv(routing.AgentRoutesFileEnv, "")
 	bin := t.TempDir()
 	t.Setenv("PATH", bin)
 	for _, name := range []string{"CODEX", "CLAUDE", "OPENCODE"} {

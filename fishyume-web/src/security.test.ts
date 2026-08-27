@@ -31,6 +31,7 @@ test('RPC envelope is strict, bounded, and method allowlisted', () => {
   const valid = decodeRpcEnvelope(Buffer.from(JSON.stringify({method: 'team.list', params: {schemaVersion: 'fishyume.team/v1'}})));
   assert.equal(valid.method, 'team.list');
   assert.equal(allowedMethods.has('run.action'), true);
+  assert.equal(allowedMethods.has('run.events'), true);
   assert.equal(allowedMethods.has('routing.config.update'), true);
   assert.equal(allowedMethods.has('driver.models.probe'), true);
   assert.equal(allowedMethods.has('team.routes.refresh'), true);

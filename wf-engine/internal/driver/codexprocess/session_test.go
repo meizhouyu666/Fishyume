@@ -12,6 +12,7 @@ import (
 
 	"wf.local/wf-engine/internal/sessiondriver"
 	"wf.local/wf-engine/internal/sessiondriver/contracttest"
+	"wf.local/wf-engine/internal/teamcontract"
 )
 
 func newSessionFixture(t *testing.T) (*SessionAdapter, Config, string, string) {
@@ -164,6 +165,21 @@ func TestCodexSessionWrapsMarkdownAsContribution(t *testing.T) {
 	}
 	if contribution.SchemaVersion != "fishyume.team/v1" || contribution.Status != "completed" || contribution.ContentMarkdown != "# Quiet operations\n\nUse neutral surfaces." {
 		t.Fatalf("wrapped contribution=%+v", contribution)
+	}
+}
+
+func TestCodexSessionPreservesStructuredContribution(t *testing.T) {
+	structured := `{"schemaVersion":"fishyume.team/v1","status":"completed","resultType":"artifact","output":{"path":"report.json","kind":"file"}}`
+	state, output, diagnostic := mapAppTurn(appTurn{Status: "completed", Items: []appThreadItem{{Type: "agentMessage", Text: structured}}}, 32*1024)
+	if state != sessiondriver.TurnResponded || diagnostic != "" {
+		t.Fatalf("structured contribution state=%q diagnostic=%q", state, diagnostic)
+	}
+	var contribution teamcontract.ContributionV1
+	if err := json.Unmarshal([]byte(output), &contribution); err != nil {
+		t.Fatal(err)
+	}
+	if contribution.ResultType != teamcontract.ContributionArtifact || string(contribution.Output) != `{"path":"report.json","kind":"file"}` {
+		t.Fatalf("structured contribution=%+v", contribution)
 	}
 }
 
