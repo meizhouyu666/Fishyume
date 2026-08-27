@@ -29,6 +29,8 @@ fishyume team start      启动默认双模型只读 Panel
 fishyume team list       列出持久化 Team
 fishyume team show <id>  查看贡献和部分失败
 fishyume team cancel <id> 确认取消 Team
+fishyume team routes      查看自动发现和持久化的 Team Agent 路由
+fishyume team routes refresh 重新发现 Codex、Claude Code 和 OpenCode
 fishyume team handoff create <team-id> --goal <goal>
 fishyume team handoff list <team-id>
 fishyume team handoff show <team-id> <handoff-id>
@@ -63,7 +65,7 @@ Handoff create 默认选择全部参与者贡献，也可重复传入 `--message
 
 ## 支持范围
 
-当前正式执行组合是 `codex + local`。产品支持一轮只读 Team Panel、不可变 Handoff 和显式 Workflow promotion，以及 Agent/Approval Workflow、并行与依赖、持久化恢复、Context/Memory 绑定、确定性路由预检和中文 Operator Console。多轮 Session、follow-up、单 turn 取消、Web/Desktop 客户端、动态 Driver 发现和第三方 Driver 不在当前版本范围内。
+Workflow 当前正式执行组合是 `codex + local`。Team Panel 与可恢复 TeamSession 支持自动发现和持久路由的 Codex、Claude Code、OpenCode，并提供 follow-up、单 Turn 取消、Web 投影、不可变 Handoff 和显式 Workflow promotion。产品同时包含 Agent/Approval Workflow、并行与依赖、持久化恢复、Context/Memory 绑定、确定性路由预检和中文 Operator Console。Fishyume 不管理第三方 Agent 的安装、认证或 Provider 配置。
 
 ## License
 

@@ -5,6 +5,7 @@ export const configApiVersion = 'fishyume.config/v1' as const;
 export const routingMethods = [
   'driver.list', 'driver.models.discover', 'driver.models.probe',
   'routing.config.get', 'routing.config.update', 'routing.availability', 'routing.catalog.effective',
+  'team.routes.get', 'team.routes.refresh', 'team.routes.upsert', 'team.routes.remove',
 ] as const;
 export type RoutingMethod = typeof routingMethods[number];
 export type AvailabilityStatus = 'available' | 'unavailable' | 'unknown';
@@ -12,7 +13,7 @@ export type AvailabilityStatus = 'available' | 'unavailable' | 'unknown';
 export interface ModelInfo {id: string; model: string; displayName: string; description?: string; hidden: boolean; default: boolean; supportedReasoningEfforts: string[]; defaultReasoningEffort: string; inputModalities?: string[]; serviceTiers?: string[]; defaultServiceTier?: string; supportsPersonality: boolean; supportsMultiAgentMode: boolean}
 export interface ProductProfile {routeId: string; model: string; qualified: boolean; defaultReasoningEffort: string; reasoningEfforts: string[]; recommendedUseCases: string[]}
 export interface RouteView extends ProductProfile {discovered: boolean; enabled: boolean; availability: AvailabilityStatus; routable: boolean; diagnostic?: string}
-export interface DriverListResponse {schemaVersion: typeof configApiVersion; drivers: Array<{driver: string; provider: string; workflowEligible: boolean; modelCount: number; lastDiscoveredAt?: string}>}
+export interface DriverListResponse {schemaVersion: typeof configApiVersion; drivers: Array<{driver: string; provider: string; workflowEligible: boolean; teamEligible: boolean; available: boolean; executable?: string; diagnostic?: string; modelCount: number; lastDiscoveredAt?: string}>}
 export interface DiscoveryResponse {schemaVersion: typeof configApiVersion; driver: string; observedAt: string; models: ModelInfo[]; routes: RouteView[]}
 export interface AvailabilityEntry {routeId: string; model: string; status: AvailabilityStatus; reasoningEffort?: string; observedAt?: string; expiresAt?: string; diagnostic?: string}
 export interface ProbeResponse {schemaVersion: typeof configApiVersion; entries: AvailabilityEntry[]; catalogHash: string}
@@ -21,6 +22,13 @@ export interface ConfigGetResponse {schemaVersion: typeof configApiVersion; conf
 export interface ConfigUpdateResponse {schemaVersion: typeof configApiVersion; config: RoutingConfig; replayed: boolean}
 export interface AvailabilityResponse {schemaVersion: typeof configApiVersion; entries: AvailabilityEntry[]}
 export interface EffectiveCatalogResponse {schemaVersion: typeof configApiVersion; source: string; catalogHash: string; catalog: RoutingCatalog; routes: RouteView[]}
+export type TeamRouteSource = 'builtin' | 'user' | 'legacy_import';
+export interface TeamRouteSetting {routeId: string; driver: 'codex' | 'claude' | 'opencode'; provider: string; model: string; enabled: boolean; source: TeamRouteSource}
+export interface TeamRouteConfig {schemaVersion: typeof configApiVersion; revision: number; routes: TeamRouteSetting[]; updatedAt: string}
+export interface TeamDriverStatus {driver: string; available: boolean; executable?: string; diagnostic?: string; observedAt: string}
+export interface TeamRouteView extends TeamRouteSetting {driverAvailable: boolean; effective: boolean; diagnostic?: string}
+export interface TeamRoutesResponse {schemaVersion: typeof configApiVersion; config: TeamRouteConfig; drivers: TeamDriverStatus[]; routes: TeamRouteView[]; catalogHash?: string}
+export interface TeamRoutesMutationResponse extends TeamRoutesResponse {replayed: boolean}
 
 export interface RoutingResponses {
   'driver.list': DriverListResponse;
@@ -30,6 +38,10 @@ export interface RoutingResponses {
   'routing.config.update': ConfigUpdateResponse;
   'routing.availability': AvailabilityResponse;
   'routing.catalog.effective': EffectiveCatalogResponse;
+  'team.routes.get': TeamRoutesResponse;
+  'team.routes.refresh': TeamRoutesResponse;
+  'team.routes.upsert': TeamRoutesMutationResponse;
+  'team.routes.remove': TeamRoutesMutationResponse;
 }
 
 export interface RoutingError {code: string; message: string}
@@ -44,4 +56,3 @@ export async function callRouting<M extends RoutingMethod>(client: EngineClient,
     throw error;
   }
 }
-

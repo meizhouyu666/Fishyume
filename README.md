@@ -1,290 +1,185 @@
 # Fishyume
 
-Fishyume 是一个本地、可恢复的 AI Agent 协作与工作流控制台。
+Fishyume 是一个面向 AI Agent 的本地协作控制平面。
 
-它提供两种明确的投入级别：先用只读 Team Panel 让多个模型独立比较方案；任务确定后，再用可恢复 Workflow 组织 Agent 步骤和人工决策。Agent 负责执行，Fishyume 负责调度、持久化、恢复和安全动作。
+它不替代 Codex、Claude Code 或 OpenCode，也不直接调用模型 API。Fishyume
+负责把一个复杂任务组织成可观察、可恢复、可审计的协作过程；具体的模型
+调用、登录状态和 Provider 配置仍由 Agent 自己负责。
 
-## 你可以用它做什么
+## 适合什么任务
 
-- 把计划、研究、实现、验证等步骤组织成有依赖关系的 Workflow
-- 不编写 YAML 或 DAG，直接让两个不同模型给出独立方案
-- 保留 Team 的贡献、部分失败和取消证据，同时不创建虚假的 Run
-- 并行运行互不依赖的 Agent 节点，再在审批节点汇合
-- 在 Agent 等待审批或补充信息时从终端接管
-- 在进程崩溃、Control Plane 重启或客户端断开后继续同一个 Run
-- 通过 MCP 让 Codex 等 Host Agent 创建和管理 Workflow
-- 通过 Machine CLI 在脚本中使用同一套 Application API
-- 在运行前查看确定性的路由预览、预算和 fallback 边界
+Fishyume 适合需要多个步骤、并行分析、人工确认或中途恢复的长程任务，例如：
 
-Team Panel 与 TeamSession 正式支持 Codex、Claude Code 和 OpenCode；Workflow Node 当前仍使用 `codex + local`。Fishyume 不直接调用模型 API，也不内置模型 Tool loop：Host Agent 选择可信 Agent Route，外部 Agent Harness 负责模型调用和会话，Fishyume 负责只读编排、持久化、恢复和安全动作。
+- 让多个 Agent 独立比较实现方案，再由 Host Agent 汇总决策
+- 将已确认的计划拆成有依赖关系的实现、审查和验证阶段
+- 在 Agent 等待输入、需要批准或进程重启后继续同一个任务
+- 保留 Team 贡献、失败证据、Handoff 和最终 Workflow Run
 
-## 当前状态
+简单的一次性问题可以直接交给 Host Agent；只有在任务需要协作或持久化时，
+才需要启动 Fishyume。
 
-当前版本：`0.2.1-alpha.1`。项目处于 Developer Preview 阶段，尚未发布 npm 正式包或 GitHub Release。Windows + Codex 是参考体验，Ubuntu 也有安装和 CI 验证。
+## 产品结构
 
-## 五分钟开始
+```text
+Host Agent
+    |
+    +-- Team Panel / TeamSession   先比较方案、收集证据
+    |
+    +-- Workflow                   再执行已确认的长程计划
+            |
+            +-- Codex Workflow Nodes
+```
 
-### Windows Developer Preview
+- **Team**：面向前期探索。多个 Agent 独立贡献方案，支持 Panel、可恢复的
+  Session、follow-up、取消和 Handoff。
+- **Workflow**：面向正式执行。使用有依赖关系的 Codex Node，支持审批、重试、
+  并行调度、Context/Memory、事件和崩溃恢复。
+- **Host Agent**：负责和用户沟通、选择 Team Route、确认方案，并决定何时把
+  Handoff 提升为 Workflow。
+- **Web**：Control Plane 的浏览器投影，用于查看 Team、Handoff 和 Run；它不是
+  独立的执行引擎。
 
-环境要求：Node.js 24+、Go 1.26+、已安装的 Codex CLI。Claude Code 和 OpenCode 仅在 Team 路由实际使用它们时需要安装。仓库根目录执行：
+## 快速开始
+
+当前版本是 `0.2.1-alpha.1`，仍属于 Developer Preview，尚未发布为稳定 npm
+产品。源码安装需要 Node.js 24+、Go 1.26+，以及你准备使用的 Agent CLI。
+
+在仓库根目录运行：
 
 ```powershell
 .\install-fishyume.ps1
 ```
 
-如果 npm 需要代理，可以显式传入：
-
-```powershell
-.\install-fishyume.ps1 -Proxy "http://127.0.0.1:7897"
-```
-
-安装后连接 Codex 并检查环境：
+安装完成后，先让 Fishyume 配置自己的 Codex MCP 入口并检查本机环境：
 
 ```powershell
 fishyume setup
-fishyume doctor --project "E:\project"
+fishyume doctor
 ```
 
-`fishyume setup codex` 仍是兼容写法。setup 只修改 Fishyume 自己的 Codex MCP 配置，不会改动其他 MCP、Provider 或认证信息。
-
-### 检查 Workflow 模型路由
-
-Fishyume 会读取本机 Codex Agent 暴露的模型列表，但“已发现”不等于当前上游可以实际执行。首次使用或上游发生变化时，先刷新发现结果：
+`fishyume setup` 会自动发现本机的 Codex、Claude Code 和 OpenCode，并创建默认
+Team Route。安装新的 Agent 后再次运行：
 
 ```powershell
-fishyume drivers inspect --refresh
-fishyume routing show
+fishyume team routes refresh
+fishyume team routes
 ```
 
-需要验证真实连通性时再运行主动探针。探针会为每个已启用、已发现的产品路由启动一次最小只读 Codex 请求，因此会产生少量模型用量：
+不需要手写 JSON，也不需要设置 `FISHYUME_AGENT_ROUTES_FILE`。旧环境变量仅保留
+为一次性兼容导入方式。
+
+## 使用 Team 探索方案
+
+让两个默认 Codex 角色比较方案：
 
 ```powershell
-fishyume routing refresh --probe
-fishyume doctor --project "E:\project"
+fishyume team start --project "E:\project" `
+  "Compare two approaches for this change"
 ```
 
-当前 Workflow 产品画像覆盖 `gpt-5.6-sol`、`gpt-5.6-terra` 和 `gpt-5.6-luna`。实际路由只会从 Fishyume 已认证、Codex 已发现、配置已启用且探针可用的交集中选择；上游只开放其中一个模型时，其余模型失败不会阻止可用模型继续工作。持久配置可通过 `fishyume routing enable|disable <model-or-route>` 修改，配置文件不保存 API Key、Base URL 或其他凭据。
-
-### 运行与接管
-
-先运行一个默认双 Agent 视角、只读的比较 Panel：
+也可以使用已发现的 Claude Code 或 OpenCode Route：
 
 ```powershell
-fishyume team start "Compare two approaches for this change"
+fishyume team start --project "E:\project" `
+  --participant claude/default/default:architect `
+  --participant opencode/default/default:reviewer `
+  "Compare two approaches for this change"
 ```
 
-Panel 默认等待两个贡献完成并打印结果。也可以后台启动、查看或确认取消：
+查看后台 Team：
 
 ```powershell
-fishyume team start --detach "Compare two approaches"
 fishyume team list
 fishyume team show <team-id>
 fishyume team cancel <team-id>
 ```
 
-显式选择 Agent Route 和角色（以下路由来自 `docs/examples/agent-routes.json`）：
+探索结论确认后，创建不可变 Handoff：
 
 ```powershell
-fishyume team start `
-  --project "E:\project" `
-  --participant claude/default/sonnet:architect `
-  --participant opencode/deepseek/deepseek-chat:reviewer `
-  "Compare two approaches"
-```
-
-Agent Route 文件只保存 Driver、可信 Profile 名称和模型绑定，不保存 API Key、Base URL 或其他凭据。配置方法见 [Team Agent Routes](./docs/fishyume-team-agent-routes.md)。
-
-Team 始终使用只读 workspace。按 `Ctrl+C` 只会与观察过程分离，不会取消参与者。
-
-接受探索结论后，可以把选中的贡献冻结为 Handoff；未传 `--message` 时默认选择该 Team 的全部参与者贡献：
-
-```powershell
-fishyume team handoff create <team-id> --goal "Implement the accepted design" `
+fishyume team handoff create <team-id> `
+  --goal "Implement the accepted design" `
   --decision "Use the smaller design" `
-  --constraint "Keep public Run contracts unchanged" `
   --acceptance "All repository gates pass"
-fishyume team handoff list <team-id>
-fishyume team handoff show <team-id> <handoff-id>
 ```
 
-Handoff 只保存不可变的探索证据，不会创建 Run。Host Agent 根据它编写并预检 `fishyume/v2` Workflow，用户确认并执行 `run.start` 后，再显式绑定已有 Run：
+Handoff 只保存探索证据，不会自动创建或启动 Workflow。Host Agent 应先生成并
+验证 `fishyume/v2` Workflow，经用户确认后再执行。
+
+## 使用 Workflow 执行计划
+
+Workflow 适合已经确定目标、边界和验收标准的长程任务。一个 Node 应代表一个
+完整的 Agent 工作包，例如“完成一个领域的实现并提交验证结果”，而不是把读文件、
+写计划、编辑代码和测试机械地拆成多个 Node。
+
+常用命令：
 
 ```powershell
-fishyume team handoff bind <team-id> <handoff-id> <run-id>
+fishyume run --project "E:\project" "Implement the accepted design"
+fishyume status <run-id>
+fishyume resume <run-id>
+fishyume cancel <run-id>
 ```
 
-让 Codex 通过 Fishyume MCP 创建工作后，在另一个终端打开 Dashboard：
+正式接入通常由 Host Agent 通过 Fishyume MCP 完成：
 
 ```powershell
-fishyume
+fishyume mcp
 ```
 
-需要浏览器操作 Team 或 Workflow 时，再单独安装并运行可选 Web 客户端：
+Host Agent 可以使用 `system.capabilities`、`team.capabilities`、
+`workflow.validate`、`workflow.explain`、`run.start`、`run.events` 和
+`run.action` 组成完整链路。
+
+## Web 控制台
+
+需要浏览器查看状态时，安装可选 Web 客户端：
 
 ```powershell
 npm install -g fishyume-web
 fishyume-web
 ```
 
-它只连接本机 Fishyume Control Plane 的 Named Pipe/Unix Socket，并在
-`127.0.0.1` 上临时启动带 token 的 sidecar；核心 `fishyume` 包不依赖它。
+Web 客户端连接同一个本地 Control Plane，显示 Team、Handoff、Workflow Run 和
+路由状态。它不保存 Agent 凭据，也不会绕过 Host Agent 自动执行任务。
 
-也可以直接运行一个单 Agent 任务：
+## 路由和模型边界
 
-```powershell
-fishyume run --driver codex --target local --project "E:\project" "实现指定需求"
-```
+Fishyume Team 当前支持三个 Agent Driver：
 
-常用操作：
+- Codex
+- Claude Code
+- OpenCode
 
-```powershell
-fishyume status <run-id>
-fishyume attach <run-id>
-fishyume resume <run-id> --approve <node-id>
-fishyume resume <run-id> --retry <node-id>
-fishyume cancel <run-id>
-```
+Fishyume 只保存 Driver、可信 Profile 名称、Route 和可选模型参数。使用
+`model=default` 时，Agent 继承自己的默认模型；Fishyume 不管理 Agent 安装、
+登录、API Key、Base URL，也不审计 Agent 最终使用的上游模型。
 
-`fishyume demo` 不需要 Engine、Provider 登录或网络，可直接预览终端工作流界面。
+Workflow 当前保持 Codex-only。Codex 的模型发现、可用性探针、产品推荐和安全
+回退属于 Workflow 路由能力，与 Team Agent 的实际上游模型选择相互独立。
 
-查看并导出推荐的长程 Workflow 模板：
+## 当前状态
 
-```powershell
-fishyume examples list
-fishyume examples show repository-hardening
-fishyume examples show repository-hardening > repository-hardening.yaml
-```
+Fishyume 已完成 M6 核心合同冻结、M7 Team/Web 能力和 M7.9 Team 零配置路由。
+公共合同、恢复语义和安全边界已固定；真实 Provider smoke 仍是显式的本地验收，
+不是 CI 的前置条件。
 
-这些命令只读取安装包内的静态示例，不启动 Engine，也不调用模型。
-
-## Agent 集成
-
-Fishyume MCP 和 Machine CLI 同时暴露独立的 `fishyume.team/v1` Team API 和冻结的 `fishyume.application/v1` Workflow API。Host Agent 的典型 Workflow 顺序是：
-
-```text
-driver.list / routing.catalog.effective
-system.capabilities
-workflow.validate -> workflow.explain
-run.start -> run.events/run.get
-run.action -> run.result
-```
-
-从探索提升为正式执行时，顺序固定且不会自动规划或自动启动：
-
-```text
-team.handoff.get
--> Host authors fishyume/v2
--> workflow.validate
--> workflow.explain
--> user confirms
--> run.start
--> team.handoff.bindRun
-```
-
-启动 MCP 服务：
-
-```powershell
-fishyume mcp
-```
-
-脚本调用示例：
-
-```powershell
-fishyume machine system.capabilities --params '{}'
-fishyume machine routing.catalog --params '{}'
-fishyume machine driver.list --params '{"schemaVersion":"fishyume.config/v1"}'
-fishyume machine routing.catalog.effective --params '{"schemaVersion":"fishyume.config/v1"}'
-fishyume machine run.get --params '{"runId":"<run-id>"}'
-fishyume machine team.capabilities --params '{"schemaVersion":"fishyume.team/v1"}'
-```
-
-标准 `fishyume/v2` Workflow 示例和 Host 请求集合见：
-
-- [Workflow 编排指南](./docs/fishyume-workflow-authoring.md)
-- [真实仓库长程任务模板](./docs/examples/repository-hardening.yaml)
-- [全部示例及用途分级](./docs/examples/README.md)
-
-## 如何划分 Workflow Node
-
-一个 Agent Node Attempt 会启动一个独立的 one-shot Codex 进程。Node 应表示有独立
-交付物、审批边界、并行价值或恢复价值的完整工作包；读取文件、列计划、执行命令、
-修改代码、运行聚焦测试和整理摘要通常应留在同一个 Node 内部。
-
-推荐结构：
-
-```text
-并行领域审计 -> 汇总实施方案 -> 人工审批 -> 集中实施 -> 独立验证 -> 最终验收
-```
-
-不推荐把一次实现机械拆成：
-
-```text
-read -> plan -> edit -> test -> summarize
-```
-
-现有 `fishyume-smoke.yaml`、`fishyume-topology-demo.yaml` 和 Host golden path 是协议、
-生命周期或界面验证夹具，不代表实际任务的推荐 Node 粒度。
-
-## 核心特性
-
-- Agent、Approval、依赖、条件分支和并行调度
-- 默认双 Agent 视角、只读、可持久化的一轮 Team Panel
-- Codex、Claude Code 与 OpenCode 的可配置 Team Panel/TeamSession Route
-- Team 列表、事件、贡献、部分失败呈现和确认取消
-- 不可变 Handoff、来源消息哈希校验，以及到同项目已有 Run 的显式一对一绑定
-- 持久化 Run、Node、Attempt、事件和动作回执
-- 崩溃恢复、Control Plane 重启对账和跨客户端共享状态
-- 有界输出、稳定事件分页、幂等 `clientRequestId` 和带版本前置条件的 `run.action`
-- Context、Memory 绑定和受限上下文预算
-- 确定性能力目录、路由预检、成本预算和保守 fallback
-- 中文 topology-first Operator Console，以及非 TTY 的 JSON/纯文本输出
-- Windows Named Pipe、Unix Domain Socket；默认不开放 TCP
-
-## 当前边界
-
-M7.4 已开放公共多轮 TeamSession、follow-up、单 Turn 取消和主动 close；M7.5 提供独立的可选 Web Team 客户端。Team Driver 采用显式可信 Route 配置，不做动态 Driver 扫描；Workflow Backend 仍不扩展到 Claude Code/OpenCode，也不包含通用 Shell/HTTP/容器节点。M7.8 为 Codex Workflow 增加持久模型配置、`model/list` 发现、真实连通性探针、Reasoning Effort 和安全可用性回退。真实 Provider smoke 是显式本地 gate，不是公共 CI 的前置条件。
-M7.6 补齐 Host-Web Continuity：Host Agent 可在创建 Team、冻结 Handoff 或启动 Run 后打开/聚焦可选 Web 客户端；Web 仍只是同一 Control Plane 的投影，TUI 继续只支持 Workflow Run。
+验收记录：[M7.9 Team 零配置路由](./docs/fishyume-m7.9-acceptance.md)
 
 ## 文档
 
-- [文档总览](./docs/README.md)
-- [Workflow 编排指南](./docs/fishyume-workflow-authoring.md)
+- [文档索引](./docs/README.md)
 - [Team Agent Routes](./docs/fishyume-team-agent-routes.md)
+- [Workflow 编排与 Node 粒度](./docs/fishyume-workflow-authoring.md)
+- [Workflow 示例](./docs/examples/README.md)
+- [安装与首次使用](./docs/fishyume-distribution-first-run.md)
 - [M6 核心合同冻结](./docs/fishyume-m6-core-contract-freeze.md)
-- [核心稳定化与就绪状态](./docs/fishyume-core-stabilization.md)
-- [M7 Team 与 Workflow Promotion 计划](./docs/fishyume-m7-session-native-web-team-console-plan.md)
-- [M7.1 Panel 验收记录](./docs/fishyume-m7.1-acceptance.md)
-- [M7.2 Handoff 验收记录](./docs/fishyume-m7.2-acceptance.md)
-- [M7.3 AgentSession Driver 验收记录](./docs/fishyume-m7.3-acceptance.md)
-- [M7.5 可选 Web 客户端验收记录](./docs/fishyume-m7.5-acceptance.md)
-- [M7.6 Host-Web Continuity](./docs/fishyume-m7.6-host-web-continuity.md)
-- [M7.7 三 Agent 真实测试与修复验收](./docs/fishyume-m7.7-live-team-repair-acceptance.md)
-- [M7.8 Codex 动态路由方案](./docs/fishyume-m7.8-codex-dynamic-routing-plan.md)
-- [M7.8 Codex 动态路由验收](./docs/fishyume-m7.8-acceptance.md)
-- [首次使用与安装说明](./docs/fishyume-distribution-first-run.md)
-- [开发与验证](./docs/fishyume-development.md)
-- [Live Provider smoke](./docs/fishyume-m4-live-smoke.md)
+- [M7.9 开发方案](./docs/fishyume-m7.9-team-zero-config-routing-plan.md)
+- [M7.9 验收记录](./docs/fishyume-m7.9-acceptance.md)
 
-## 从源码验证
-
-```powershell
-go test ./wf-engine/...
-go vet ./wf-engine/...
-npm --prefix wf ci
-npm --prefix wf run verify
-npm --prefix wf run smoke:install
-npm --prefix fishyume-web run verify
-npm --prefix fishyume-web run smoke:install
-```
-
-跨提交状态恢复演练是独立本地 gate：
-
-```powershell
-npm --prefix wf run smoke:downgrade
-```
-
-它需要完整 Git 历史，不属于公共 CI。
+开发者验证命令和包发布说明见 [wf/README.md](./wf/README.md) 与
+[开发与验证](./docs/fishyume-development.md)。
 
 ## License
 
-Fishyume 使用 [Apache-2.0](./LICENSE) 许可证。
+Apache-2.0，见 [LICENSE](./LICENSE)。

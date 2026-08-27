@@ -38,6 +38,9 @@ links and review evidence stay stable.
   safe availability fallback.
 - [M7.8 Codex dynamic routing acceptance](fishyume-m7.8-acceptance.md):
   automated cross-layer gates and isolated live Codex discovery/probe evidence.
+- [M7.9 Team zero-configuration routing acceptance](fishyume-m7.9-acceptance.md):
+  automatic local Agent discovery, durable Team routes, graceful degradation,
+  and Host-facing configuration surfaces.
 - [Core contract freeze](fishyume-m6-core-contract-freeze.md): frozen public
   contracts and compatibility policy for the closed M6 baseline.
 - [Core stabilization record](fishyume-core-stabilization.md): M6 closure,
@@ -58,6 +61,7 @@ links and review evidence stay stable.
 ## Operator and developer guides
 
 - [Team Agent routes: Codex, Claude Code, and OpenCode](fishyume-team-agent-routes.md)
+- [M7.9 Team zero-configuration routing plan](fishyume-m7.9-team-zero-config-routing-plan.md)
 - [M7.7 live three-Agent test and repair acceptance](fishyume-m7.7-live-team-repair-acceptance.md)
 - [Workflow authoring and Node granularity](fishyume-workflow-authoring.md)
 - [Development and verification](fishyume-development.md)

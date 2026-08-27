@@ -1,7 +1,7 @@
 import {createIcons, MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox, Route} from 'lucide';
 import type {ApplicationNodeView, RunGetResponse, RunListResponse, RunSummary} from '../../../wf/src/bridge/application.js';
 import type {HandoffArtifact, Participant, ParticipantTurn, TeamGetResponse, TeamListResponse, TeamMessage, TeamMessagesResponse, TeamSummary} from '../../../wf/src/bridge/team.js';
-import type {EffectiveCatalogResponse, RoutingConfig} from '../../../wf/src/bridge/routing.js';
+import type {DriverListResponse, EffectiveCatalogResponse, RoutingConfig, TeamRoutesResponse} from '../../../wf/src/bridge/routing.js';
 
 const teamVersion = 'fishyume.team/v1';
 type View = 'teams' | 'runs' | 'routing';
@@ -16,7 +16,7 @@ const state: {
   token: string; view: View; filter: Filter; tab: DetailTab; teams: TeamSummary[]; runs: RunSummary[];
   selectedTeam?: string; selectedRun?: string; teamView?: TeamGetResponse; messages?: TeamMessagesResponse;
   handoffs: HandoffArtifact[]; runView?: RunGetResponse; busy: boolean; refreshing: boolean; focusRevision: number; pendingFocus?: FocusTarget;
-  routingView?: EffectiveCatalogResponse; routingConfig?: RoutingConfig;
+  routingView?: EffectiveCatalogResponse; routingConfig?: RoutingConfig; teamRoutes?: TeamRoutesResponse; drivers?: DriverListResponse;
 } = {token: launch.token, view: launch.view, filter: 'all', tab: launch.target?.kind === 'handoff' ? 'handoffs' : 'discussion', teams: [], runs: [], handoffs: [], busy: false, refreshing: false, focusRevision: 0, pendingFocus: launch.target};
 
 const collection = element('collection-list');
@@ -103,33 +103,43 @@ async function refreshRuns(): Promise<void> {
 }
 
 async function refreshRouting(): Promise<void> {
-  const [effective, config] = await Promise.all([
+  const [effective, config, teamRoutes, drivers] = await Promise.all([
     rpc<EffectiveCatalogResponse>('routing.catalog.effective', {schemaVersion: 'fishyume.config/v1'}),
     rpc<{config: RoutingConfig}>('routing.config.get', {schemaVersion: 'fishyume.config/v1'}),
+    rpc<TeamRoutesResponse>('team.routes.get', {schemaVersion: 'fishyume.config/v1'}),
+    rpc<DriverListResponse>('driver.list', {schemaVersion: 'fishyume.config/v1'}),
   ]);
-  state.routingView = effective; state.routingConfig = config.config;
+  state.routingView = effective; state.routingConfig = config.config; state.teamRoutes = teamRoutes; state.drivers = drivers;
   renderRoutingCollection(); renderRoutingDetail();
 }
 
 function renderRoutingCollection(): void {
-  element('collection-eyebrow').textContent = '配置'; element('collection-title').textContent = '模型路由';
+  element('collection-eyebrow').textContent = '配置'; element('collection-title').textContent = 'Agent 路由';
   element('filter-row').style.display = 'none'; collection.replaceChildren();
-  const view = state.routingView; if (!view) {collection.append(loading()); return}
-  for (const route of view.routes) {
+  const drivers = state.drivers; if (!drivers) {collection.append(loading()); return}
+  for (const driver of drivers.drivers) {
     const item = div('collection-item route-summary');
-    const top = div('item-topline'); top.append(text('span', 'item-title', route.model), status(route.routable ? 'available' : route.availability));
-    const meta = div('item-meta'); meta.append(text('span', '', route.enabled ? '已启用' : '已停用'), text('span', '', route.discovered ? 'Codex 已发现' : '未发现'));
+    const top = div('item-topline'); top.append(text('span', 'item-title', driver.driver), status(driver.available ? 'available' : 'unavailable'));
+    const meta = div('item-meta'); meta.append(text('span', '', driver.teamEligible ? 'Team 可用' : 'Team 不可用'), text('span', '', driver.workflowEligible ? 'Workflow + Team' : 'Team'));
     item.append(top, meta); collection.append(item);
   }
 }
 
 function renderRoutingDetail(): void {
-  const view = state.routingView; const config = state.routingConfig; if (!view || !config) return;
+  const view = state.routingView; const config = state.routingConfig; const teamRoutes = state.teamRoutes; const drivers = state.drivers; if (!view || !config || !teamRoutes || !drivers) return;
   detail.replaceChildren(); const header = div('detail-header'); const row = div('detail-title-row');
-  const title = document.createElement('div'); title.append(text('span', 'eyebrow', `CATALOG · ${view.catalogHash.slice(0, 12)}`), text('h2', 'detail-title', 'Codex 动态路由'), text('div', 'detail-subtitle', `配置修订 ${config.revision} · 发现不等于上游可用`));
-  const actions = div('header-actions'); actions.append(actionButton('refresh-cw', '刷新发现', 'discover-models'), actionButton('route', '主动探针', 'probe-models', 'primary')); row.append(title, actions); header.append(row); detail.append(header);
-  detail.append(metrics([['产品画像', String(view.routes.filter(route => route.qualified).length)], ['已发现', String(view.routes.filter(route => route.discovered).length)], ['已启用', String(view.routes.filter(route => route.enabled).length)], ['可路由', String(view.routes.filter(route => route.routable).length)]]));
-  const content = div('detail-content'); const section = div('section routing-table'); section.append(text('h3', 'section-title', '合格路由'));
+  const title = document.createElement('div'); title.append(text('span', 'eyebrow', `TEAM ${teamRoutes.catalogHash?.slice(0, 12) || 'UNAVAILABLE'}`), text('h2', 'detail-title', '本机 Agent 与模型路由'), text('div', 'detail-subtitle', `Team 配置修订 ${teamRoutes.config.revision} · Agent 认证由各自 CLI 管理`));
+  const actions = div('header-actions'); actions.append(actionButton('refresh-cw', '刷新 Agent', 'refresh-team-routes'), actionButton('refresh-cw', '刷新模型', 'discover-models'), actionButton('route', '主动探针', 'probe-models', 'primary')); row.append(title, actions); header.append(row); detail.append(header);
+  detail.append(metrics([['本机 Agent', String(drivers.drivers.filter(driver => driver.available).length)], ['Team 路由', String(teamRoutes.routes.filter(route => route.effective).length)], ['Codex 已发现', String(view.routes.filter(route => route.discovered).length)], ['Workflow 可路由', String(view.routes.filter(route => route.routable).length)]]));
+  const content = div('detail-content');
+  const teamSection = div('section routing-table'); teamSection.append(text('h3', 'section-title', 'Team Agent 路由'));
+  for (const route of teamRoutes.routes) {
+    const item = div('route-row'); const identity = div('route-identity'); identity.append(text('strong', '', route.routeId), text('span', 'section-note', `${route.driver} / ${route.provider} / ${route.model}`));
+    const states = div('route-states'); states.append(stateMark('已安装', route.driverAvailable), stateMark('已启用', route.enabled), status(route.effective ? 'available' : 'unavailable'));
+    const toggle = actionButton(route.enabled ? 'x' : 'check', route.enabled ? '停用' : '启用', 'toggle-team-route', '', route.routeId); item.append(identity, states, toggle); teamSection.append(item);
+  }
+  content.append(teamSection);
+  const section = div('section routing-table'); section.append(text('h3', 'section-title', 'Codex Workflow 路由'));
   for (const route of view.routes) {
     const item = div('route-row'); const identity = div('route-identity'); identity.append(text('strong', '', route.model), text('span', 'section-note', route.recommendedUseCases.join(' · ')));
     const states = div('route-states'); states.append(stateMark('产品画像', route.qualified), stateMark('Codex 发现', route.discovered), stateMark('配置启用', route.enabled), status(route.availability));
@@ -141,9 +151,21 @@ function renderRoutingDetail(): void {
 function stateMark(label: string, active: boolean): HTMLElement {return text('span', `status ${active ? 'available' : 'unknown'}`, `${label} ${active ? '是' : '否'}`)}
 
 function wireRoutingActions(): void {
+  detail.querySelector<HTMLButtonElement>('[data-action="refresh-team-routes"]')?.addEventListener('click', () => void refreshTeamRoutes());
   detail.querySelector<HTMLButtonElement>('[data-action="discover-models"]')?.addEventListener('click', () => void routingRefresh(false));
   detail.querySelector<HTMLButtonElement>('[data-action="probe-models"]')?.addEventListener('click', () => {if (window.confirm('主动探针会实际调用已启用的 Codex 模型并产生少量模型费用。继续吗？')) void routingRefresh(true)});
   for (const button of detail.querySelectorAll<HTMLButtonElement>('[data-action="toggle-route"]')) button.addEventListener('click', () => void toggleRoute(button.dataset.value!));
+  for (const button of detail.querySelectorAll<HTMLButtonElement>('[data-action="toggle-team-route"]')) button.addEventListener('click', () => void toggleTeamRoute(button.dataset.value!));
+}
+
+async function refreshTeamRoutes(): Promise<void> {
+  if (state.busy) return; state.busy = true; setButtonsDisabled(true);
+  try {await rpc('team.routes.refresh', {schemaVersion: 'fishyume.config/v1'})} catch (error) {showError(error)} finally {await refreshRouting().catch(() => undefined); state.busy = false; setButtonsDisabled(false)}
+}
+
+async function toggleTeamRoute(routeId: string): Promise<void> {
+  const current = state.teamRoutes; const route = current?.routes.find(candidate => candidate.routeId === routeId); if (!current || !route) return;
+  await mutate(`team-route:${routeId}:${!route.enabled}`, 'team.routes.upsert', {schemaVersion: 'fishyume.config/v1', expectedRevision: current.config.revision, routeId, driver: route.driver, provider: route.provider, model: route.model, enabled: !route.enabled}, 'mutationId');
 }
 
 async function routingRefresh(probe: boolean): Promise<void> {

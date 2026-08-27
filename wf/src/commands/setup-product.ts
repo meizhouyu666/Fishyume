@@ -2,6 +2,7 @@ import {Command, Option} from 'clipanion';
 import {EngineBridge} from '../bridge/engine.js';
 import {runProductDoctor} from './doctor.js';
 import {setupCodex} from './setup.js';
+import {callRouting, configApiVersion} from '../bridge/routing.js';
 
 export class SetupProductCommand extends Command {
   static paths = [['setup']];
@@ -14,6 +15,10 @@ export class SetupProductCommand extends Command {
     this.context.stdout.write('Fishyume setup: configuring the local Codex Host\n');
     const setupStatus = await setupCodex(this.context.stdout, {force: this.force});
     if (setupStatus !== 0) return setupStatus;
+    this.context.stdout.write('Fishyume setup: discovering local Team Agents\n');
+    const client = new EngineBridge();
+    try {await callRouting(client, 'team.routes.refresh', {schemaVersion: configApiVersion})}
+    finally {await client.close()}
     this.context.stdout.write('Fishyume setup: checking readiness\n');
     return runProductDoctor(new EngineBridge(), undefined, 'codex', this.context.stdout);
   }

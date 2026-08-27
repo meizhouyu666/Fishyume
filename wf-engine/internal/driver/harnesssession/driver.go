@@ -401,7 +401,10 @@ func (d *Driver) turnHandle(r record) sessiondriver.TurnHandle {
 
 func (d *Driver) command(r record) ([]string, []string) {
 	if d.name == "claude" {
-		args := []string{"--print", "--output-format", "json", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Glob,Grep", "--disallowed-tools", "Bash,Edit,Write,WebFetch,WebSearch,Task", "--strict-mcp-config", "--no-chrome", "--disable-slash-commands", "--model", r.Model}
+		args := []string{"--print", "--output-format", "json", "--safe-mode", "--permission-mode", "dontAsk", "--tools", "Read,Glob,Grep", "--disallowed-tools", "Bash,Edit,Write,WebFetch,WebSearch,Task", "--strict-mcp-config", "--no-chrome", "--disable-slash-commands"}
+		if r.Model != "default" {
+			args = append(args, "--model", r.Model)
+		}
 		if r.ExternalID != "" && r.LastTurnID != "" && len(r.Process.Child.Executable) > 0 {
 			args = append(args, "--resume", r.ExternalID)
 		} else {
@@ -409,7 +412,11 @@ func (d *Driver) command(r record) ([]string, []string) {
 		}
 		return args, nil
 	}
-	args := []string{"--pure", "run", "--format", "json", "--model", r.Model, "--agent", "fishyume-readonly", "--title", "Fishyume " + r.HandleID}
+	args := []string{"--pure", "run", "--format", "json"}
+	if r.Model != "default" {
+		args = append(args, "--model", r.Model)
+	}
+	args = append(args, "--agent", "fishyume-readonly", "--title", "Fishyume "+r.HandleID)
 	if r.ExternalID != "" {
 		args = append(args, "--session", r.ExternalID)
 	}

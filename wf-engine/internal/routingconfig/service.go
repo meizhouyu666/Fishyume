@@ -31,6 +31,7 @@ const (
 var StableMethods = []string{
 	"driver.list", "driver.models.discover", "driver.models.probe",
 	"routing.config.get", "routing.config.update", "routing.availability", "routing.catalog.effective",
+	"team.routes.get", "team.routes.refresh", "team.routes.upsert", "team.routes.remove",
 }
 
 type ModelInspector interface {
@@ -128,6 +129,10 @@ type DriverView struct {
 	Driver           string     `json:"driver"`
 	Provider         string     `json:"provider"`
 	WorkflowEligible bool       `json:"workflowEligible"`
+	TeamEligible     bool       `json:"teamEligible"`
+	Available        bool       `json:"available"`
+	Executable       string     `json:"executable,omitempty"`
+	Diagnostic       string     `json:"diagnostic,omitempty"`
 	ModelCount       int        `json:"modelCount"`
 	LastDiscoveredAt *time.Time `json:"lastDiscoveredAt,omitempty"`
 }
@@ -191,14 +196,17 @@ type ContractError struct {
 func (e *ContractError) Error() string { return e.Code + ": " + e.Message }
 
 type Service struct {
-	mu        sync.Mutex
-	root      string
-	inspector ModelInspector
-	registry  *routing.CatalogRegistry
-	now       func() time.Time
-	config    configFile
-	discovery discoveryFile
-	available availabilityFile
+	mu          sync.Mutex
+	root        string
+	inspector   ModelInspector
+	registry    *routing.CatalogRegistry
+	now         func() time.Time
+	config      configFile
+	discovery   discoveryFile
+	available   availabilityFile
+	teamConfig  teamConfigFile
+	teamDrivers teamDriverDiscoveryFile
+	teamApplier TeamRouteApplier
 }
 
 func NewService(root string, inspector ModelInspector) (*Service, error) {
@@ -208,6 +216,9 @@ func NewService(root string, inspector ModelInspector) (*Service, error) {
 	}
 	service := &Service{root: root, inspector: inspector, now: time.Now}
 	if err := service.load(); err != nil {
+		return nil, err
+	}
+	if err := service.loadTeamRoutes(); err != nil {
 		return nil, err
 	}
 	historical, err := service.loadCatalogSnapshots()
@@ -309,7 +320,34 @@ func (s *Service) DriverList() DriverListResponse {
 		value := s.discovery.ObservedAt
 		observed = &value
 	}
-	return DriverListResponse{SchemaVersion: APIVersion, Drivers: []DriverView{{Driver: "codex", Provider: "local", WorkflowEligible: true, ModelCount: len(s.discovery.Models), LastDiscoveredAt: observed}}}
+	teamStatus := make(map[string]TeamDriverStatus, len(s.teamDrivers.Drivers))
+	teamModels := make(map[string]int)
+	for _, status := range s.teamDrivers.Drivers {
+		teamStatus[status.Driver] = status
+	}
+	for _, route := range s.teamConfig.Routes {
+		if route.Enabled && teamStatus[route.Driver].Available {
+			teamModels[route.Driver]++
+		}
+	}
+	drivers := make([]DriverView, 0, 3)
+	for _, name := range []string{"claude", "codex", "opencode"} {
+		status := teamStatus[name]
+		provider := "configured"
+		if name == "codex" {
+			provider = "local"
+		}
+		count := teamModels[name]
+		if name == "codex" && len(s.discovery.Models) > count {
+			count = len(s.discovery.Models)
+		}
+		var lastDiscovered *time.Time
+		if name == "codex" {
+			lastDiscovered = observed
+		}
+		drivers = append(drivers, DriverView{Driver: name, Provider: provider, WorkflowEligible: name == "codex", TeamEligible: teamModels[name] > 0, Available: status.Available, Executable: status.Executable, Diagnostic: status.Diagnostic, ModelCount: count, LastDiscoveredAt: lastDiscovered})
+	}
+	return DriverListResponse{SchemaVersion: APIVersion, Drivers: drivers}
 }
 
 func (s *Service) Discover(ctx context.Context) (DiscoveryResponse, error) {

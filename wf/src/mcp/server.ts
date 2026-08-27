@@ -71,6 +71,10 @@ const tools: Array<{name: FishyumeMethod; description: string; inputSchema: Reco
   {name: 'routing.config.update', description: 'Idempotently enable or disable one qualified route using optimistic revision concurrency.', inputSchema: {schemaVersion: z.literal(configApiVersion), mutationId: z.string().min(1).max(256), expectedRevision: z.number().int().positive(), routeId: z.string(), enabled: z.boolean()}},
   {name: 'routing.availability', description: 'Inspect cached active-probe availability and expiry for qualified Codex routes.', inputSchema: {schemaVersion: z.literal(configApiVersion)}},
   {name: 'routing.catalog.effective', description: 'Inspect the exact effective Workflow Catalog, route state intersections, and auditable Catalog hash.', inputSchema: {schemaVersion: z.literal(configApiVersion)}},
+  {name: 'team.routes.get', description: 'Inspect persistent Team Agent routes, local Driver availability, and the effective Team Catalog hash.', inputSchema: {schemaVersion: z.literal(configApiVersion)}},
+  {name: 'team.routes.refresh', description: 'Rediscover installed Codex, Claude Code, and OpenCode executables and immediately apply available Team routes. This does not call a model.', inputSchema: {schemaVersion: z.literal(configApiVersion)}},
+  {name: 'team.routes.upsert', description: 'Idempotently add, replace, enable, or disable one trusted Team Agent route. Agent credentials and executable paths are never accepted.', inputSchema: {schemaVersion: z.literal(configApiVersion), mutationId: z.string().min(1).max(256), expectedRevision: z.number().int().positive(), routeId: z.string().min(1).max(128), driver: z.enum(['codex', 'claude', 'opencode']), provider: z.string().min(1).max(128), model: z.string().min(1).max(128), enabled: z.boolean()}},
+  {name: 'team.routes.remove', description: 'Idempotently remove one user/imported Team route. Built-in routes can be disabled through upsert but are not removable.', inputSchema: {schemaVersion: z.literal(configApiVersion), mutationId: z.string().min(1).max(256), expectedRevision: z.number().int().positive(), routeId: z.string().min(1).max(128)}},
 ];
 
 export function createMCPServer(client: EngineClient, web = createWebOpenManager()): McpServer {
@@ -80,7 +84,7 @@ export function createMCPServer(client: EngineClient, web = createWebOpenManager
       try {
         const response = tool.name === 'web.open'
           ? await web.open(params.target as WebTarget) as WebOpenResponse
-          : tool.name.startsWith('driver.') || tool.name.startsWith('routing.config.') || tool.name === 'routing.availability' || tool.name === 'routing.catalog.effective'
+          : tool.name.startsWith('driver.') || tool.name.startsWith('routing.config.') || tool.name.startsWith('team.routes.') || tool.name === 'routing.availability' || tool.name === 'routing.catalog.effective'
           ? await callRouting(client, tool.name as RoutingMethod, params)
           : tool.name.startsWith('team.')
           ? await callTeam(client, tool.name as TeamMethod, params)

@@ -19,7 +19,13 @@ export class DriversInspectCommand extends Command {
   refresh = Option.Boolean('--refresh', false, {description: 'Refresh models through Codex model/list before printing'});
   async execute(): Promise<number> {
     const client = new EngineBridge();
-    return routingCall(client, () => this.refresh ? callRouting(client, 'driver.models.discover', {schemaVersion: configApiVersion}) : callRouting(client, 'driver.list', {schemaVersion: configApiVersion}), this.context.stdout);
+    return routingCall(client, async () => {
+      if (this.refresh) {
+        await callRouting(client, 'team.routes.refresh', {schemaVersion: configApiVersion});
+        await callRouting(client, 'driver.models.discover', {schemaVersion: configApiVersion});
+      }
+      return callRouting(client, 'driver.list', {schemaVersion: configApiVersion});
+    }, this.context.stdout);
   }
 }
 
@@ -70,3 +76,45 @@ export class RoutingRefreshCommand extends Command {
 
 function normalizeRoute(value: string): string {return value.includes('/') ? value : `codex/local/${value}`}
 
+export class TeamRoutesShowCommand extends Command {
+  static paths = [['team', 'routes']];
+  static usage = Command.Usage({description: 'Show persistent Team Agent routes and local Driver readiness.'});
+  async execute(): Promise<number> {const client = new EngineBridge(); return routingCall(client, () => callRouting(client, 'team.routes.get', {schemaVersion: configApiVersion}), this.context.stdout)}
+}
+
+export class TeamRoutesRefreshCommand extends Command {
+  static paths = [['team', 'routes', 'refresh']];
+  static usage = Command.Usage({description: 'Rediscover installed Agent CLIs and apply effective Team routes without model calls.'});
+  async execute(): Promise<number> {const client = new EngineBridge(); return routingCall(client, () => callRouting(client, 'team.routes.refresh', {schemaVersion: configApiVersion}), this.context.stdout)}
+}
+
+export class TeamRoutesSetCommand extends Command {
+  static paths = [['team', 'routes', 'set']];
+  static usage = Command.Usage({description: 'Persist one trusted Team Agent route. Use model default to inherit the Agent configuration.'});
+  routeId = Option.String('--route', {required: true});
+  driver = Option.String('--driver', {required: true});
+  provider = Option.String('--provider', {required: true});
+  model = Option.String('--model', {required: true});
+  disabled = Option.Boolean('--disabled', false);
+  async execute(): Promise<number> {
+    if (!['codex', 'claude', 'opencode'].includes(this.driver)) {this.context.stdout.write('{"error":{"code":"invalid_argument","message":"driver must be codex, claude, or opencode"}}\n'); return 6}
+    const client = new EngineBridge();
+    return routingCall(client, async () => {
+      const current = await callRouting(client, 'team.routes.get', {schemaVersion: configApiVersion});
+      return callRouting(client, 'team.routes.upsert', {schemaVersion: configApiVersion, mutationId: `team-route-${randomUUID()}`, expectedRevision: current.config.revision, routeId: this.routeId, driver: this.driver, provider: this.provider, model: this.model, enabled: !this.disabled});
+    }, this.context.stdout);
+  }
+}
+
+export class TeamRoutesRemoveCommand extends Command {
+  static paths = [['team', 'routes', 'remove']];
+  static usage = Command.Usage({description: 'Remove one user-defined Team Agent route.'});
+  routeId = Option.String({required: true, name: 'route'});
+  async execute(): Promise<number> {
+    const client = new EngineBridge();
+    return routingCall(client, async () => {
+      const current = await callRouting(client, 'team.routes.get', {schemaVersion: configApiVersion});
+      return callRouting(client, 'team.routes.remove', {schemaVersion: configApiVersion, mutationId: `team-route-${randomUUID()}`, expectedRevision: current.config.revision, routeId: this.routeId});
+    }, this.context.stdout);
+  }
+}

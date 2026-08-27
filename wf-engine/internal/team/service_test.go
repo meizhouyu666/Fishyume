@@ -128,6 +128,54 @@ func TestServiceRejectsCatalogThatCannotFormATeam(t *testing.T) {
 	}
 }
 
+func TestHistoricalCatalogRestoresPreparedTeamAfterRouteRefresh(t *testing.T) {
+	model := func(id, driver, provider, name string) routing.ModelCapabilityV1 {
+		return routing.ModelCapabilityV1{ID: id, Target: routing.Target{Driver: driver, Provider: provider, Model: name}, Capabilities: []routing.Capability{routing.CapabilityRepoRead}, ContextLimitBytes: 128 * 1024, MaxOutputBytes: 32 * 1024, Quality: routing.QualityBalanced, Cost: routing.CostLow, Latency: routing.LatencyFast, SupportsCancellation: true}
+	}
+	oldCatalog := routing.CanonicalCatalogV1(routing.CapabilityCatalogV1{SchemaVersion: routing.CapabilityCatalogV1Version, PolicyVersion: routing.RoutingPolicyV1Version, Models: []routing.ModelCapabilityV1{model("claude/default/sonnet", "claude", "default", "sonnet"), model("opencode/default/default", "opencode", "default", "default")}})
+	newCatalog := routing.CanonicalCatalogV1(routing.CapabilityCatalogV1{SchemaVersion: routing.CapabilityCatalogV1Version, PolicyVersion: routing.RoutingPolicyV1Version, Models: []routing.ModelCapabilityV1{model("codex/architect/gpt-5.6-sol", "codex", "local", "gpt-5.6-sol"), model("codex/reviewer/gpt-5.6-sol", "codex", "local", "gpt-5.6-sol")}})
+	root := t.TempDir()
+	state := store.New(root)
+	first, err := NewServiceWithCatalog(state, oldCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(root, "project")
+	if err := os.MkdirAll(project, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	started, err := first.Start(context.Background(), startRequest(project, "historical-catalog"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := NewServiceWithCatalog(state, newCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.AddHistoricalCatalog(oldCatalog); err != nil {
+		t.Fatal(err)
+	}
+	restarted.mu.Lock()
+	_, err = restarted.prepareInitialTurnsLocked(started.Team.TeamID)
+	restarted.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	turnIDs, err := state.ListTeamTurnIDs(started.Team.TeamID)
+	if err != nil || len(turnIDs) != 2 {
+		t.Fatalf("turn IDs=%v err=%v", turnIDs, err)
+	}
+	for _, turnID := range turnIDs {
+		var turn teamcontract.ParticipantTurnV1
+		if err := state.ReadTeamTurn(started.Team.TeamID, turnID, &turn); err != nil {
+			t.Fatal(err)
+		}
+		if turn.Driver == "codex" {
+			t.Fatalf("historical Team was rebound to refreshed Catalog: %+v", turn)
+		}
+	}
+}
+
 func TestStartPreparesDefaultPanelWithoutCreatingWorkflowRun(t *testing.T) {
 	project := filepath.Join(t.TempDir(), "project")
 	if err := os.MkdirAll(project, 0o700); err != nil {

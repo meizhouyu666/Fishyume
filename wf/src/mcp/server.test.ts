@@ -69,13 +69,14 @@ class FakeApplicationClient implements EngineClient {
     if (method === 'team.handoff.get') return {schemaVersion: 'fishyume.team/v1', handoff, binding: handoffBinding} as T;
     if (method === 'team.handoff.list') return {schemaVersion: 'fishyume.team/v1', items: [handoff]} as T;
     if (method === 'team.handoff.bindRun') return {schemaVersion: 'fishyume.team/v1', binding: handoffBinding, replayed: false} as T;
-    if (method === 'driver.list') return {schemaVersion: 'fishyume.config/v1', drivers: [{driver: 'codex', provider: 'local', workflowEligible: true, modelCount: 1}]} as T;
+    if (method === 'driver.list') return {schemaVersion: 'fishyume.config/v1', drivers: [{driver: 'codex', provider: 'local', workflowEligible: true, teamEligible: true, available: true, modelCount: 1}]} as T;
     if (method === 'driver.models.discover') return {schemaVersion: 'fishyume.config/v1', driver: 'codex', observedAt: '2026-08-27T00:00:00Z', models: [], routes: effectiveCatalog.routes} as T;
     if (method === 'driver.models.probe') return {schemaVersion: 'fishyume.config/v1', entries: [{routeId: 'codex/local/gpt-5.6-sol', model: 'gpt-5.6-sol', status: 'available'}], catalogHash: effectiveCatalog.catalogHash} as T;
     if (method === 'routing.config.get') return {schemaVersion: 'fishyume.config/v1', config: {schemaVersion: 'fishyume.config/v1', revision: 1, routes: [{routeId: 'codex/local/gpt-5.6-sol', enabled: true}], updatedAt: '2026-08-27T00:00:00Z'}} as T;
     if (method === 'routing.config.update') return {schemaVersion: 'fishyume.config/v1', config: {schemaVersion: 'fishyume.config/v1', revision: 2, routes: [{routeId: 'codex/local/gpt-5.6-sol', enabled: false}], updatedAt: '2026-08-27T00:00:01Z'}, replayed: false} as T;
     if (method === 'routing.availability') return {schemaVersion: 'fishyume.config/v1', entries: [{routeId: 'codex/local/gpt-5.6-sol', model: 'gpt-5.6-sol', status: 'available'}]} as T;
     if (method === 'routing.catalog.effective') return effectiveCatalog as T;
+    if (method.startsWith('team.routes.')) return {schemaVersion: 'fishyume.config/v1', config: {schemaVersion: 'fishyume.config/v1', revision: 1, routes: [], updatedAt: '2026-08-27T00:00:00Z'}, drivers: [], routes: [], catalogHash: 'e'.repeat(64), ...(method === 'team.routes.upsert' || method === 'team.routes.remove' ? {replayed: false} : {})} as T;
     throw new Error(`unexpected ${method}`);
   }
   onRunEvent(_listener: EventListener): () => void {return () => undefined}
@@ -168,7 +169,7 @@ test('MCP and Machine CLI expose identical Application response JSON', async () 
   await Promise.all([mcpServer.connect(serverTransport), mcpClient.connect(clientTransport)]);
   try {
     const listed = await mcpClient.listTools();
-    assert.deepEqual(listed.tools.map(tool => tool.name), ['system.capabilities', 'routing.catalog', 'workflow.validate', 'workflow.explain', 'run.start', 'run.list', 'run.get', 'run.events', 'run.action', 'run.result', 'memory.create', 'memory.get', 'memory.list', 'memory.supersede', 'memory.delete', 'team.capabilities', 'team.start', 'team.list', 'team.get', 'team.events', 'team.messages', 'team.action', 'team.handoff.create', 'team.handoff.get', 'team.handoff.list', 'team.handoff.bindRun', 'web.open', 'driver.list', 'driver.models.discover', 'driver.models.probe', 'routing.config.get', 'routing.config.update', 'routing.availability', 'routing.catalog.effective']);
+    assert.deepEqual(listed.tools.map(tool => tool.name), ['system.capabilities', 'routing.catalog', 'workflow.validate', 'workflow.explain', 'run.start', 'run.list', 'run.get', 'run.events', 'run.action', 'run.result', 'memory.create', 'memory.get', 'memory.list', 'memory.supersede', 'memory.delete', 'team.capabilities', 'team.start', 'team.list', 'team.get', 'team.events', 'team.messages', 'team.action', 'team.handoff.create', 'team.handoff.get', 'team.handoff.list', 'team.handoff.bindRun', 'web.open', 'driver.list', 'driver.models.discover', 'driver.models.probe', 'routing.config.get', 'routing.config.update', 'routing.availability', 'routing.catalog.effective', 'team.routes.get', 'team.routes.refresh', 'team.routes.upsert', 'team.routes.remove']);
     for (const tool of listed.tools) {
       const schema = JSON.stringify(tool.inputSchema);
       for (const legacy of ['"backend"', '"tool"', '"runtime"']) assert.equal(schema.includes(legacy), false, `${tool.name} exposed ${legacy}`);

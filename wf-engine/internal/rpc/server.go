@@ -195,6 +195,14 @@ func (s *Server) handle(ctx context.Context, request Request) {
 		s.invokeRoutingRead(id, request.Params, func() any { return s.routingConfig.Availability() })
 	case "routing.catalog.effective":
 		s.invokeRoutingEffectiveCatalog(id, request.Params)
+	case "team.routes.get":
+		s.invokeTeamRoutesGet(id, request.Params)
+	case "team.routes.refresh":
+		s.invokeTeamRoutesRefresh(ctx, id, request.Params)
+	case "team.routes.upsert":
+		s.invokeTeamRouteUpsert(id, request.Params)
+	case "team.routes.remove":
+		s.invokeTeamRouteRemove(id, request.Params)
 	case "workflow.validate":
 		invokeApplication(ctx, s, id, request.Params, application.WorkflowValidateRequest{}, s.application.WorkflowValidate)
 	case "workflow.explain":
@@ -304,7 +312,7 @@ func (s *Server) handle(ctx context.Context, request Request) {
 
 func isMutation(method string) bool {
 	switch method {
-	case "run.start", "run.action", "memory.create", "memory.supersede", "memory.delete", "memory.host.create", "memory.host.supersede", "memory.host.delete", "team.start", "team.action", "team.handoff.create", "team.handoff.bindRun", "driver.models.discover", "driver.models.probe", "routing.config.update":
+	case "run.start", "run.action", "memory.create", "memory.supersede", "memory.delete", "memory.host.create", "memory.host.supersede", "memory.host.delete", "team.start", "team.action", "team.handoff.create", "team.handoff.bindRun", "driver.models.discover", "driver.models.probe", "routing.config.update", "team.routes.refresh", "team.routes.upsert", "team.routes.remove":
 		return true
 	default:
 		return false
@@ -393,6 +401,78 @@ func (s *Server) invokeRoutingEffectiveCatalog(id any, raw json.RawMessage) {
 		return
 	}
 	response, err := s.routingConfig.EffectiveCatalog()
+	if err != nil {
+		s.writeRoutingError(id, err)
+		return
+	}
+	s.writeResult(id, response)
+}
+
+func (s *Server) invokeTeamRoutesRefresh(ctx context.Context, id any, raw json.RawMessage) {
+	if s.routingConfig == nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "capability_unavailable", Message: "routing configuration service is unavailable"})
+		return
+	}
+	var request routingconfig.ReadRequest
+	if err := decodeParams(raw, &request); err != nil || routingconfig.ValidateReadRequest(request) != nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "invalid_argument", Message: "valid config schemaVersion is required"})
+		return
+	}
+	response, err := s.routingConfig.TeamRoutesRefresh(ctx)
+	if err != nil {
+		s.writeRoutingError(id, err)
+		return
+	}
+	s.writeResult(id, response)
+}
+
+func (s *Server) invokeTeamRoutesGet(id any, raw json.RawMessage) {
+	if s.routingConfig == nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "capability_unavailable", Message: "routing configuration service is unavailable"})
+		return
+	}
+	var request routingconfig.ReadRequest
+	if err := decodeParams(raw, &request); err != nil || routingconfig.ValidateReadRequest(request) != nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "invalid_argument", Message: "valid config schemaVersion is required"})
+		return
+	}
+	response, err := s.routingConfig.TeamRoutesGet()
+	if err != nil {
+		s.writeRoutingError(id, err)
+		return
+	}
+	s.writeResult(id, response)
+}
+
+func (s *Server) invokeTeamRouteUpsert(id any, raw json.RawMessage) {
+	if s.routingConfig == nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "capability_unavailable", Message: "routing configuration service is unavailable"})
+		return
+	}
+	var request routingconfig.TeamRouteUpsertRequest
+	if err := decodeParams(raw, &request); err != nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "invalid_argument", Message: "invalid Team route upsert: " + err.Error()})
+		return
+	}
+	response, err := s.routingConfig.TeamRouteUpsert(request)
+	if err != nil {
+		s.writeRoutingError(id, err)
+		return
+	}
+	s.writeResult(id, response)
+}
+
+func (s *Server) invokeTeamRouteRemove(id any, raw json.RawMessage) {
+	if s.routingConfig == nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "capability_unavailable", Message: "routing configuration service is unavailable"})
+		return
+	}
+	var request routingconfig.TeamRouteRemoveRequest
+	if err := decodeParams(raw, &request); err != nil {
+		s.writeRoutingError(id, &routingconfig.ContractError{Code: "invalid_argument", Message: "invalid Team route removal: " + err.Error()})
+		return
+	}
+	response, err := s.routingConfig.TeamRouteRemove(request)
 	if err != nil {
 		s.writeRoutingError(id, err)
 		return

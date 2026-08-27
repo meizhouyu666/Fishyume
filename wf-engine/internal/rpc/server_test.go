@@ -119,6 +119,41 @@ func TestM78RoutingRPCFailsClosedWithoutConfigService(t *testing.T) {
 	}
 }
 
+func TestM79TeamRouteRPCPersistsAndReplaysMutations(t *testing.T) {
+	root := t.TempDir()
+	config, err := routingconfig.NewService(root, &routingInspectorFixture{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := store.New(root)
+	core := run.NewServiceWithRegistryAndCatalogs(nil, "codex", config, state)
+	applicationService := application.NewServiceWithCatalogs(core, "codex", config, state)
+	call := func(id int, method string, params any) rpcTestResponse {
+		output := &safeBuffer{}
+		server := NewServerWithTeamAndConfig(strings.NewReader(request(id, method, params)), output, core, applicationService, nil, config)
+		if err := server.Serve(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return decodeResponseLines(t, output.String())[id]
+	}
+	read := call(1, "team.routes.get", map[string]any{"schemaVersion": routingconfig.APIVersion})
+	var initial routingconfig.TeamRoutesResponse
+	decodeRPCResult(t, read, &initial)
+	upsert := map[string]any{"schemaVersion": routingconfig.APIVersion, "mutationId": "rpc-add-claude", "expectedRevision": initial.Config.Revision, "routeId": "claude/default/sonnet", "driver": "claude", "provider": "default", "model": "sonnet", "enabled": true}
+	first := call(2, "team.routes.upsert", upsert)
+	replayed := call(3, "team.routes.upsert", upsert)
+	var created, replay routingconfig.TeamRoutesMutationResponse
+	decodeRPCResult(t, first, &created)
+	decodeRPCResult(t, replayed, &replay)
+	if created.Config.Revision != initial.Config.Revision+1 || created.Replayed || !replay.Replayed {
+		t.Fatalf("created=%+v replay=%+v", created, replay)
+	}
+	removed := call(4, "team.routes.remove", map[string]any{"schemaVersion": routingconfig.APIVersion, "mutationId": "rpc-remove-claude", "expectedRevision": created.Config.Revision, "routeId": "claude/default/sonnet"})
+	if removed.Error != nil {
+		t.Fatalf("remove error=%+v", removed.Error)
+	}
+}
+
 func decodeResponseLines(t *testing.T, value string) map[int]rpcTestResponse {
 	t.Helper()
 	result := map[int]rpcTestResponse{}

@@ -127,6 +127,22 @@ func TestHarnessPoliciesAreReadOnlyAndMachineReadable(t *testing.T) {
 	}
 }
 
+func TestAgentDefaultRouteOmitsModelArgument(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"claude", "opencode"} {
+		driver := testDriver(t, name, exe, exe)
+		args, _ := driver.command(record{HandleID: "session-default", ExternalID: "11111111-1111-4111-8111-111111111111", Model: "default"})
+		for _, argument := range args {
+			if argument == "--model" {
+				t.Fatalf("%s default route passed --model: %v", name, args)
+			}
+		}
+	}
+}
+
 func testDriver(t *testing.T, name, executable, supervisor string) *Driver {
 	t.Helper()
 	catalog := routing.CapabilityCatalogV1{SchemaVersion: routing.CapabilityCatalogV1Version, PolicyVersion: routing.RoutingPolicyV1Version, Models: []routing.ModelCapabilityV1{{ID: name + "/profile/model", Target: routing.Target{Driver: name, Provider: "profile", Model: "provider/model"}, Capabilities: []routing.Capability{routing.CapabilityRepoRead}, ContextLimitBytes: 128 * 1024, MaxOutputBytes: 32 * 1024, Quality: routing.QualityBalanced, Cost: routing.CostLow, Latency: routing.LatencyFast, SupportsCancellation: true}}}

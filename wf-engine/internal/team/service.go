@@ -41,6 +41,7 @@ type StartResult struct {
 type Service struct {
 	state             *store.Store
 	catalog           routing.CapabilityCatalogV1
+	catalogs          map[string]routing.CapabilityCatalogV1
 	now               func() time.Time
 	drivers           map[string]explorationdriver.Driver
 	sessionDrivers    map[string]sessiondriver.Driver
@@ -76,9 +77,14 @@ func NewServiceWithCatalog(state *store.Store, catalog routing.CapabilityCatalog
 	if len(catalog.Models) < teamcontract.MinParticipants {
 		return nil, fmt.Errorf("Team Agent route catalog requires at least %d models", teamcontract.MinParticipants)
 	}
+	hash, err := routing.CatalogHash(catalog)
+	if err != nil {
+		return nil, err
+	}
 	return &Service{
 		state:             state,
 		catalog:           catalog,
+		catalogs:          map[string]routing.CapabilityCatalogV1{hash: catalog},
 		now:               time.Now,
 		drivers:           make(map[string]explorationdriver.Driver),
 		sessionDrivers:    make(map[string]sessiondriver.Driver),
@@ -101,6 +107,14 @@ func (s *Service) SetRunLookup(lookup RunLookup) error {
 }
 
 func (s *Service) SetDriver(driver explorationdriver.Driver) error {
+	return s.setDriver(driver, false)
+}
+
+func (s *Service) ReplaceDriver(driver explorationdriver.Driver) error {
+	return s.setDriver(driver, true)
+}
+
+func (s *Service) setDriver(driver explorationdriver.Driver, replace bool) error {
 	if driver == nil {
 		return fmt.Errorf("exploration driver is required")
 	}
@@ -113,7 +127,7 @@ func (s *Service) SetDriver(driver explorationdriver.Driver) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.drivers[name]; exists {
+	if _, exists := s.drivers[name]; exists && !replace {
 		return fmt.Errorf("exploration driver %q is already registered", name)
 	}
 	s.drivers[name] = driver
@@ -125,7 +139,22 @@ func (s *Service) SetDriver(driver explorationdriver.Driver) error {
 	return nil
 }
 
+func (s *Service) RemoveDriver(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.drivers, name)
+	delete(s.driverLimits, name)
+}
+
 func (s *Service) SetSessionDriver(driver sessiondriver.Driver) error {
+	return s.setSessionDriver(driver, false)
+}
+
+func (s *Service) ReplaceSessionDriver(driver sessiondriver.Driver) error {
+	return s.setSessionDriver(driver, true)
+}
+
+func (s *Service) setSessionDriver(driver sessiondriver.Driver, replace bool) error {
 	if driver == nil {
 		return fmt.Errorf("Session Driver is required")
 	}
@@ -142,11 +171,61 @@ func (s *Service) SetSessionDriver(driver sessiondriver.Driver) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.sessionDrivers[name]; exists {
+	if _, exists := s.sessionDrivers[name]; exists && !replace {
 		return fmt.Errorf("Session Driver %q is already registered", name)
 	}
 	s.sessionDrivers[name] = driver
 	return nil
+}
+
+func (s *Service) RemoveSessionDriver(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessionDrivers, name)
+}
+
+func (s *Service) SetCatalog(catalog routing.CapabilityCatalogV1) error {
+	catalog = routing.CanonicalCatalogV1(catalog)
+	if err := routing.ValidateCatalog(catalog); err != nil {
+		return err
+	}
+	if len(catalog.Models) < teamcontract.MinParticipants {
+		return fmt.Errorf("Team Agent route catalog requires at least %d models", teamcontract.MinParticipants)
+	}
+	hash, err := routing.CatalogHash(catalog)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.catalogs == nil {
+		s.catalogs = make(map[string]routing.CapabilityCatalogV1)
+	}
+	if previousHash, hashErr := routing.CatalogHash(s.catalog); hashErr == nil {
+		s.catalogs[previousHash] = s.catalog
+	}
+	s.catalog, s.catalogs[hash] = catalog, catalog
+	return nil
+}
+
+func (s *Service) AddHistoricalCatalog(catalog routing.CapabilityCatalogV1) error {
+	catalog = routing.CanonicalCatalogV1(catalog)
+	hash, err := routing.CatalogHash(catalog)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.catalogs == nil {
+		s.catalogs = make(map[string]routing.CapabilityCatalogV1)
+	}
+	s.catalogs[hash] = catalog
+	return nil
+}
+
+func (s *Service) catalogByHashLocked(hash string) (routing.CapabilityCatalogV1, bool) {
+	catalog, ok := s.catalogs[hash]
+	return catalog, ok
 }
 
 func (s *Service) Drivers() []string {
@@ -376,7 +455,10 @@ func (s *Service) prepareInitialTurnsLocked(teamID string) (teamcontract.TeamSes
 	if snapshot.State == teamcontract.LifecycleClosed {
 		return snapshot, nil
 	}
-	catalog := s.catalog
+	catalog, foundCatalog := s.catalogByHashLocked(snapshot.CatalogHash)
+	if !foundCatalog {
+		return snapshot, fmt.Errorf("Team Catalog %q is unavailable for recovery", snapshot.CatalogHash)
+	}
 	now := s.now().UTC()
 	changed := false
 	cumulative := 0
@@ -808,7 +890,9 @@ func boundedDiagnostic(value string) string {
 func ptrTime(value time.Time) *time.Time { return &value }
 
 func (s *Service) normalizeStart(request teamcontract.TeamStartRequestV1, project string) (teamcontract.TeamStartRequestV1, []teamcontract.ParticipantV1, string, error) {
-	catalog := s.catalog
+	s.mu.Lock()
+	catalog := routing.CanonicalCatalogV1(s.catalog)
+	s.mu.Unlock()
 	if err := routing.ValidateCatalog(catalog); err != nil {
 		return teamcontract.TeamStartRequestV1{}, nil, "", err
 	}
@@ -824,9 +908,13 @@ func (s *Service) normalizeStart(request teamcontract.TeamStartRequestV1, projec
 	}
 	specs := append([]teamcontract.ParticipantSpecV1(nil), request.Participants...)
 	if len(specs) == 0 {
+		defaults := defaultParticipantModels(catalog)
+		if len(defaults) < teamcontract.MinParticipants {
+			return teamcontract.TeamStartRequestV1{}, nil, "", fmt.Errorf("%w: at least %d available Team routes are required", ErrCapabilityUnavailable, teamcontract.MinParticipants)
+		}
 		specs = []teamcontract.ParticipantSpecV1{
-			{Label: "architect", Role: "propose a coherent architecture and tradeoffs", ModelID: catalog.Models[0].ID},
-			{Label: "reviewer", Role: "challenge assumptions and identify failure modes", ModelID: catalog.Models[1].ID},
+			{Label: "architect", Role: "propose a coherent architecture and tradeoffs", ModelID: defaults[0]},
+			{Label: "reviewer", Role: "challenge assumptions and identify failure modes", ModelID: defaults[1]},
 		}
 	}
 	participants := make([]teamcontract.ParticipantV1, 0, len(specs))
@@ -856,8 +944,8 @@ func (s *Service) normalizeStart(request teamcontract.TeamStartRequestV1, projec
 }
 
 func (s *Service) participantCost(participants []teamcontract.ParticipantV1, catalogHash string) int {
-	catalog := s.catalog
-	if hash, err := routing.CatalogHash(catalog); err != nil || hash != catalogHash {
+	catalog, ok := s.catalogByHashLocked(catalogHash)
+	if !ok {
 		return teamcontract.MaxCostGrant + 1
 	}
 	total := 0
@@ -873,6 +961,30 @@ func (s *Service) participantCost(participants []teamcontract.ParticipantV1, cat
 		}
 	}
 	return total
+}
+
+func defaultParticipantModels(catalog routing.CapabilityCatalogV1) []string {
+	wanted := []string{"codex/architect/gpt-5.6-sol", "codex/reviewer/gpt-5.6-sol"}
+	selected := make([]string, 0, teamcontract.MinParticipants)
+	for _, id := range wanted {
+		for _, model := range catalog.Models {
+			if model.ID == id {
+				selected = append(selected, id)
+				break
+			}
+		}
+	}
+	if len(selected) == teamcontract.MinParticipants {
+		return selected
+	}
+	selected = selected[:0]
+	for _, model := range catalog.Models {
+		selected = append(selected, model.ID)
+		if len(selected) == teamcontract.MinParticipants {
+			break
+		}
+	}
+	return selected
 }
 
 func canonicalProject(value string) (string, error) {

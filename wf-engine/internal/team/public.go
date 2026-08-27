@@ -20,7 +20,9 @@ type actionIntentV1 struct {
 }
 
 func (s *Service) Capabilities() (teamcontract.TeamCapabilitiesV1, error) {
-	catalog := s.catalog
+	s.mu.Lock()
+	catalog := routing.CanonicalCatalogV1(s.catalog)
+	s.mu.Unlock()
 	hash, err := routing.CatalogHash(catalog)
 	if err != nil {
 		return teamcontract.TeamCapabilitiesV1{}, err
