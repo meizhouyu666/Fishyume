@@ -25,6 +25,50 @@ interface WebRouteHost {
   }): () => void
 }
 
+/** Focus target the embedded console should open (team/handoff/run). */
+export type WebTarget =
+  | { kind: 'team'; teamId: string }
+  | { kind: 'handoff'; teamId: string; handoffId: string }
+  | { kind: 'run'; runId: string }
+
+function parseTarget(value: unknown): WebTarget | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const target = value as Record<string, unknown>
+  if (target.kind === 'team' && typeof target.teamId === 'string' && target.teamId.length > 0 && target.teamId.length <= 128) return { kind: 'team', teamId: target.teamId }
+  if (target.kind === 'handoff' && typeof target.teamId === 'string' && typeof target.handoffId === 'string' && target.teamId.length > 0 && target.handoffId.length > 0 && target.teamId.length <= 128 && target.handoffId.length <= 128) return { kind: 'handoff', teamId: target.teamId, handoffId: target.handoffId }
+  if (target.kind === 'run' && typeof target.runId === 'string' && target.runId.length > 0 && target.runId.length <= 128) return { kind: 'run', runId: target.runId }
+  return undefined
+}
+
+/** URL fragment the iframe uses to focus on a target. */
+export function targetFragment(target?: WebTarget): string {
+  if (!target) return ''
+  const values = new URLSearchParams({ targetKind: target.kind })
+  if (target.kind === 'team') values.set('teamId', target.teamId)
+  if (target.kind === 'handoff') { values.set('teamId', target.teamId); values.set('handoffId', target.handoffId) }
+  if (target.kind === 'run') values.set('runId', target.runId)
+  return `&${values.toString()}`
+}
+
+function writeJSON(res: ServerResponse, status: number, value: unknown): void {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' })
+  res.end(JSON.stringify(value))
+}
+
+function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    req.on('data', (chunk) => {
+      size += Buffer.byteLength(chunk)
+      if (size > maxBytes) { reject(new Error('body too large')); req.destroy(); return }
+      chunks.push(Buffer.from(chunk))
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    req.on('error', reject)
+  })
+}
+
 export const name = 'dsh-fishyume'
 // No required services: the web server is discovered lazily so headless
 // profiles keep the plugin loaded without a route surface.
@@ -50,6 +94,8 @@ export function apply(ctx: PluginContext, config: Config): void {
   if (config.enabled === false) return
 
   const token = randomBytes(32).toString('base64url')
+  // Focus target the panel should open; bumped by the /api/focus route.
+  let focus: { target?: WebTarget; revision: number } = { target: undefined, revision: 0 }
   // Lazy engine: the control plane is launched only when the first RPC arrives,
   // so mounting the plugin has no boot-time side effect and stays unit-testable.
   let engine: EngineClient | undefined
@@ -84,6 +130,26 @@ export function apply(ctx: PluginContext, config: Config): void {
         res.end(JSON.stringify({ token }))
       },
     }), 'dsh-fishyume: token route')
+
+    // Focus target (team/handoff/run): GET returns the current target, POST
+    // sets it and bumps the revision so the panel can refocus its iframe.
+    ctx.effect(() => webServer.register({
+      kind: 'exact',
+      path: '/plugins/dsh-fishyume/api/focus',
+      handler: async (req, res) => {
+        if (req.method !== 'GET' && req.method !== 'POST') { res.writeHead(405); res.end(); return }
+        if (req.method === 'GET') { writeJSON(res, 200, focus); return }
+        let body: string
+        try { body = await readBody(req, 8 * 1024) } catch { res.writeHead(400); res.end(); return }
+        let parsed: { target?: unknown }
+        try { parsed = JSON.parse(body) as { target?: unknown } } catch { res.writeHead(400); res.end(); return }
+        if (parsed.target === undefined) { writeJSON(res, 200, focus); return }
+        const target = parseTarget(parsed.target)
+        if (target === undefined) { writeJSON(res, 400, { error: { code: 'invalid_target', message: 'invalid Web focus target' } }); return }
+        focus = { target, revision: focus.revision + 1 }
+        writeJSON(res, 200, focus)
+      },
+    }), 'dsh-fishyume: focus route')
 
     // JSON-RPC gateway (POST /api/rpc) — the Fishyume Application/Team API.
     ctx.effect(() => webServer.register({

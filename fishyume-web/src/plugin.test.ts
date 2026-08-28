@@ -42,6 +42,7 @@ test('plugin exports its identity and registers token/rpc/static routes', () => 
   apply(fakeContext(server), {})
   const paths = server.routes.map((r) => `${r.kind}:${r.path}`)
   assert.ok(paths.includes('exact:/plugins/dsh-fishyume/token'), `token route missing: ${paths.join(', ')}`)
+  assert.ok(paths.includes('exact:/plugins/dsh-fishyume/api/focus'), `focus route missing: ${paths.join(', ')}`)
   assert.ok(paths.includes('exact:/plugins/dsh-fishyume/api/rpc'), `rpc route missing: ${paths.join(', ')}`)
   assert.ok(paths.includes('prefix:/plugins/dsh-fishyume/'), `static route missing: ${paths.join(', ')}`)
 })
@@ -72,4 +73,52 @@ test('disabled config skips route registration', () => {
   const server = fakeWebServer()
   apply(fakeContext(server), { enabled: false })
   assert.equal(server.routes.length, 0)
+})
+
+test('focus route GET returns initial state and POST bumps revision', async () => {
+  const server = fakeWebServer()
+  apply(fakeContext(server), {})
+  const route = server.routes.find((r) => r.path === '/plugins/dsh-fishyume/api/focus')
+  assert.ok(route)
+
+  const getRes = fakeResponse()
+  await route!.handler({ method: 'GET' }, getRes)
+  const initial = JSON.parse(getRes.body) as { revision?: number; target?: unknown }
+  assert.equal(initial.revision, 0)
+  assert.equal(initial.target, undefined)
+
+  const postRes = fakeResponse()
+  const postReq = {
+    method: 'POST',
+    on(event: string, cb: (...args: unknown[]) => void) {
+      if (event === 'data') cb(Buffer.from(JSON.stringify({ target: { kind: 'team', teamId: 'team-1' } })))
+      if (event === 'end') cb()
+      return undefined
+    },
+    destroy: () => {},
+  }
+  await route!.handler(postReq, postRes)
+  const updated = JSON.parse(postRes.body) as { revision?: number; target?: { kind?: string; teamId?: string } }
+  assert.equal(updated.revision, 1)
+  assert.equal(updated.target?.kind, 'team')
+  assert.equal(updated.target?.teamId, 'team-1')
+})
+
+test('focus route POST rejects invalid target', async () => {
+  const server = fakeWebServer()
+  apply(fakeContext(server), {})
+  const route = server.routes.find((r) => r.path === '/plugins/dsh-fishyume/api/focus')
+  assert.ok(route)
+  const res = fakeResponse()
+  const req = {
+    method: 'POST',
+    on(event: string, cb: (...args: unknown[]) => void) {
+      if (event === 'data') cb(Buffer.from(JSON.stringify({ target: { kind: 'team' } })))
+      if (event === 'end') cb()
+      return undefined
+    },
+    destroy: () => {},
+  }
+  await route!.handler(req, res)
+  assert.equal(res.status, 400)
 })
