@@ -29,15 +29,15 @@ func (*registryBackend) Cancel(context.Context, ExecutionHandle) (*CancelResult,
 
 func TestRegistryRejectsDuplicatesAndSortsNames(t *testing.T) {
 	registry := NewRegistry()
-	for _, name := range []string{"direct", "ccpanes"} {
+	for _, name := range []string{"codex", "fixture"} {
 		if err := registry.Register(&registryBackend{name: name, ready: true}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := registry.Register(&registryBackend{name: "direct"}); err == nil {
+	if err := registry.Register(&registryBackend{name: "codex"}); err == nil {
 		t.Fatal("duplicate Backend was accepted")
 	}
-	if got := strings.Join(registry.Names(), ","); got != "ccpanes,direct" {
+	if got := strings.Join(registry.Names(), ","); got != "codex,fixture" {
 		t.Fatalf("Names() = %q", got)
 	}
 }

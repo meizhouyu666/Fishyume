@@ -22,8 +22,10 @@ async function markdownFiles(directory) {
 
 test('repository excludes retired execution paths and local agent configuration', async () => {
   for (const relative of [
+    'wf-engine/internal/backend/ccpanes',
     'wf-engine/internal/backend/directcli',
     'wf-engine/internal/backend/driveradapter',
+    'wf/scripts/stress.mjs',
     '.codex/config.toml',
   ]) assert.equal(await exists(resolve(repoRoot, relative)), false, `${relative} must not return`);
   const ignore = await readFile(resolve(repoRoot, '.gitignore'), 'utf8');

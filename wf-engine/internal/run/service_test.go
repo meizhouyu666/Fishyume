@@ -65,7 +65,7 @@ func (b *fakeWorkflowBackend) Observe(ctx context.Context, handle backend.Execut
 			b.preferObserve = false
 		}
 		b.mu.Unlock()
-		return observationFromLegacyFixture(observation), nil
+		return &observation, nil
 	}
 	if b.preferObserve {
 		b.reconcileCalls++
@@ -87,7 +87,7 @@ func (b *fakeWorkflowBackend) Observe(ctx context.Context, handle backend.Execut
 		observation := queue[0]
 		b.observations[handle.ID] = queue[1:]
 		b.mu.Unlock()
-		return observationFromLegacyFixture(observation), nil
+		return &observation, nil
 	}
 	b.waitCalls++
 	b.mu.Unlock()
@@ -119,16 +119,6 @@ func observationFromResult(result backend.BackendResult) *backend.ExecutionObser
 		copy := backend.AgentResult(result)
 		return &backend.ExecutionObservation{State: backend.ObservationTerminal, Result: &copy}
 	}
-}
-
-func observationFromLegacyFixture(observation backend.Observation) *backend.ExecutionObservation {
-	if observation.State == backend.ObservationExited {
-		return &backend.ExecutionObservation{State: backend.ObservationTerminal, Result: &backend.AgentResult{Status: "indeterminate", Summary: "fixture exited"}}
-	}
-	if observation.State == backend.ObservationError {
-		return &backend.ExecutionObservation{State: backend.ObservationTerminal, Result: &backend.AgentResult{Status: "failed", Summary: "fixture error"}}
-	}
-	return &observation
 }
 
 func instantCancelPoll(ctx context.Context) error {
@@ -167,11 +157,6 @@ func (b *fakeWorkflowBackend) Cancel(_ context.Context, _ backend.ExecutionHandl
 	b.mu.Unlock()
 	return &backend.CancelResult{State: backend.CancelConfirmed}, nil
 }
-func (b *fakeWorkflowBackend) DecodeLegacySession(session backend.Session) (*backend.ExecutionHandle, error) {
-	data, _ := json.Marshal(map[string]any{"metadata": session.Metadata})
-	return &backend.ExecutionHandle{Backend: b.Name(), SchemaVersion: 1, ID: session.ID, Data: data}, nil
-}
-
 func waitForRun(t *testing.T, service *Service, runID string, predicate func(WorkflowSnapshot) bool) WorkflowSnapshot {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -575,30 +560,6 @@ func TestNewAttemptPersistsGenericExecutionHandleOnly(t *testing.T) {
 	}
 }
 
-func TestLegacyM211AttemptDecodesThroughBackendAdapter(t *testing.T) {
-	var attempt AttemptSnapshot
-	if err := json.Unmarshal([]byte(`{
-      "protocolVersion":2,"stateSchemaVersion":1,"runId":"run-legacy","nodeId":"agent-1","number":1,
-      "phase":"running","backend":"fake","launchState":"session_persisted",
-      "session":{"id":"session-legacy","metadata":{"project":"p"}},"taskBindingId":"binding-legacy",
-      "promptHash":"hash","bindingConsumed":false,"startedAt":"2026-08-05T00:00:00Z","updatedAt":"2026-08-05T00:00:01Z"
-    }`), &attempt); err != nil {
-		t.Fatal(err)
-	}
-	candidate := &fakeWorkflowBackend{}
-	service := NewService(candidate, store.New(t.TempDir()))
-	handle, err := service.executionHandle(candidate, attempt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if handle == nil || handle.ID != "session-legacy" || handle.Backend != "fake" || !strings.Contains(string(handle.Data), "binding-legacy") {
-		t.Fatalf("handle=%+v", handle)
-	}
-	if attempt.LaunchState != LaunchHandlePersisted {
-		t.Fatalf("legacy launch state was not normalized: %q", attempt.LaunchState)
-	}
-}
-
 func TestResumeReconciliationClassifiesDelayedMissingAndExited(t *testing.T) {
 	for _, test := range []struct {
 		name           string
@@ -610,7 +571,6 @@ func TestResumeReconciliationClassifiesDelayedMissingAndExited(t *testing.T) {
 		{"delayed-binding", []backend.Observation{{State: backend.ObservationCompletionMissing}, {State: backend.ObservationTerminal, Result: &backend.BackendResult{Status: "succeeded", Summary: "late result"}}}, PhaseCompleted, ConclusionSucceeded, ""},
 		{"persistent-idle", []backend.Observation{{State: backend.ObservationCompletionMissing}, {State: backend.ObservationCompletionMissing}, {State: backend.ObservationCompletionMissing}}, PhaseWaiting, "", ReasonCompletionMissing},
 		{"waiting-input", []backend.Observation{{State: backend.ObservationWaitingInput}}, PhaseWaiting, "", ReasonAgentWaitingInput},
-		{"exited", []backend.Observation{{State: backend.ObservationExited}}, PhaseCompleted, ConclusionIndeterminate, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			b := &fakeWorkflowBackend{waitBlock: true, observations: map[string][]backend.Observation{}}
@@ -765,7 +725,6 @@ func TestAttemptWithoutPersistedHandleBecomesIndeterminateWithoutLaunch(t *testi
 		t.Fatal(err)
 	}
 	attempt.Execution = nil
-	attempt.legacyExecution = nil
 	attempt.Phase = NodePhaseRunning
 	attempt.Conclusion = ""
 	if err := state.UpdateAttempt(started.ID, "agent-1", 1, attempt); err != nil {

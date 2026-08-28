@@ -288,16 +288,11 @@ func (s *Service) selectBackend(explicit, workflowDefault string) (backend.Agent
 	if name == "direct" {
 		name = "codex"
 	}
-	if name == "ccpanes" {
-		return nil, "", fmt.Errorf("CC-Panes is retired for new Runs; historical snapshots remain readable but cannot be selected")
-	}
 	candidate, err := s.registry.Get(name)
 	if err != nil {
-		// M4 compatibility for embedded single-Driver tests and callers that
-		// still express tool=codex separately from their injected backend name.
-		// Production registers the formal "codex" Driver and never takes this
-		// path. CC-Panes is intentionally excluded.
-		if name == "codex" && s.defaultBackend != "ccpanes" {
+		// Compatibility for embedded single-Driver tests and callers that still
+		// express tool=codex separately from their injected backend name.
+		if name == "codex" {
 			if fallback, fallbackErr := s.registry.Get(s.defaultBackend); fallbackErr == nil {
 				return fallback, s.defaultBackend, nil
 			}
@@ -1349,9 +1344,9 @@ func (s *Service) waitForCancellationHandle(ctx context.Context, runID, nodeID s
 			return attempt, nil, nil
 		case "":
 			return attempt, nil, errors.New("cannot confirm cancellation because the active Attempt predates durable launch-state tracking and has no persisted execution handle")
-		case LaunchFinishedWithoutHandle, LaunchFinishedWithoutSession:
+		case LaunchFinishedWithoutHandle:
 			return attempt, nil, errors.New("cannot confirm cancellation because Backend launch finished without a persisted execution handle")
-		case LaunchHandlePersisted, LaunchSessionPersisted:
+		case LaunchHandlePersisted:
 			return attempt, nil, errors.New("cannot confirm cancellation because launch state says the execution handle was persisted but handle data is missing")
 		case LaunchDispatching:
 			if time.Now().After(deadline) {
@@ -1986,18 +1981,7 @@ func (s *Service) executionHandle(candidate backend.AgentBackend, attempt Attemp
 		}
 		return &handle, nil
 	}
-	if attempt.legacyExecution == nil || attempt.legacyExecution.SessionID == "" {
-		return nil, nil
-	}
-	decoder, ok := candidate.(backend.LegacySessionDecoder)
-	if !ok {
-		return nil, fmt.Errorf("Backend %q cannot decode a legacy M2.1.1 session", candidate.Name())
-	}
-	metadata := make(map[string]string, len(attempt.legacyExecution.Metadata))
-	for key, value := range attempt.legacyExecution.Metadata {
-		metadata[key] = value
-	}
-	return decoder.DecodeLegacySession(backend.Session{ID: attempt.legacyExecution.SessionID, Metadata: metadata})
+	return nil, nil
 }
 
 func (s *Service) reconcileAttempt(ctx context.Context, runID, nodeID string, attemptNumber int, generation uint64) (bool, error) {
@@ -2046,10 +2030,8 @@ func (s *Service) waitAttempt(ctx context.Context, runID, nodeID string, attempt
 			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonAgentWaitingInput, "Agent is waiting for input")
 		case backend.ObservationResultPending:
 			return s.reconcileResultPending(ctx, runID, nodeID, attemptNumber, generation, candidate, handle)
-		case backend.ObservationLost, backend.ObservationExited:
+		case backend.ObservationLost:
 			return true, s.finishIndeterminate(runID, nodeID, attemptNumber, generation, "Agent execution was lost without a valid terminal result")
-		case backend.ObservationError:
-			return s.finishResult(runID, nodeID, attemptNumber, generation, &backend.AgentResult{Status: "failed", Summary: "Agent execution reported an error"})
 		case backend.ObservationActive:
 			if err := s.waitStartupIdleReconcile(ctx); err != nil {
 				return false, err
@@ -2084,10 +2066,8 @@ func (s *Service) reconcileResultPending(ctx context.Context, runID, nodeID stri
 			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonAgentWaitingInput, "Agent is waiting for input")
 		case backend.ObservationResultPending:
 			continue
-		case backend.ObservationExited, backend.ObservationLost:
+		case backend.ObservationLost:
 			return true, s.finishIndeterminate(runID, nodeID, attemptNumber, generation, "Agent execution was lost without a valid terminal result")
-		case backend.ObservationError:
-			return s.finishResult(runID, nodeID, attemptNumber, generation, &backend.AgentResult{Status: "failed", Summary: "Agent execution reported an error"})
 		default:
 			return false, s.waiting(runID, nodeID, attemptNumber, generation, ReasonCompletionMissing, "Backend result reconciliation returned unsupported state "+string(observation.State))
 		}

@@ -93,7 +93,7 @@ export const canonicalVisualFixtures: readonly CanonicalVisualFixture[] = [
     id: 'concurrent', title: 'Concurrent execution', view: {protocolVersion: 2, legacy: false, run: concurrentRun,
       activeAttempts: [
         attempt(concurrentRun.id, '实现-operator-console', 2, 'direct', 'pid:4821'),
-        attempt(concurrentRun.id, 'windows-pty-check', 1, 'ccpanes', 'session:pty-77'),
+        attempt(concurrentRun.id, 'windows-pty-check', 1, 'codex', 'process:pty-77'),
       ], waitingApprovals: [concurrentNodes.review!]}, selectedNodeId: '实现-operator-console',
   },
   {
@@ -115,7 +115,7 @@ export const canonicalVisualFixtures: readonly CanonicalVisualFixture[] = [
     id: 'cancelling', title: 'Cancellation in progress', view: {protocolVersion: 2, legacy: false, run: cancellingRun,
       activeAttempts: [
         attempt(cancellingRun.id, 'stop-local-worker', 2, 'direct', 'pid:5100'),
-        attempt(cancellingRun.id, 'stop-remote-worker', 1, 'ccpanes', 'session:remote-9', {launchState: 'session_persisted'}),
+        attempt(cancellingRun.id, 'stop-remote-worker', 1, 'codex', 'process:remote-9'),
       ], diagnostics: [
         {nodeId: 'stop-local-worker', reason: 'cancel_failed', message: 'Cancellation requested; execution confirmation pending.'},
         {nodeId: 'stop-remote-worker', reason: 'cancel_failed', message: 'Remote session still reports active.'},

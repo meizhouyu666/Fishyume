@@ -128,12 +128,7 @@ const (
 	ObservationTerminal      ObservationState = "terminal"
 	ObservationLost          ObservationState = "lost"
 
-	// Deprecated compatibility states. Concrete Backends must migrate these
-	// to terminal AgentResult values during M2.1.2.
-	ObservationExited ObservationState = "exited"
-	ObservationError  ObservationState = "error"
-
-	// Deprecated name retained while run.Service moves to result_pending.
+	// Alias retained for callers that use the older completion-missing name.
 	ObservationCompletionMissing = ObservationResultPending
 )
 
@@ -198,12 +193,6 @@ type AgentBackend interface {
 	Observe(context.Context, ExecutionHandle) (*ExecutionObservation, error)
 	Output(context.Context, ExecutionHandle, int) (string, error)
 	Cancel(context.Context, ExecutionHandle) (*CancelResult, error)
-}
-
-// LegacySessionDecoder is used only to resume M2.1.1 Attempts that persisted
-// the former Session shape. New Attempts persist ExecutionHandle directly.
-type LegacySessionDecoder interface {
-	DecodeLegacySession(Session) (*ExecutionHandle, error)
 }
 
 func ValidateAgentExecutionSpec(spec AgentExecutionSpec) error {
@@ -343,41 +332,5 @@ func ValidateCancelResult(result CancelResult) error {
 	}
 }
 
-// The types below are retained only while the M2.1.1 CC-Panes implementation
-// and run.Service migrate to AgentBackend. New Backends must implement
-// AgentBackend and must not use this legacy surface.
-type LaunchSpec struct {
-	RunID    string
-	Project  string
-	Tool     string
-	Runtime  string
-	Prompt   string
-	StateDir string
-}
-
-type Session struct {
-	ID       string
-	Metadata map[string]string
-}
-
 type BackendResult = AgentResult
 type Observation = ExecutionObservation
-
-type Backend interface {
-	Name() string
-	Doctor(context.Context) error
-	Launch(context.Context, LaunchSpec) (*Session, error)
-	Wait(context.Context, Session) (*BackendResult, error)
-	Output(context.Context, Session, int) (string, error)
-	Cancel(context.Context, Session) error
-}
-
-type ProjectDoctor interface {
-	DoctorProject(context.Context, string) error
-}
-
-// Reconciler is a temporary compatibility interface. Observe is mandatory on
-// AgentBackend and replaces this optional capability.
-type Reconciler interface {
-	Reconcile(context.Context, Session) (*Observation, error)
-}

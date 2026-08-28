@@ -36,14 +36,14 @@ Windows x64 only. Installation performs no executable download. Engine
 resolution is `FISHYUME_ENGINE_PATH`, the installed Windows package, a
 development checkout, then compatibility `WF_ENGINE_PATH`.
 
-New Runs use the formal `codex` Driver on target `local`. The Host Agent controls Fishyume through the Application API exposed by MCP or Machine CLI; humans attach the TUI to the same durable Run. Release packages require no CC-Panes Profile, CC-Panes control plane, project registration, TaskBinding, or managed Session. Historical CC-Panes compatibility implementation and tests remain for reading old state and diagnostics, not as a current product dependency.
+New Runs use the formal `codex` Driver on target `local`. The Host Agent controls Fishyume through the Application API exposed by MCP or Machine CLI; humans attach the TUI to the same durable Run. Release packages require no CC-Panes Profile, CC-Panes control plane, project registration, TaskBinding, or managed Session. CC-Panes execution support is retired; old milestone records are historical evidence only.
 
 ## Automated evidence
 
 Provider-independent public CI runs on Windows:
 
 - `go test ./...`, `go vet ./...`, and `go build ./cmd/wf-engine`;
-- Driver contracts, fake Codex execution, process identity, recovery, cancellation, bounded logs, structured Result, concurrency, journal, Application, IPC, MCP/Machine parity, and historical compatibility fixtures are run in the local full verification command;
+- Driver contracts, fake Codex execution, process identity, recovery, cancellation, bounded logs, structured Result, concurrency, journal, Application, IPC, and MCP/Machine parity are run in the local full verification command;
 - a two-client MCP Host/TUI-controller acceptance gate covering shared state, stale-version action conflict, detach/close semantics, monotonic events, and non-duplicated Attempts;
 - TypeScript typecheck, build, dry-run/real package audits;
 - Windows package installation checks;
@@ -57,7 +57,7 @@ The repository example `docs/examples/fishyume-smoke.yaml` uses `defaults.agent.
 
 M2.1/M2.2 live records from 2026-08-05 demonstrated the former Direct and CC-Panes execution paths, including parallel execution, restart recovery, approval, cancellation confirmation, and process cleanup. Those records remain useful regression history, but they predate the M4 Application API, Local Control Plane ownership, formal Driver naming, Host Agent MCP flow, and current TUI attach behavior.
 
-Historical evidence must not be presented as current M4.4 acceptance. The legacy snapshots and compatibility tests remain intentionally; release instructions must not ask users to configure `FISHYUME_CCPANES_PROFILE_ID`, a CC-Panes Profile, or a registered CC-Panes project.
+Historical evidence must not be presented as current M4.4 acceptance. Release instructions must not ask users to configure `FISHYUME_CCPANES_PROFILE_ID`, a CC-Panes Profile, or a registered CC-Panes project.
 
 ## M4.4 live acceptance status
 
@@ -80,14 +80,14 @@ read-only sandbox. On this machine `codex-cli 0.147.0` completed the full seven-
 sequence (`system.capabilities`, `workflow.validate`, `workflow.explain`, `run.start`,
 `run.events`, `run.action`, `run.result`) without a manual MCP allow. The temporary
 Control Plane and Codex home were removed, and no credential, prompt, or full JSONL
-was persisted. The rendered Host/TUI gate also completed through a CC-Panes-backed
-Windows PTY at 120 columns. `codex-cli 0.147.0` started Run
+was persisted. An earlier rendered Host/TUI gate used an external Windows PTY at
+120 columns; that harness is historical. `codex-cli 0.147.0` started Run
 `run-b45156ced1fce99208dd2228`, the TUI approved it, and the Host's completed MCP
 payload proved retained waiting version `3`, exact `error.code: "conflict"`, current
 version `5`, and a matching terminal `run.result` with conclusion `succeeded`.
 `smoke:codex-host-pty:auto` then detached the observer and only reported success after
-the temporary directory was removed. CC-Panes supplied the terminal only; it was not
-a Fishyume backend or state owner.
+the temporary directory was removed. The external PTY harness is historical and is
+no longer a Fishyume execution dependency.
 
 To repeat these supplemental local gates on a machine with valid Codex authentication:
 
@@ -116,7 +116,7 @@ To repeat these supplemental local gates on a machine with valid Codex authentic
 - [x] Process safety: Driver executable identity, PID/fingerprint reuse protection, cancellation confirmation, and crash reconciliation are covered on supported platforms.
 - [x] Artifacts and checksums: the Windows archive is built with `CGO_ENABLED=0`, `-trimpath`, stripped symbols, expected package contents, and a non-empty SHA-256 checksum file.
 - [x] Provider-independent CI: Windows public gates pass without Provider login, live Codex calls, CC-Panes, Docker, or private infrastructure.
-- [x] Release independence: package audits and current instructions contain no CC-Panes Profile/control-plane requirement; retained CC-Panes code is historical compatibility only.
+- [x] Release independence: package audits and current instructions contain no CC-Panes Profile/control-plane requirement; CC-Panes execution code is retired.
 - [x] Live evidence: real Host MCP, Host/PTY conflict, and real Driver checks are recorded with versions, bounded logs, state cleanup, and no credentials; deterministic crash/restart is covered by `npm --prefix wf run test:restart`.
 - [x] Review and repository: independent review approved exact SHA `b6aa2752c76642a9eaf3235df1a3e43d1dcd1804`; `main == origin/main`, CI passed, and the closure follow-up is documentation-only.
 

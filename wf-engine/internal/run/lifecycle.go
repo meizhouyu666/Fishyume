@@ -138,10 +138,6 @@ const (
 	LaunchDispatching           LaunchState = "dispatching"
 	LaunchHandlePersisted       LaunchState = "handle_persisted"
 	LaunchFinishedWithoutHandle LaunchState = "finished_without_handle"
-
-	// Deprecated M2.1.1 launch states retained for compatibility reads.
-	LaunchSessionPersisted       LaunchState = "session_persisted"
-	LaunchFinishedWithoutSession LaunchState = "finished_without_session"
 )
 
 type AttemptSnapshot struct {
@@ -176,8 +172,6 @@ type AttemptSnapshot struct {
 	StartedAt        time.Time                   `json:"startedAt"`
 	UpdatedAt        time.Time                   `json:"updatedAt"`
 	CompletedAt      *time.Time                  `json:"completedAt,omitempty"`
-
-	legacyExecution *legacyExecutionSnapshot
 }
 
 type MemoryUsageReceipt struct {
@@ -353,7 +347,7 @@ func ValidateAttemptSnapshotWithCatalogs(snapshot AttemptSnapshot, catalogs rout
 			return fmt.Errorf("attempt Target %q does not match execution handle Target %q", attemptTarget(snapshot), executionTarget(*snapshot.Execution))
 		}
 	}
-	if snapshot.LaunchState != "" && snapshot.LaunchState != LaunchPrepared && snapshot.LaunchState != LaunchDispatching && snapshot.LaunchState != LaunchHandlePersisted && snapshot.LaunchState != LaunchFinishedWithoutHandle && snapshot.LaunchState != LaunchSessionPersisted && snapshot.LaunchState != LaunchFinishedWithoutSession {
+	if snapshot.LaunchState != "" && snapshot.LaunchState != LaunchPrepared && snapshot.LaunchState != LaunchDispatching && snapshot.LaunchState != LaunchHandlePersisted && snapshot.LaunchState != LaunchFinishedWithoutHandle {
 		return fmt.Errorf("attempt has invalid launch state %q", snapshot.LaunchState)
 	}
 	if err := validateAttemptMemoryUsage(snapshot); err != nil {

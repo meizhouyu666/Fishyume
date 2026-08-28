@@ -64,7 +64,7 @@ test('all six canonical scenes remain bounded at 80, 120, and 160 columns in Uni
 
 test('canonical scenes expose their defining operator evidence', () => {
   const concurrent = renderRunText(canonicalFixture('concurrent').view, 120, 138_000, optionsFor(canonicalFixture('concurrent')));
-  assert.match(concurrent, /第2次.*direct/); assert.match(concurrent, /第1次.*ccpanes/); assert.match(concurrent, /2 个运行中/);
+  assert.match(concurrent, /第2次.*direct/); assert.match(concurrent, /第1次.*codex/); assert.match(concurrent, /2 个运行中/);
 
   const approval = renderRunText(canonicalFixture('approval').view, 120, 138_000, optionsFor(canonicalFixture('approval')));
   assert.match(approval, /需要人工审批/); assert.match(approval, /Approve production deploy/); assert.match(approval, /A\/Y 批准/); assert.match(approval, /X\/N 拒绝/); assert.doesNotMatch(approval, /T 重试/);
@@ -76,7 +76,7 @@ test('canonical scenes expose their defining operator evidence', () => {
   assert.match(indeterminate, /操作确认 \/ publish-artifact/); assert.match(indeterminate, /重试可能再次产生外部副作用/); assert.match(indeterminate, /外部副作用/); assert.match(indeterminate, /Enter 确认.*Esc 放弃/);
 
   const cancelling = renderRunText(canonicalFixture('cancelling').view, 120, 138_000, optionsFor(canonicalFixture('cancelling')));
-  assert.match(cancelling, /正在取消/); assert.match(cancelling, /ccpanes/); assert.match(cancelling, /Remote session still repo/); assert.doesNotMatch(cancelling, /C 取消任务/); assert.doesNotMatch(cancelling, /已取消/);
+  assert.match(cancelling, /正在取消/); assert.match(cancelling, /codex/); assert.match(cancelling, /Remote session still repo/); assert.doesNotMatch(cancelling, /C 取消任务/); assert.doesNotMatch(cancelling, /已取消/);
 
   const terminal = renderRunText(canonicalFixture('terminal').view, 120, 138_000, optionsFor(canonicalFixture('terminal')));
   for (const label of ['已完成', '已失败', '已取消', '已拒绝']) assert.match(terminal, new RegExp(label));

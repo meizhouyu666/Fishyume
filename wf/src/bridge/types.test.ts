@@ -10,12 +10,12 @@ test('node and attempt snapshots accept generic handles and missing legacy state
   const currentNode: NodeSnapshot = {...legacyNode, stateSchemaVersion: 1};
   const legacyAttempt: AttemptSnapshot = {
     protocolVersion: 2, runId: 'run-1', nodeId: 'plan', number: 1, phase: 'running',
-    backend: 'ccpanes', promptHash: 'hash', launchState: 'session_persisted',
+    backend: 'codex', promptHash: 'hash', launchState: 'handle_persisted',
     startedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
   };
   const currentAttempt: AttemptSnapshot = {
-    protocolVersion: 2, stateSchemaVersion: 1, runId: 'run-2', nodeId: 'plan', number: 1, phase: 'running', backend: 'ccpanes',
-    launchState: 'handle_persisted', execution: {backend: 'ccpanes', schemaVersion: 1, id: 'session-2', data: {sessionId: 'session-2'}},
+    protocolVersion: 2, stateSchemaVersion: 1, runId: 'run-2', nodeId: 'plan', number: 1, phase: 'running', backend: 'codex',
+    launchState: 'handle_persisted', execution: {backend: 'codex', schemaVersion: 1, id: 'execution-2', data: {processId: 'process-2'}},
     resultConsumed: false, promptHash: 'hash', startedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
   };
 
@@ -23,9 +23,9 @@ test('node and attempt snapshots accept generic handles and missing legacy state
   assert.equal(currentNode.stateSchemaVersion, 1);
   assert.equal(legacyAttempt.stateSchemaVersion, undefined);
   assert.equal(currentAttempt.stateSchemaVersion, 1);
-  assert.equal(legacyAttempt.launchState, 'session_persisted');
+  assert.equal(legacyAttempt.launchState, 'handle_persisted');
   assert.equal(currentAttempt.launchState, 'handle_persisted');
-  assert.equal(currentAttempt.execution?.backend, 'ccpanes');
+  assert.equal(currentAttempt.execution?.backend, 'codex');
 
   const parallel: RunStatusView = {
     protocolVersion: 2, legacy: false,

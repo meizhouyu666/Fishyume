@@ -43,9 +43,6 @@ The closing baseline passed:
 Earlier stabilization passes also completed:
 
 - `npm run smoke:install`;
-- `node scripts/stress.mjs`, with 20 repetitions each for `internal/run`,
-  `internal/store`, `internal/controlplane`, and
-  `internal/driver/codexprocess`;
 - repository hygiene and relative Markdown link checks;
 - the historical package downgrade rehearsal.
 

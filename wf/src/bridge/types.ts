@@ -44,7 +44,7 @@ export interface ExecutionHandle {driver?: string; target?: string; backend?: st
 export interface AttemptSnapshot {
   protocolVersion: 2; stateSchemaVersion?: number; runId: string; nodeId: string; number: number; phase: NodePhase;
   conclusion?: Conclusion; reason?: Reason; resolvedDriver?: string; resolvedTarget?: string; backend?: string;
-  launchState?: 'prepared' | 'dispatching' | 'handle_persisted' | 'finished_without_handle' | 'session_persisted' | 'finished_without_session';
+  launchState?: 'prepared' | 'dispatching' | 'handle_persisted' | 'finished_without_handle';
   execution?: ExecutionHandle; resultConsumed?: boolean;
   routingDecision?: RoutingDecision; executionProfile?: ExecutionProfile; routingUsage?: RoutingUsage; sideEffectStatus?: SideEffectStatus; failureClass?: FailureClass;
   contextCompilerVersion?: string; contextCompilerVersionV2?: string; contextManifest?: {compilerVersion: string; components: Array<{name: string; source: string; version: string}>}; contextHash?: string; memoryUsage?: {schemaVersion: string; recordIds: string[]; committed: boolean}; context?: ContextInspect; promptHash?: string;

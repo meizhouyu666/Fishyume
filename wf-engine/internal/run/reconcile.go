@@ -98,13 +98,8 @@ func (s *Service) reconcileAttempts(ctx context.Context, runID string, generatio
 			if err := recordWaiting(result.ref, ReasonCompletionMissing, message); err != nil {
 				return progressed, false, err
 			}
-		case backend.ObservationLost, backend.ObservationExited:
+		case backend.ObservationLost:
 			if err := s.finishIndeterminate(runID, result.ref.nodeID, result.ref.attempt, generation, "Agent execution was lost without a valid terminal result"); err != nil {
-				return progressed, false, err
-			}
-			progressed = true
-		case backend.ObservationError:
-			if _, err := s.finishResult(runID, result.ref.nodeID, result.ref.attempt, generation, &backend.AgentResult{Status: "failed", Summary: "Agent execution reported an error"}); err != nil {
 				return progressed, false, err
 			}
 			progressed = true

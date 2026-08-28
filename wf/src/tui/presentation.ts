@@ -115,7 +115,7 @@ const humanLabels: Record<string, string> = {
   agent: '智能体', approval: '人工审批', pending: '未开始', ready: '准备就绪', running: '运行中', waiting: '等待处理', paused: '已暂停', cancelling: '正在取消', completed: '已结束', skipped: '已跳过',
   succeeded: '成功', failed: '失败', rejected: '已拒绝', cancelled: '已取消', indeterminate: '结果待确认',
   approval_required: '需要人工审批', agent_waiting_input: '需要你的回答', invalid_result: '结果格式无效', completion_missing: '未确认执行完成', user_requested: '用户操作', cancel_failed: '取消尚未确认',
-  handle_persisted: '执行句柄已保存', session_persisted: '会话已保存', result_consumed: '结果已接收',
+  handle_persisted: '执行句柄已保存', result_consumed: '结果已接收',
 };
 
 function human(value: string | undefined): string | undefined {return value ? humanLabels[value] ?? value.replaceAll('_', ' ') : undefined}

@@ -50,9 +50,6 @@ jobs:
           npm --prefix fishyume-web run smoke:install
       - name: Diff check
         run: node wf/scripts/preflight.mjs --step diff-check
-      - name: Reliability script tests
-        run: node --test wf/scripts/reliability-scripts.test.mjs
-
   artifacts:
     runs-on: windows-latest
     steps:
