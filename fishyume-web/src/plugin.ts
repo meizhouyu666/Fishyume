@@ -12,8 +12,8 @@ import { randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { EngineBridge } from '../../wf/src/bridge/engine.js'
-import { createGatewayHandler } from './gateway.js'
+import { EngineBridge, type EngineClient } from '../../wf/src/bridge/engine.js'
+import { createGatewayHandler, type EngineGateway } from './gateway.js'
 import { securityHeaders } from './security.js'
 
 /** Structural slice of the DSH web server service (kind/path route registration). */
@@ -34,7 +34,7 @@ export const inject: string[] = []
  *  local so the plugin typechecks without @deepseek-ai devDependencies; the
  *  real types are provided as peerDependencies at install time. */
 export interface PluginContext {
-  get<T = unknown>(name: string): T | undefined
+  get(name: string): unknown
   effect(setup: () => void | (() => void), label?: string): void
   on(event: string, listener: (name: string) => void): void
 }
@@ -50,13 +50,21 @@ export function apply(ctx: PluginContext, config: Config): void {
   if (config.enabled === false) return
 
   const token = randomBytes(32).toString('base64url')
-  const engine = new EngineBridge(process.env.FISHYUME_ENGINE_PATH)
+  // Lazy engine: the control plane is launched only when the first RPC arrives,
+  // so mounting the plugin has no boot-time side effect and stays unit-testable.
+  let engine: EngineClient | undefined
+  const engineGateway: EngineGateway = {
+    async call<T>(method: string, params?: unknown): Promise<T> {
+      engine ??= new EngineBridge(process.env.FISHYUME_ENGINE_PATH)
+      return engine.call<T>(method, params)
+    },
+  }
   // P1 TODO: host/origin must be DSH's own (127.0.0.1:<port>), not the
   // standalone sidecar's. Capture lazily from the first request until the web
   // server service exposes its canonical origin.
   let host = ''
   let origin = ''
-  const gateway = createGatewayHandler(engine, () => ({ host, origin, token }))
+  const gateway = createGatewayHandler(engineGateway, () => ({ host, origin, token }))
 
   let registered = false
   const registerWebSurface = (): void => {
