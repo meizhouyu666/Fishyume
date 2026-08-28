@@ -1,6 +1,6 @@
-import {createIcons, MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox, Route, Maximize2, Scan, Terminal, FileCode2, FileText, FileJson, FileCog, Wrench} from 'lucide';
+import {createIcons, MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox, Route, Maximize2, Scan, Terminal, FileCode2, FileText, FileJson, FileCog, Wrench, Plus} from 'lucide';
 import type {ApplicationEvent, ApplicationNodeView, RunEventsResponse, RunGetResponse, RunListResponse, RunSummary} from '../../../wf/src/bridge/application.js';
-import type {HandoffArtifact, Participant, ParticipantTurn, TeamGetResponse, TeamListResponse, TeamMessage, TeamMessagesResponse, TeamSummary} from '../../../wf/src/bridge/team.js';
+import type {HandoffArtifact, Participant, ParticipantSpec, ParticipantTurn, TeamGetResponse, TeamListResponse, TeamMessage, TeamMessagesResponse, TeamStartResponse, TeamSummary} from '../../../wf/src/bridge/team.js';
 import type {DriverListResponse, EffectiveCatalogResponse, RoutingConfig, TeamRoutesResponse} from '../../../wf/src/bridge/routing.js';
 import {findWorkflowNode, relatedWorkflowNodeIds, workflowEdges, workflowGraphLayout} from './workflow-view.js';
 import {messageContent} from './team-view.js';
@@ -24,6 +24,7 @@ const state: {
 
 const collection = element('collection-list');
 const detail = element('detail-pane');
+const teamStartDialog = element('team-start-dialog');
 const connection = document.querySelector('.connection-state') as HTMLElement;
 const connectionLabel = element('connection-label');
 
@@ -82,6 +83,63 @@ async function refreshTeams(): Promise<void> {
   renderCollection();
   if (state.selectedTeam) await loadTeam(state.selectedTeam); else renderEmptyDetail('messages-square', '暂无团队');
 }
+
+async function openTeamStartDialog(): Promise<void> {
+  if (!state.teamRoutes) {
+    try {state.teamRoutes = await rpc<TeamRoutesResponse>('team.routes.get', {schemaVersion: 'fishyume.config/v1'})}
+    catch (error) {showError(error); return}
+  }
+  renderTeamStartDialog();
+}
+
+function renderTeamStartDialog(): void {
+  const routes = (state.teamRoutes?.routes ?? []).filter(route => route.effective && route.driverAvailable);
+  teamStartDialog.replaceChildren();
+  const panel = div('start-dialog-panel');
+  const heading = div('start-dialog-heading');
+  heading.append(text('div', 'eyebrow', 'TEAM / START'), text('h2', '', '启动团队'), actionButton('x', '关闭', 'close-team-start'));
+  panel.append(heading);
+  const form = document.createElement('form'); form.className = 'team-start-form';
+  const project = document.createElement('input'); project.name = 'project'; project.required = true; project.placeholder = '项目目录'; project.value = state.teamView?.team.project ?? state.teams[0]?.project ?? '';
+  const topic = document.createElement('textarea'); topic.name = 'topic'; topic.required = true; topic.rows = 3; topic.maxLength = 16 * 1024; topic.placeholder = '你希望团队解决什么问题？';
+  const mode = document.createElement('select'); mode.name = 'mode'; for (const [value, label] of [['panel', 'Panel：一次性并行分析'], ['session', 'Session：可继续追问']] as const) {const option = document.createElement('option'); option.value = value; option.textContent = label; mode.append(option)}
+  form.append(field('项目', project), field('任务主题', topic), field('模式', mode));
+  const harnessSection = div('start-harness-section'); harnessSection.append(text('h3', 'section-title', '本机 Harness'), text('p', 'section-note', 'Team 当前支持 Claude、Codex、OpenCode；认证和 Provider 配置仍由各自 CLI 管理。'));
+  const harnessList = div('start-harness-list');
+  for (const driver of state.teamRoutes?.drivers ?? []) {
+    const item = div('start-harness'); const identity = div('start-route-identity'); identity.append(text('strong', '', driver.driver), text('span', '', driver.available ? (driver.executable ?? 'CLI 已发现') : (driver.diagnostic ?? 'CLI 不可用'))); item.append(identity, status(driver.available ? 'available' : 'unavailable')); harnessList.append(item);
+  }
+  harnessSection.append(harnessList); form.append(harnessSection);
+  const routeSection = div('start-route-section'); routeSection.append(text('h3', 'section-title', '选择参与者'), text('p', 'section-note', '至少选择 2 个已就绪路由；每个路由代表一个本机 Harness + 模型配置。'));
+  const routeList = div('start-route-list');
+  if (!routes.length) routeList.append(empty('暂无可用 Team 路由，请先检查路由页和本机 CLI。'));
+  for (const route of routes) {
+    const label = document.createElement('label'); label.className = 'start-route';
+    const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.name = 'route'; checkbox.value = route.routeId; checkbox.checked = routeList.children.length < 2;
+    const identity = div('start-route-identity'); identity.append(text('strong', '', route.driver), text('span', '', `${route.provider} / ${route.model}`));
+    const statusNode = div('start-route-status'); statusNode.append(status('available'), text('span', 'section-note', route.enabled ? '已启用' : '已停用'));
+    label.append(checkbox, identity, statusNode); routeList.append(label);
+  }
+  routeSection.append(routeList); form.append(routeSection);
+  const actions = div('start-dialog-actions'); const cancel = actionButton('x', '取消', 'close-team-start'); cancel.type = 'button'; const submit = document.createElement('button'); submit.type = 'submit'; submit.className = 'command-button primary'; submit.append(icon('plus'), document.createTextNode('启动团队')); actions.append(cancel, submit); form.append(actions); panel.append(form); teamStartDialog.append(panel); teamStartDialog.hidden = false; refreshIcons();
+  for (const button of teamStartDialog.querySelectorAll<HTMLButtonElement>('[data-action="close-team-start"]')) button.addEventListener('click', closeTeamStartDialog);
+  form.addEventListener('submit', event => {event.preventDefault(); void submitTeamStart(form, routes, submit)});
+}
+
+async function submitTeamStart(form: HTMLFormElement, routes: TeamRoutesResponse['routes'], submit: HTMLButtonElement): Promise<void> {
+  const data = new FormData(form); const project = String(data.get('project') ?? '').trim(); const topic = String(data.get('topic') ?? '').trim(); const selected = data.getAll('route').map(String);
+  if (selected.length < 2 || selected.length > 4) {showError(new Error('请选择 2 到 4 个参与者')); return}
+  const participants: ParticipantSpec[] = selected.map((routeId, index) => {const route = routes.find(candidate => candidate.routeId === routeId)!; return {label: `${route.driver}-${index + 1}`, role: index === 0 ? '分析者' : `协作者 ${index}`, modelId: route.routeId}});
+  submit.disabled = true;
+  try {
+    const response = await rpc<TeamStartResponse>('team.start', {schemaVersion: teamVersion, clientRequestId: `web-team-${crypto.randomUUID()}`, project, mode: String(data.get('mode') ?? 'panel'), topic, participants});
+    closeTeamStartDialog(); state.view = 'teams'; state.selectedTeam = response.team.teamId; state.selectedParticipant = undefined; updateViewControls(); await refreshTeams();
+  } catch (error) {showError(error); submit.disabled = false}
+}
+
+function closeTeamStartDialog(): void {teamStartDialog.hidden = true; teamStartDialog.replaceChildren()}
+function field(labelText: string, input: HTMLElement): HTMLElement {const label = document.createElement('label'); label.className = 'start-field'; label.append(text('span', 'start-field-label', labelText), input); return label}
+function icon(name: string): HTMLElement {const i = document.createElement('i'); i.dataset.lucide = name; return i}
 
 async function loadTeam(teamId: string): Promise<void> {
   const [view, messages, handoffs] = await Promise.all([
@@ -760,11 +818,13 @@ function renderEmptyDetail(icon: string, label: string): void {detail.replaceChi
 function setButtonsDisabled(disabled: boolean): void {for (const button of detail.querySelectorAll<HTMLButtonElement>('button')) button.disabled = disabled}
 function showError(error: unknown): void {if (error instanceof ApiError) {connection.className = 'connection-state is-online'; connectionLabel.textContent = '本地控制面'} else {connection.className = 'connection-state is-error'; connectionLabel.textContent = '连接异常'} const toast = text('div', 'toast', error instanceof Error ? error.message : String(error)); element('toast-region').append(toast); setTimeout(() => toast.remove(), 7000)}
 function errorMessage(error: unknown): string {return error instanceof Error ? error.message : String(error)}
-function refreshIcons(): void {createIcons({icons: {MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox, Route, Maximize2, Scan, Terminal, FileCode2, FileText, FileJson, FileCog, Wrench}})}
+function refreshIcons(): void {createIcons({icons: {MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox, Route, Maximize2, Scan, Terminal, FileCode2, FileText, FileJson, FileCog, Wrench, Plus}})}
 
 for (const button of document.querySelectorAll<HTMLButtonElement>('.view-tab')) button.addEventListener('click', () => {state.view = button.dataset.view as View; state.filter = 'all'; updateViewControls(); void refresh()});
 for (const button of document.querySelectorAll<HTMLButtonElement>('.filter')) button.addEventListener('click', () => {state.filter = button.dataset.filter as Filter; for (const candidate of document.querySelectorAll('.filter')) candidate.classList.toggle('is-active', candidate === button); renderCollection()});
 element('refresh-button').addEventListener('click', () => void refresh());
+element('new-team-button').addEventListener('click', () => void openTeamStartDialog());
+teamStartDialog.addEventListener('click', event => {if (event.target === teamStartDialog) closeTeamStartDialog()});
 document.addEventListener('visibilitychange', () => {if (!document.hidden) void refresh()});
 setInterval(() => {if (!document.hidden) {void refresh(); void pollFocus(); if (state.view === 'runs' && state.selectedRun) void pollRunEvents(state.selectedRun)}}, 3000);
 refreshIcons(); syncViewControls(); collection.append(loading()); detail.append(loading()); void refresh();

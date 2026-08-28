@@ -22,7 +22,10 @@
         <aside class="collection-pane" aria-label="项目列表">
           <div class="pane-heading">
             <div><span class="eyebrow" id="collection-eyebrow">探索</span><h1 id="collection-title">团队</h1></div>
-            <button class="icon-button" id="refresh-button" title="刷新"><i data-lucide="refresh-cw"></i></button>
+            <div class="pane-actions">
+              <button class="command-button primary" id="new-team-button" title="新建团队"><i data-lucide="plus"></i><span>新建团队</span></button>
+              <button class="icon-button" id="refresh-button" title="刷新"><i data-lucide="refresh-cw"></i></button>
+            </div>
           </div>
           <div class="filter-row" id="filter-row">
             <button class="filter is-active" data-filter="all">全部</button>
@@ -33,6 +36,7 @@
         </aside>
         <section id="detail-pane" class="detail-pane" aria-live="polite"></section>
       </main>
+      <div id="team-start-dialog" class="start-dialog" hidden></div>
       <div id="toast-region" class="toast-region" aria-live="assertive"></div>
     </div>
     <script type="module" src="/app.js"></script>
