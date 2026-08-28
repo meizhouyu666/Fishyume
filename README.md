@@ -153,6 +153,10 @@ Fishyume Team 当前支持三个 Agent Driver：
 - Claude Code
 - OpenCode
 
+当前 Host Agent 接入仍以本机 Codex 为准：`fishyume setup` 配置的是 Codex
+MCP。Team worker 可以使用已发现的 Claude Code 或 OpenCode Route，但这不等于
+它们已经可以作为 Fishyume Host Agent 使用；Workflow 当前也保持 Codex-only。
+
 Fishyume 只保存 Driver、可信 Profile 名称、Route 和可选模型参数。使用
 `model=default` 时，Agent 继承自己的默认模型；Fishyume 不管理 Agent 安装、
 登录、API Key、Base URL，也不审计 Agent 最终使用的上游模型。
@@ -169,6 +173,8 @@ Fishyume 已完成 M6 核心合同冻结、M7 Team/Web 能力和 M7.9 Team 零�
 验收记录：[M7.9 Team 零配置路由](./docs/fishyume-m7.9-acceptance.md)
 
 ## 文档
+
+- [当前产品边界](./docs/fishyume-product-scope.md)
 
 - [文档索引](./docs/README.md)
 - [Team Agent Routes](./docs/fishyume-team-agent-routes.md)

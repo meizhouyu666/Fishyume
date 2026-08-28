@@ -496,6 +496,8 @@ function runNode(node: ApplicationNodeView, related = false, dimmed = false): HT
   const item = div(`run-node${state.selectedNode === node.nodeId ? ' is-selected' : ''}`); item.tabIndex = 0; item.setAttribute('role', 'button'); item.setAttribute('aria-pressed', String(state.selectedNode === node.nodeId)); item.dataset.state = safeState(node.conclusion ?? node.phase); item.dataset.related = String(related); item.dataset.dimmed = String(dimmed); item.title = `查看节点 ${node.nodeId}`; item.addEventListener('click', event => {if (!(event.target as HTMLElement).closest('button')) selectNode(node.nodeId)}); item.addEventListener('keydown', event => {if (event.key === 'Enter' || event.key === ' ') {event.preventDefault(); selectNode(node.nodeId)}});
   const top = div('participant-topline'); top.append(text('h3', '', node.nodeId), status(node.conclusion ?? node.phase)); item.append(top);
   const meta = div('node-meta'); meta.append(text('span', '', nodeTypeLabel(node.type)), text('span', '', node.attempt ? `${node.attempt.driver}/${node.attempt.target}` : '尚未开始')); item.append(meta);
+  const tokenSummary = formatTokenUsage(node.result?.usage);
+  if (tokenSummary) item.append(text('div', 'node-usage', tokenSummary));
   if (node.result?.summary) item.append(text('div', 'node-summary', node.result.summary));
   if (node.diagnostic) item.append(text('div', 'node-summary', node.diagnostic));
   return item;
@@ -591,6 +593,8 @@ function renderContextSummary(context: NonNullable<NonNullable<ApplicationNodeVi
 function renderResultDetails(node: ApplicationNodeView): HTMLElement {
   const result = node.result!; const block = div('inspector-block'); block.append(text('h4', 'inspector-label', '节点结果'));
   if (result.summary) block.append(text('p', 'inspector-copy', result.summary));
+  const tokenUsage = formatTokenUsage(result.usage);
+  if (tokenUsage) block.append(keyValueList([['估算用量', tokenUsage]]));
   if (result.artifacts?.length) block.append(renderArtifactCards(result.artifacts));
   if (result.decision) block.append(text('div', 'detail-value', `决定: ${result.decision}`));
   for (const [label, values] of [['产物', result.artifacts], ['检查', result.checks], ['警告', result.warnings]] as const) if (values?.length) {const list = div('inspector-list'); list.append(text('h5', 'inspector-sublabel', label)); for (const value of values) list.append(text('div', 'list-item', value)); block.append(list)}
@@ -601,6 +605,16 @@ function renderResultDetails(node: ApplicationNodeView): HTMLElement {
   }
   if (result.questions?.length && node.phase === 'waiting') block.append(answerForm(node));
   return block;
+}
+
+function formatTokenUsage(usage: Record<string, number> | undefined): string {
+  if (!usage) return '';
+  const inputValue = usage.inputTokensEstimated ?? 0;
+  const outputValue = usage.outputTokensEstimated ?? 0;
+  const input = Number.isFinite(inputValue) ? Math.max(0, Math.trunc(inputValue)) : 0;
+  const output = Number.isFinite(outputValue) ? Math.max(0, Math.trunc(outputValue)) : 0;
+  if (input === 0 && output === 0) return '';
+  return `输入 ${input.toLocaleString()} / 输出 ${output.toLocaleString()} / 合计 ${(input + output).toLocaleString()} tokens`;
 }
 
 function renderArtifactCards(artifacts: string[]): HTMLElement {

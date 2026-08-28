@@ -6,6 +6,9 @@ links and review evidence stay stable.
 
 ## Current baseline
 
+- [Product scope](fishyume-product-scope.md): current supported path,
+  explicit deferrals, and the change gate for avoiding speculative design.
+
 - [M7 Team exploration plan](fishyume-m7-session-native-web-team-console-plan.md):
   M7.1 Panel, M7.2 Handoff promotion, and the internal M7.3 Session Driver are complete.
 - [M7.1 Panel acceptance](fishyume-m7.1-acceptance.md): frozen Team API,

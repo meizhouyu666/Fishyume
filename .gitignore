@@ -12,6 +12,7 @@ coverage/
 .wf/
 wf-state/
 .ccpanes/
+_trash/
 .claude/
 .codex/
 *.test
