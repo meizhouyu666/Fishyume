@@ -40,3 +40,26 @@ func TestBuiltinCodexCatalogV2ContainsQualifiedGPT56Family(t *testing.T) {
 		}
 	}
 }
+
+// TestBuiltinCodexCatalogV2TiersMatchOfficialNaming pins the GPT-5.6 family
+// tiering to the official semantics: Sol (sun) is the flagship/high-cost tier,
+// Terra (earth) is the balanced mid tier, Luna (moon) is the budget tier.
+func TestBuiltinCodexCatalogV2TiersMatchOfficialNaming(t *testing.T) {
+	catalog := BuiltinCodexCatalogV2()
+	byModel := map[string]ModelCapabilityV1{}
+	for _, model := range catalog.Models {
+		byModel[model.Target.Model] = model
+	}
+	sol := byModel["gpt-5.6-sol"]
+	terra := byModel["gpt-5.6-terra"]
+	luna := byModel["gpt-5.6-luna"]
+	if sol.Cost != CostHigh || sol.Latency != LatencyBalanced {
+		t.Fatalf("sol tier = cost %s latency %s, want high/balanced (flagship)", sol.Cost, sol.Latency)
+	}
+	if terra.Cost != CostMedium || terra.Latency != LatencyBalanced {
+		t.Fatalf("terra tier = cost %s latency %s, want medium/balanced (mid)", terra.Cost, terra.Latency)
+	}
+	if luna.Cost != CostLow || luna.Latency != LatencyFast {
+		t.Fatalf("luna tier = cost %s latency %s, want low/fast (budget)", luna.Cost, luna.Latency)
+	}
+}

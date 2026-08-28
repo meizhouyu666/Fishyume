@@ -61,8 +61,8 @@ func BuiltinCodexCatalogV2() CapabilityCatalogV1 {
 		SchemaVersion: CapabilityCatalogV1Version,
 		PolicyVersion: RoutingPolicyV1Version,
 		Models: []ModelCapabilityV1{
-			model("gpt-5.6-sol", QualityPremium, CostMedium, LatencyBalanced, 256*1024, 64*1024),
-			model("gpt-5.6-terra", QualityPremium, CostHigh, LatencySlow, 256*1024, 64*1024),
+			model("gpt-5.6-sol", QualityPremium, CostHigh, LatencyBalanced, 256*1024, 64*1024),
+			model("gpt-5.6-terra", QualityPremium, CostMedium, LatencyBalanced, 256*1024, 64*1024),
 			model("gpt-5.6-luna", QualityEconomy, CostLow, LatencyFast, 128*1024, 32*1024),
 		},
 	})

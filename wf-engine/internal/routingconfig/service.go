@@ -242,8 +242,8 @@ func NewService(root string, inspector ModelInspector) (*Service, error) {
 func ProductProfiles() []ProductProfile {
 	return []ProductProfile{
 		{RouteID: "codex/local/gpt-5.6-luna", Model: "gpt-5.6-luna", Qualified: true, DefaultEffort: "medium", Efforts: []string{"low", "medium", "high", "xhigh", "max"}, UseCases: []string{"bounded low-cost work", "independent comparison"}},
-		{RouteID: "codex/local/gpt-5.6-sol", Model: "gpt-5.6-sol", Qualified: true, DefaultEffort: "medium", Efforts: []string{"low", "medium", "high", "xhigh", "max", "ultra"}, UseCases: []string{"general workflow", "repository implementation", "complex reasoning"}},
-		{RouteID: "codex/local/gpt-5.6-terra", Model: "gpt-5.6-terra", Qualified: true, DefaultEffort: "medium", Efforts: []string{"low", "medium", "high", "xhigh", "max", "ultra"}, UseCases: []string{"quality-sensitive alternative", "deep review"}},
+		{RouteID: "codex/local/gpt-5.6-sol", Model: "gpt-5.6-sol", Qualified: true, DefaultEffort: "medium", Efforts: []string{"low", "medium", "high", "xhigh", "max", "ultra"}, UseCases: []string{"complex reasoning", "deep review", "quality-sensitive alternative"}},
+		{RouteID: "codex/local/gpt-5.6-terra", Model: "gpt-5.6-terra", Qualified: true, DefaultEffort: "medium", Efforts: []string{"low", "medium", "high", "xhigh", "max", "ultra"}, UseCases: []string{"general workflow", "repository implementation"}},
 	}
 }
 
