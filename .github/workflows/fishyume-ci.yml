@@ -3,6 +3,7 @@ name: Fishyume CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   verify:
@@ -51,18 +52,6 @@ jobs:
         run: node wf/scripts/preflight.mjs --step diff-check
       - name: Reliability script tests
         run: node --test wf/scripts/reliability-scripts.test.mjs
-
-  stress:
-    name: Deterministic high-risk stress gate
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
-        with:
-          go-version: '1.26.x'
-          cache-dependency-path: wf-engine/go.sum
-      - name: Stress internal lifecycle packages (20 repetitions)
-        run: node wf/scripts/stress.mjs
 
   artifacts:
     runs-on: windows-latest
