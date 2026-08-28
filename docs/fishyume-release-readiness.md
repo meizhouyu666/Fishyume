@@ -43,9 +43,9 @@ New Runs use the formal `codex` Driver on target `local`. The Host Agent control
 Provider-independent public CI runs on Windows:
 
 - `go test ./...`, `go vet ./...`, and `go build ./cmd/wf-engine`;
-- Driver contracts, fake Codex execution, process identity, recovery, cancellation, bounded logs, structured Result, concurrency, journal, Application, IPC, MCP/Machine parity, and historical compatibility fixtures;
+- Driver contracts, fake Codex execution, process identity, recovery, cancellation, bounded logs, structured Result, concurrency, journal, Application, IPC, MCP/Machine parity, and historical compatibility fixtures are run in the local full verification command;
 - a two-client MCP Host/TUI-controller acceptance gate covering shared state, stale-version action conflict, detach/close semantics, monotonic events, and non-duplicated Attempts;
-- TypeScript typecheck, tests, build, dry-run/real package audits;
+- TypeScript typecheck, build, dry-run/real package audits;
 - Windows package installation checks;
 - Windows archive and SHA-256 checksum verification.
 

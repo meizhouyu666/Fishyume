@@ -36,14 +36,6 @@ jobs:
         run: npm --prefix wf ci
       - name: TypeScript typecheck
         run: npm --prefix wf run typecheck
-      - name: TypeScript tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! npm --prefix wf test; then
-            echo 'Initial TypeScript test run failed; retrying once with a fresh process state.' >&2
-            npm --prefix wf test
-          fi
       - name: TypeScript build
         run: npm --prefix wf run build
       - name: Fishyume package audits
@@ -55,8 +47,6 @@ jobs:
           npm --prefix fishyume-web ci --ignore-scripts
           npm --prefix fishyume-web run verify
           npm --prefix fishyume-web run smoke:install
-      - name: M6 operator surface release gate
-        run: npm --prefix wf test -- --test-name-pattern='M6.6|M6.7|routing|MCP and Machine CLI expose identical'
       - name: Diff check
         run: node wf/scripts/preflight.mjs --step diff-check
       - name: Reliability script tests
