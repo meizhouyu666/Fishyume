@@ -65,8 +65,6 @@ function Stop-IdleControlPlaneForUpgrade {
 }
 
 try {
-  $runningOnWindows = $env:OS -eq 'Windows_NT'
-  if (-not $runningOnWindows) { throw 'Fishyume Developer Preview currently supports Windows x64 only.' }
   if ($Proxy) {
     $env:npm_config_proxy = $Proxy
     $env:npm_config_https_proxy = $Proxy
