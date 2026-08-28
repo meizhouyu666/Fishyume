@@ -61,12 +61,10 @@ export async function startSidecar(options: SidecarOptions = {}): Promise<Sideca
 
 export function resolveWebEnginePath(env: NodeJS.ProcessEnv = process.env, moduleDir = dirname(fileURLToPath(import.meta.url))): string {
   if (env.FISHYUME_ENGINE_PATH) return env.FISHYUME_ENGINE_PATH;
-  const binary = process.platform === 'win32' ? 'fishyume-engine.exe' : 'fishyume-engine';
+  const binary = 'fishyume-engine.exe';
   const packageName = process.platform === 'win32' && process.arch === 'x64'
     ? 'fishyume-engine-win32-x64'
-    : process.platform === 'linux' && process.arch === 'x64'
-      ? 'fishyume-engine-linux-x64'
-      : undefined;
+    : undefined;
   if (packageName) {
     const installed = join(moduleDir, '..', '..', packageName, 'bin', binary);
     if (existsSync(installed)) return installed;

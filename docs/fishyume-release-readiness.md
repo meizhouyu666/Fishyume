@@ -24,32 +24,30 @@ protocol, Codex approval, or Provider credential was added; v1/history compatibi
 all M5.5 exactly-once guarantees are unchanged. Acceptance and gates are recorded in
 [`fishyume-m5.6-agent-native-authoring-acceptance.md`](./fishyume-m5.6-agent-native-authoring-acceptance.md).
 Local preflight (`go test ./...`, `go vet ./...`, `go build ./cmd/wf-engine`,
-`npm --prefix wf run verify`, `git diff --check`) passed, and public Windows/Ubuntu CI
-run [32243762097](https://github.com/meizhouyu666/Fishyume/actions/runs/32243762097)
-passed all six jobs (Windows/Ubuntu verify, Windows/Ubuntu platform-install, artifacts,
-and deterministic stress). No package or GitHub Release was published.
+`npm --prefix wf run verify`, `git diff --check`) passed, and the public Windows CI
+run recorded the accepted preview gates. No package or GitHub Release was published.
 
 ## Current release surface
 
 - `fishyume`: Agent-facing MCP and Machine CLI, human CLI/TUI, and the compatible `wf` bin.
 - `fishyume-engine-win32-x64`: Windows x64 Engine.
-- `fishyume-engine-linux-x64`: Linux x64/WSL Engine.
-
-All packages remain `0.2.1-alpha.1`. Installation performs no executable download. Engine resolution is `FISHYUME_ENGINE_PATH`, the exact installed platform package, a development checkout, then compatibility `WF_ENGINE_PATH`. The Linux package uses a local `prepack` permission fix; it is not an install hook.
+All packages remain `0.2.1-alpha.1`. The current Developer Preview publishes
+Windows x64 only. Installation performs no executable download. Engine
+resolution is `FISHYUME_ENGINE_PATH`, the installed Windows package, a
+development checkout, then compatibility `WF_ENGINE_PATH`.
 
 New Runs use the formal `codex` Driver on target `local`. The Host Agent controls Fishyume through the Application API exposed by MCP or Machine CLI; humans attach the TUI to the same durable Run. Release packages require no CC-Panes Profile, CC-Panes control plane, project registration, TaskBinding, or managed Session. Historical CC-Panes compatibility implementation and tests remain for reading old state and diagnostics, not as a current product dependency.
 
 ## Automated evidence
 
-Provider-independent public CI runs on both Windows and Ubuntu:
+Provider-independent public CI runs on Windows:
 
-- `go test ./...`, `go vet ./...`, and `go build ./cmd/wf-engine` on both platforms;
-- `go test -race ./...` on Ubuntu without weakening the Windows test/build gates;
+- `go test ./...`, `go vet ./...`, and `go build ./cmd/wf-engine`;
 - Driver contracts, fake Codex execution, process identity, recovery, cancellation, bounded logs, structured Result, concurrency, journal, Application, IPC, MCP/Machine parity, and historical compatibility fixtures;
 - a two-client MCP Host/TUI-controller acceptance gate covering shared state, stale-version action conflict, detach/close semantics, monotonic events, and non-duplicated Attempts;
 - TypeScript typecheck, tests, build, dry-run/real package audits;
-- Windows and Linux package installation checks;
-- cross-compiled archives and SHA-256 checksum verification.
+- Windows package installation checks;
+- Windows archive and SHA-256 checksum verification.
 
 These gates use fakes and fixtures. They do not require Provider credentials, Codex authentication, CC-Panes, Docker, or network access to a model Provider.
 
@@ -116,8 +114,8 @@ To repeat these supplemental local gates on a machine with valid Codex authentic
 - [x] State and IPC ownership: one compatible owner holds each state directory; Windows Named Pipe ACL and Unix directory/socket permissions are verified; endpoints are identity-bound and TCP is not enabled by default.
 - [x] Durable actions: `clientRequestId`, `actionId`, `expectedStateVersion`, and `expectedAttempt` behavior remains crash-safe and conflict-detecting.
 - [x] Process safety: Driver executable identity, PID/fingerprint reuse protection, cancellation confirmation, and crash reconciliation are covered on supported platforms.
-- [x] Artifacts and checksums: archives are built with `CGO_ENABLED=0`, `-trimpath`, stripped symbols, expected package contents, executable Linux mode, and non-empty SHA-256 checksum files.
-- [x] Provider-independent CI: Windows and Ubuntu public gates pass without Provider login, live Codex calls, CC-Panes, Docker, or private infrastructure.
+- [x] Artifacts and checksums: the Windows archive is built with `CGO_ENABLED=0`, `-trimpath`, stripped symbols, expected package contents, and a non-empty SHA-256 checksum file.
+- [x] Provider-independent CI: Windows public gates pass without Provider login, live Codex calls, CC-Panes, Docker, or private infrastructure.
 - [x] Release independence: package audits and current instructions contain no CC-Panes Profile/control-plane requirement; retained CC-Panes code is historical compatibility only.
 - [x] Live evidence: real Host MCP, Host/PTY conflict, and real Driver checks are recorded with versions, bounded logs, state cleanup, and no credentials; deterministic crash/restart is covered by `npm --prefix wf run test:restart`.
 - [x] Review and repository: independent review approved exact SHA `b6aa2752c76642a9eaf3235df1a3e43d1dcd1804`; `main == origin/main`, CI passed, and the closure follow-up is documentation-only.
@@ -126,7 +124,6 @@ To repeat these supplemental local gates on a machine with valid Codex authentic
 
 ```powershell
 ./wf/scripts/build-engine-artifacts.ps1 -Target windows-amd64
-./wf/scripts/build-engine-artifacts.ps1 -Target linux-amd64
 ./wf/scripts/verify-engine-artifacts.ps1
 ```
 

@@ -5,7 +5,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $out = (Resolve-Path $OutputDir).Path
 $manifestPath = Join-Path $out 'SHA256SUMS'
-$expectedNames = @('linux-amd64.tar.gz', 'windows-amd64.zip')
+$expectedNames = @('windows-amd64.zip')
 $lines = @(Get-Content -LiteralPath $manifestPath | Where-Object { $_.Trim() })
 
 if ($lines.Count -ne $expectedNames.Count) {

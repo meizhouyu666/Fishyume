@@ -33,9 +33,7 @@ const stateRoot = join(root, 'state');
 const rollbackSnapshot = join(root, 'rollback-snapshot');
 const platformRelative = process.platform === 'win32' && process.arch === 'x64'
   ? join('packages', 'fishyume-engine-win32-x64')
-  : process.platform === 'linux' && process.arch === 'x64'
-    ? join('packages', 'fishyume-engine-linux-x64')
-    : undefined;
+  : undefined;
 if (!platformRelative) throw new Error(`unsupported downgrade-smoke platform ${process.platform}-${process.arch}`);
 const engineName = process.platform === 'win32' ? 'fishyume-engine.exe' : 'fishyume-engine';
 
@@ -75,7 +73,7 @@ function hash(path) {
 
 function installedPaths() {
   const packageRoot = join(installRoot, 'node_modules');
-  const enginePackage = process.platform === 'win32' ? 'fishyume-engine-win32-x64' : 'fishyume-engine-linux-x64';
+  const enginePackage = 'fishyume-engine-win32-x64';
   return {
     cli: join(packageRoot, 'fishyume', 'dist', 'cli.js'),
     cliEvidence: join(packageRoot, 'fishyume', 'dist', 'bridge', 'application.js'),

@@ -1,14 +1,13 @@
 param(
-  [ValidateSet('windows-amd64','linux-amd64')][string]$Target = 'windows-amd64',
+  [ValidateSet('windows-amd64')][string]$Target = 'windows-amd64',
   [string]$OutputDir = "$PSScriptRoot\..\artifacts"
 )
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot\..\..\wf-engine").Path
 $out = (New-Item -ItemType Directory -Force -Path $OutputDir).FullName
-$parts = $Target.Split('-')
-$goos = if ($parts[0] -eq 'windows') { 'windows' } else { 'linux' }
-$binary = if ($goos -eq 'windows') { 'fishyume-engine.exe' } else { 'fishyume-engine' }
+$goos = 'windows'
+$binary = 'fishyume-engine.exe'
 $dest = Join-Path $out "$Target\$binary"
 New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
 Push-Location $root
@@ -28,14 +27,14 @@ try {
 }
 $hash = (Get-FileHash -Algorithm SHA256 $dest).Hash.ToLowerInvariant()
 "$hash  $binary" | Set-Content -NoNewline -Encoding ascii (Join-Path (Split-Path $dest) 'SHA256SUMS')
-$packageName = if ($goos -eq 'windows') { 'fishyume-engine-win32-x64' } else { 'fishyume-engine-linux-x64' }
+$packageName = 'fishyume-engine-win32-x64'
 $packageBin = Join-Path $PSScriptRoot "..\packages\$packageName\bin"
 New-Item -ItemType Directory -Force -Path $packageBin | Out-Null
 Copy-Item -Force $dest (Join-Path $packageBin $binary)
-$archive = if ($goos -eq 'windows') { Join-Path $out "$Target.zip" } else { Join-Path $out "$Target.tar.gz" }
-$format = if ($goos -eq 'windows') { 'zip' } else { 'targz' }
+$archive = Join-Path $out "$Target.zip"
+$format = 'zip'
 go run (Join-Path $PSScriptRoot 'archive-engine.go') -format $format -input $dest -checksum (Join-Path (Split-Path $dest) 'SHA256SUMS') -output $archive
-$archiveNames = @('linux-amd64.tar.gz', 'windows-amd64.zip')
+$archiveNames = @('windows-amd64.zip')
 $manifestLines = foreach ($archiveName in $archiveNames) {
   $archivePath = Join-Path $out $archiveName
   if (Test-Path -LiteralPath $archivePath) {

@@ -65,6 +65,8 @@ function Stop-IdleControlPlaneForUpgrade {
 }
 
 try {
+  $runningOnWindows = $env:OS -eq 'Windows_NT'
+  if (-not $runningOnWindows) { throw 'Fishyume Developer Preview currently supports Windows x64 only.' }
   if ($Proxy) {
     $env:npm_config_proxy = $Proxy
     $env:npm_config_https_proxy = $Proxy
@@ -85,10 +87,9 @@ try {
   & npm --prefix $wfRoot run build
   Assert-NativeSuccess 'Fishyume CLI build'
 
-  $runningOnWindows = $env:OS -eq 'Windows_NT'
-  $platformName = if ($runningOnWindows) { 'fishyume-engine-win32-x64' } else { 'fishyume-engine-linux-x64' }
-  $goos = if ($runningOnWindows) { 'windows' } else { 'linux' }
-  $binary = if ($runningOnWindows) { 'fishyume-engine.exe' } else { 'fishyume-engine' }
+  $platformName = 'fishyume-engine-win32-x64'
+  $goos = 'windows'
+  $binary = 'fishyume-engine.exe'
   $platformSource = Join-Path $wfRoot "packages\$platformName"
   Copy-Item -LiteralPath $platformSource -Destination $stagedPlatform -Recurse
 

@@ -25,9 +25,9 @@ The essential user outcomes are:
 - resume or cancel work when the existing durable semantics support it;
 - keep the Host Agent responsible for deciding what to do next.
 
-Codex on the local machine is the reference execution path. Other drivers and
-platforms remain compatibility or preview paths, not reasons to widen the
-product model.
+Codex on a local Windows x64 machine is the only supported execution path for
+this developer preview. Other drivers and platforms remain compatibility code,
+not release targets.
 
 The current Host Agent integration is Codex-only: Fishyume exposes its Agent
 facing MCP server and setup flow to a local Codex Host. Team participants may

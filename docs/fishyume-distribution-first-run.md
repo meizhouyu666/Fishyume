@@ -16,10 +16,10 @@ fishyume doctor   actionable diagnostics
 documented product path. `fishyume demo` is deterministic and Provider-free: it
 does not start the Control Plane, mutate state, use credentials, or call a model.
 
-The packed-package smoke builds the current platform Engine, packs both npm
+The packed-package smoke builds the Windows x64 Engine, packs both npm
 packages, installs them into an empty prefix, and verifies help, setup command
-identity, the offline topology demo, zero-argument Dashboard, and Doctor. Public
-Windows and Ubuntu platform-install jobs repeat the installed-package checks.
+identity, the offline topology demo, zero-argument Dashboard, and Doctor. The
+public Windows platform-install job repeats the installed-package checks.
 
 This is distribution readiness, not a public npm publication or stable API
 freeze. Version publication and a GitHub Release remain explicit later actions.

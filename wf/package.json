@@ -21,7 +21,6 @@
     "directory": "wf"
   },
   "optionalDependencies": {
-    "fishyume-engine-linux-x64": "0.2.1-alpha.1",
     "fishyume-engine-win32-x64": "0.2.1-alpha.1"
   },
   "scripts": {

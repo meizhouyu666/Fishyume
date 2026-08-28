@@ -2,7 +2,7 @@
 
 > Status: accepted on 2026-08-14. M4 Core remains frozen; M5 production work may now begin from this product-experience baseline.
 
-M4.5 turns the accepted M4 control plane into a coherent first-use product. The first complete product combination is Windows + Codex + the local `codex` Driver. Ubuntu remains a supported install and CI platform, but Windows terminal ergonomics are the reference experience for this preview.
+M4.5 turns the accepted M4 control plane into a coherent first-use product. The first complete product combination is Windows x64 + Codex + the local `codex` Driver. Windows is the only supported install and CI platform for this preview.
 
 ## Golden path
 

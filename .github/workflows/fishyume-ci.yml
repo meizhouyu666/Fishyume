@@ -6,11 +6,7 @@ on:
 
 jobs:
   verify:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -24,47 +20,24 @@ jobs:
           cache-dependency-path: |
             wf/package-lock.json
             fishyume-web/package-lock.json
-      - name: Go tests (Driver and historical compatibility fixtures included)
+      - name: Go tests
         working-directory: wf-engine
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! go test -json -p 1 ./... -count=1 -timeout 10m; then
-            echo 'Initial Go test run failed; retrying once with a fresh process state.' >&2
-            go test -json -p 1 ./... -count=1 -timeout 10m
-          fi
+        shell: pwsh
+        run: go test -p 1 ./... -count=1 -timeout 10m
       - name: Go vet
         run: node wf/scripts/preflight.mjs --step go-vet
       - name: Go build
         run: node wf/scripts/preflight.mjs --step go-build
       - name: M6 routing release gate
         working-directory: wf-engine
-        shell: bash
-        run: |
-          set -euo pipefail
-          go test ./internal/routing ./internal/run ./internal/application -run 'M6|Routing|Fallback|RoutingUsage|Preflight' -count=1 -timeout 10m
-      - name: Linux race check
-        if: runner.os == 'Linux'
-        working-directory: wf-engine
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! go test -race ./... -count=1 -timeout 15m; then
-            echo 'Initial Linux race run failed; retrying once with a fresh process state.' >&2
-            go test -race ./... -count=1 -timeout 15m
-          fi
+        shell: pwsh
+        run: go test ./internal/routing ./internal/run ./internal/application -run 'M6|Routing|Fallback|RoutingUsage|Preflight' -count=1 -timeout 10m
       - name: Node dependencies
         run: npm --prefix wf ci
       - name: TypeScript typecheck
         run: npm --prefix wf run typecheck
       - name: TypeScript tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! npm --prefix wf test; then
-            echo 'Initial TypeScript test run failed; retrying once with a fresh process state.' >&2
-            npm --prefix wf test
-          fi
+        run: npm --prefix wf test
       - name: TypeScript build
         run: npm --prefix wf run build
       - name: Fishyume package audits
@@ -72,17 +45,12 @@ jobs:
           npm --prefix wf run pack:audit
           npm --prefix wf run pack:audit:real
       - name: Optional Web client checks
-        shell: bash
         run: |
-          set -euo pipefail
           npm --prefix fishyume-web ci --ignore-scripts
           npm --prefix fishyume-web run verify
           npm --prefix fishyume-web run smoke:install
       - name: M6 operator surface release gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm --prefix wf test -- --test-name-pattern='M6.6|M6.7|routing|MCP and Machine CLI expose identical'
+        run: npm --prefix wf test -- --test-name-pattern='M6.6|M6.7|routing|MCP and Machine CLI expose identical'
       - name: Diff check
         run: node wf/scripts/preflight.mjs --step diff-check
       - name: Reliability script tests
@@ -90,7 +58,7 @@ jobs:
 
   stress:
     name: Deterministic high-risk stress gate
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -108,11 +76,9 @@ jobs:
         with:
           go-version: '1.26.x'
           cache-dependency-path: wf-engine/go.sum
-      - name: Build Windows and Linux Engine artifacts
+      - name: Build Windows Engine artifacts
         shell: pwsh
-        run: |
-          ./wf/scripts/build-engine-artifacts.ps1 -Target windows-amd64
-          ./wf/scripts/build-engine-artifacts.ps1 -Target linux-amd64
+        run: ./wf/scripts/build-engine-artifacts.ps1 -Target windows-amd64
       - name: Verify checksums
         shell: pwsh
         run: |
@@ -120,68 +86,6 @@ jobs:
           Get-ChildItem ./wf/artifacts -Recurse -Filter SHA256SUMS | ForEach-Object {
             if (-not (Get-Content -Raw $_.FullName).Trim()) { throw "empty checksum file: $($_.FullName)" }
           }
-
-  linux-platform-install:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
-        with:
-          go-version: '1.26.x'
-          cache-dependency-path: wf-engine/go.sum
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '24.x'
-          cache: npm
-          cache-dependency-path: wf/package-lock.json
-      - name: Build CLI and Linux Engine
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm --prefix wf ci --ignore-scripts
-          npm --prefix wf run build
-          mkdir -p wf/packages/fishyume-engine-linux-x64/bin "$RUNNER_TEMP/fishyume-packs"
-          (cd wf-engine && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o ../wf/packages/fishyume-engine-linux-x64/bin/fishyume-engine ./cmd/wf-engine)
-          chmod 0644 wf/packages/fishyume-engine-linux-x64/bin/fishyume-engine
-          (cd wf && npm pack --pack-destination "$RUNNER_TEMP/fishyume-packs")
-          (cd wf/packages/fishyume-engine-linux-x64 && npm pack --pack-destination "$RUNNER_TEMP/fishyume-packs")
-      - name: Install and verify Linux packages
-        shell: bash
-        run: |
-          set -euo pipefail
-          install_root="$RUNNER_TEMP/fishyume-install"
-          engine_tgz="$RUNNER_TEMP/fishyume-packs/fishyume-engine-linux-x64-0.2.1-alpha.1.tgz"
-          npm install --prefix "$install_root" \
-            "$RUNNER_TEMP/fishyume-packs/fishyume-0.2.1-alpha.1.tgz" \
-            "$engine_tgz" --ignore-scripts
-          engine="$install_root/node_modules/fishyume-engine-linux-x64/bin/fishyume-engine"
-          test -x "$engine"
-          mode="$(stat -c '%a' "$engine")"
-          [[ "$mode" =~ ^7[0-7][0-7]$ ]]
-          tar -tvf "$engine_tgz" > "$RUNNER_TEMP/fishyume-engine-files.txt"
-          grep -Eq '^-rwxr-xr-x .*package/bin/fishyume-engine$' "$RUNNER_TEMP/fishyume-engine-files.txt"
-          set +e
-          doctor_output="$("$install_root/node_modules/.bin/fishyume" doctor 2>&1)"
-          set -e
-          echo "$doctor_output"
-          grep -q 'ok engine 0.2.1-alpha.1 started' <<<"$doctor_output"
-          grep -q 'ok protocol 2 compatible' <<<"$doctor_output"
-          help_output="$("$install_root/node_modules/.bin/fishyume" --help)"
-          grep -q 'dashboard' <<<"$help_output"
-          dashboard_help="$("$install_root/node_modules/.bin/fishyume" dashboard --help)"
-          grep -q 'Operator Dashboard' <<<"$dashboard_help"
-          setup_output="$("$install_root/node_modules/.bin/fishyume" setup --print)"
-          grep -q '^codex mcp add fishyume -- ".*node" ".*/fishyume/dist/cli.js" "mcp"$' <<<"$setup_output"
-          routing_output="$("$install_root/node_modules/.bin/fishyume" machine routing.catalog --params '{}')"
-          grep -q '"apiVersion":"fishyume.application/v1"' <<<"$routing_output"
-          node -e 'const value = JSON.parse(process.argv[1]); if (value.apiVersion !== "fishyume.application/v1" || typeof value.dynamicAvailability !== "boolean") process.exit(1)' "$routing_output"
-          demo_output="$("$install_root/node_modules/.bin/fishyume" demo --width 80 --ascii)"
-          grep -q '阶段 2 · 并行 2' <<<"$demo_output"
-          grep -q '依赖 plan' <<<"$demo_output"
-          grep -q '需要人工审批' <<<"$demo_output"
-          dashboard_output="$("$install_root/node_modules/.bin/fishyume")"
-          grep -q '目前没有可显示的任务。' <<<"$dashboard_output"
-          grep -q '检查运行环境：fishyume doctor' <<<"$dashboard_output"
 
   windows-platform-install:
     runs-on: windows-latest
@@ -219,9 +123,9 @@ jobs:
           $routingJson = $routingOutput | ConvertFrom-Json
           if ($routingJson.apiVersion -ne 'fishyume.application/v1' -or $routingJson.dynamicAvailability -isnot [bool]) { throw 'installed routing catalog Application surface is incomplete' }
           $demoOutput = & $fishyume demo --width 80 --ascii | Out-String
-          if ($demoOutput -notmatch '阶段 2 · 并行 2' -or $demoOutput -notmatch '依赖 plan' -or $demoOutput -notmatch '需要人工审批') { throw 'installed offline topology demo is incomplete' }
+          if ($demoOutput -notmatch '闃舵 2 路 骞惰 2' -or $demoOutput -notmatch '渚濊禆 plan' -or $demoOutput -notmatch '闇€瑕佷汉宸ュ鎵?) { throw 'installed offline topology demo is incomplete' }
           $dashboardOutput = & $fishyume | Out-String
-          if ($dashboardOutput -notmatch '目前没有可显示的任务。' -or $dashboardOutput -notmatch '检查运行环境：fishyume doctor') { throw 'installed zero-argument Dashboard empty state is incomplete' }
+          if ($dashboardOutput -notmatch '鐩墠娌℃湁鍙樉绀虹殑浠诲姟銆? -or $dashboardOutput -notmatch '妫€鏌ヨ繍琛岀幆澧冿細fishyume doctor') { throw 'installed zero-argument Dashboard empty state is incomplete' }
 
-# Public CI uses fake Driver/compatibility fixtures and never requires Provider login.
-# M4.4 live Host/Driver/TUI/crash acceptance remains a separate manual gate.
+# Public CI is Windows-only because the current Developer Preview publishes only
+# the Windows x64 Engine package. Linux support can return with a concrete release target.

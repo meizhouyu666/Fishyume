@@ -55,8 +55,9 @@ test('bundled sidecar resolves a sibling platform Engine package', () => {
   const directory = mkdtempSync(join(tmpdir(), 'fishyume-web-engine-path-'));
   try {
     const moduleDirectory = join(directory, 'node_modules', 'fishyume-web', 'dist');
-    const packageName = process.platform === 'win32' ? 'fishyume-engine-win32-x64' : 'fishyume-engine-linux-x64';
-    const binary = process.platform === 'win32' ? 'fishyume-engine.exe' : 'fishyume-engine';
+    if (process.platform !== 'win32' || process.arch !== 'x64') return;
+    const packageName = 'fishyume-engine-win32-x64';
+    const binary = 'fishyume-engine.exe';
     const enginePath = join(directory, 'node_modules', packageName, 'bin', binary);
     mkdirSync(moduleDirectory, {recursive: true});
     mkdirSync(join(enginePath, '..'), {recursive: true});

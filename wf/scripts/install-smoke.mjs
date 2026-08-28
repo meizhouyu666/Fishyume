@@ -15,9 +15,7 @@ const rollbackSnapshot = join(root, 'rollback-snapshot');
 const stagedPlatform = join(root, 'platform-package');
 const platformDirectory = process.platform === 'win32' && process.arch === 'x64'
   ? join(process.cwd(), 'packages', 'fishyume-engine-win32-x64')
-  : process.platform === 'linux' && process.arch === 'x64'
-    ? join(process.cwd(), 'packages', 'fishyume-engine-linux-x64')
-    : undefined;
+  : undefined;
 if (!platformDirectory) throw new Error(`unsupported install-smoke platform ${process.platform}-${process.arch}`);
 mkdirSync(packs, {recursive: true});
 

@@ -64,9 +64,7 @@ export function resolveEnginePath(env: NodeJS.ProcessEnv = process.env): string 
   const binary = process.platform === 'win32' ? 'fishyume-engine.exe' : 'fishyume-engine';
   const platformPackage = process.platform === 'win32' && process.arch === 'x64'
     ? join(here, '..', '..', '..', 'fishyume-engine-win32-x64', 'bin', binary)
-    : process.platform === 'linux' && process.arch === 'x64'
-      ? join(here, '..', '..', '..', 'fishyume-engine-linux-x64', 'bin', binary)
-      : undefined;
+    : undefined;
   if (platformPackage && existsSync(platformPackage)) return platformPackage;
   const development = join(here, '..', '..', '..', 'wf-engine', process.platform === 'win32' ? 'wf-engine.exe' : 'wf-engine');
   if (existsSync(development)) return development;
