@@ -27,7 +27,7 @@
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node scripts/copy-examples.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test --import tsx src/**/*.test.ts src/**/*.test.tsx scripts/*.test.mjs",
+    "test": "node --test --test-concurrency=1 --import tsx src/**/*.test.ts src/**/*.test.tsx scripts/*.test.mjs",
     "test:mcp-host": "node --test --import tsx src/integration/mcp-host-agent.test.ts",
     "test:mcp-tui": "node --test --import tsx src/integration/mcp-tui-concurrency.test.ts",
     "test:restart": "node --test --import tsx src/integration/control-plane-restart.test.ts",
