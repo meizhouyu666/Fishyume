@@ -7,7 +7,6 @@
  * gateway + client under DSH's `webServer` service. The plugin is inert in
  * headless profiles that do not mount a web server.
  */
-import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -31,6 +30,15 @@ export const name = 'dsh-fishyume'
 // profiles keep the plugin loaded without a route surface.
 export const inject: string[] = []
 
+/** Minimal structural slice of the cordis Context the host plane uses. Kept
+ *  local so the plugin typechecks without @deepseek-ai devDependencies; the
+ *  real types are provided as peerDependencies at install time. */
+export interface PluginContext {
+  get<T = unknown>(name: string): T | undefined
+  effect(setup: () => void | (() => void), label?: string): void
+  on(event: string, listener: (name: string) => void): void
+}
+
 export interface Config {
   /** Disable the embedded console entirely (default true). */
   enabled?: boolean
@@ -38,7 +46,7 @@ export interface Config {
   publicDir?: string
 }
 
-export function apply(ctx: Context, config: Config): void {
+export function apply(ctx: PluginContext, config: Config): void {
   if (config.enabled === false) return
 
   const token = randomBytes(32).toString('base64url')

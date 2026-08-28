@@ -2,12 +2,19 @@
  * dsh-fishyume client plane: mount an iframe panel into `shell.overlay` that
  * loads the Fishyume console served from the plugin's own host routes.
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-// Type-only: the frame-level overlay is declared by ui-layout.
-import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import { useEffect, useState } from 'react'
 
 export const inject = ['slots']
+
+/** Minimal structural slice of the DSH client context the client plane uses.
+ *  Kept local so the plugin typechecks without @deepseek-ai devDependencies. */
+interface ClientSlots {
+  inject(slot: string, register: () => void): void
+  register(options: { name: string; id: string; order?: number; label?: string }, Component: () => JSX.Element): void
+}
+export interface ClientContext {
+  slots: ClientSlots
+}
 
 function FishyumeConsole(): JSX.Element {
   const [token, setToken] = useState<string>('')

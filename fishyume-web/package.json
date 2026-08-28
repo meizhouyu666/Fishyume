@@ -48,6 +48,7 @@
   },
   "scripts": {
     "clean": "node scripts/clean.mjs",
+    "prepare": "node scripts/build-plugin.mjs",
     "build": "node scripts/build.mjs && node scripts/build-plugin.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --import tsx src/**/*.test.ts",
