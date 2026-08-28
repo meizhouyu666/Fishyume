@@ -55,14 +55,22 @@ jobs:
           fi
       - name: Node dependencies
         run: npm --prefix wf ci
-      - name: TypeScript checks
+      - name: TypeScript typecheck
+        run: npm --prefix wf run typecheck
+      - name: TypeScript tests
         shell: bash
         run: |
           set -euo pipefail
-          if ! node wf/scripts/preflight.mjs --step typescript; then
-            echo 'Initial TypeScript/package verification failed; retrying once with a fresh process state.' >&2
-            node wf/scripts/preflight.mjs --step typescript
+          if ! npm --prefix wf test; then
+            echo 'Initial TypeScript test run failed; retrying once with a fresh process state.' >&2
+            npm --prefix wf test
           fi
+      - name: TypeScript build
+        run: npm --prefix wf run build
+      - name: Fishyume package audits
+        run: |
+          npm --prefix wf run pack:audit
+          npm --prefix wf run pack:audit:real
       - name: Optional Web client checks
         shell: bash
         run: |
