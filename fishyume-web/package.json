@@ -1,14 +1,28 @@
 {
-  "name": "fishyume-web",
+  "name": "dsh-fishyume",
   "version": "0.2.1-alpha.1",
   "type": "module",
   "engines": {
     "node": ">=24"
   },
-  "bin": {
-    "fishyume-web": "dist/server.js"
+  "main": "lib/plugin.js",
+  "types": "lib/plugin.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/plugin.d.ts",
+      "default": "./lib/plugin.js"
+    },
+    "./client": {
+      "types": "./lib/client.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
   },
-  "description": "Optional local Web client for Fishyume Team exploration and Workflow Runs",
+  "bin": {
+    "fishyume-web": "dist/server.js",
+    "dsh-fishyume": "dist/server.js"
+  },
+  "description": "DSH plugin embedding the Fishyume Team/Run console (standalone web server + embedded DSH client)",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -16,12 +30,25 @@
     "directory": "fishyume-web"
   },
   "files": [
+    "lib",
     "dist",
+    "cordis.patch.yml",
     "README.md"
   ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ]
+    }
+  },
   "scripts": {
     "clean": "node scripts/clean.mjs",
-    "build": "node scripts/build.mjs",
+    "build": "node scripts/build.mjs && node scripts/build-plugin.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --import tsx src/**/*.test.ts",
     "verify": "npm run typecheck && npm test && npm run build && npm run pack:audit",
@@ -35,9 +62,28 @@
   "optionalDependencies": {
     "fishyume-engine-win32-x64": "0.2.1-alpha.1"
   },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.1-rc.1",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-layout": "^0.1.0-rc.6",
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/schemastery": { "optional": true },
+    "@deepseek-ai/dsh-client-runtime": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-slots": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-layout": { "optional": true },
+    "react": { "optional": true }
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/react": "~18.3.1",
     "esbuild": "^0.25.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"
   }

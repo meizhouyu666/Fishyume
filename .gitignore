@@ -2,6 +2,7 @@ wf/node_modules/
 wf/dist/
 fishyume-web/node_modules/
 fishyume-web/dist/
+fishyume-web/lib/
 wf/coverage/
 wf-engine/wf-engine
 wf-engine/wf-engine.exe

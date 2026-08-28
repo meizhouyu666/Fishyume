@@ -1,0 +1,15 @@
+# dsh-fishyume bundle patch: mounts the Fishyume console plugin into the host
+# composition of a dsh profile. The host plane registers the Fishyume Web
+# gateway + static client routes on the shared web server, and the client plane
+# mounts an iframe panel into `shell.overlay`, so the Fishyume Team/Run console
+# opens inside the DSH Web GUI without a separate loopback server.
+#
+# Install: `dsh plugin --profile <name> add <this package>` (npm or a local
+# path). The `dsh plugin` command pnpm-installs the package into the profile
+# and reconciles it into the profile's `dsh.profile.bundles` layer list.
+- insert:
+    - id: dsh-fishyume
+      # Node-resolvable package name — must stay in sync with package.json
+      # `name`. Quoted because `@` is a reserved indicator in YAML.
+      name: dsh-fishyume
+      config: {}
