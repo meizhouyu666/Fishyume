@@ -250,6 +250,9 @@ func TestFormalApplicationRPCAndConnectionConcurrency(t *testing.T) {
 	var firstPage application.RunEventsResponse
 	decodeRPCResult(t, readRPCResponse(t, clientConnection, clientReader), &firstPage)
 
+	// The connection server handles requests concurrently. Wait for the
+	// baseline page before issuing the action so the long poll always starts
+	// behind the action event it is expected to observe.
 	writeRPCRequest(t, clientConnection, 6, "run.events", map[string]any{"runId": startResult.RunID, "afterSequence": firstPage.NextAfterSequence, "waitMs": 1000})
 	writeRPCRequest(t, clientConnection, 7, "run.action", map[string]any{"actionId": "rpc-action-1", "runId": startResult.RunID, "type": "approve", "expectedStateVersion": view.Run.StateVersion, "nodeId": "approve"})
 	responses := map[int]rpcTestResponse{}
