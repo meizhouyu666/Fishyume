@@ -111,6 +111,13 @@ test('member contributions use file tags and expandable content', () => {
   assert.doesNotMatch(taskView, /交接/)
 })
 
+test('member output expansion uses intrinsic-height transition', () => {
+  assert.match(source, /grid-template-rows:0fr/)
+  assert.match(source, /dsh-fishyume-agent-output\[open\] \.dsh-fishyume-agent-output-body\{grid-template-rows:1fr/)
+  assert.match(source, /dsh-fishyume-agent-output-inner\{min-height:0;overflow:hidden/)
+  assert.match(source, /prefers-reduced-motion:reduce/)
+})
+
 test('member detail provides a fixed-height live harness activity timeline', () => {
   assert.match(source, /function MemberLiveStatus\(/)
   assert.match(source, /dsh-fishyume-live-scroll/)
