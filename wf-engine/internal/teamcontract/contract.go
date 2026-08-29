@@ -38,6 +38,8 @@ const (
 	MaxWarningBytes            = 2 * 1024
 	MaxOpenQuestionBytes       = 2 * 1024
 	MaxParticipantTemplates    = 4
+	MaxHarnessOptions          = 16
+	MaxModelsPerHarness        = 256
 	MaxExecutionHandleBytes    = 64 * 1024
 )
 
@@ -283,6 +285,19 @@ type ParticipantTemplateV1 struct {
 	Target  string `json:"target"`
 }
 
+// HarnessModelOptionV1 describes a model route selectable by a template.
+// Credentials and runtime policy remain owned by the selected Harness.
+type HarnessModelOptionV1 struct {
+	ModelID  string `json:"modelId"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+}
+
+type HarnessCapabilityV1 struct {
+	Driver string                 `json:"driver"`
+	Models []HarnessModelOptionV1 `json:"models"`
+}
+
 type TeamLimitsV1 struct {
 	MinParticipants            int `json:"minParticipants"`
 	MaxParticipants            int `json:"maxParticipants"`
@@ -319,6 +334,7 @@ type TeamCapabilitiesV1 struct {
 	Features             TeamFeatureFlagsV1      `json:"features"`
 	Limits               TeamLimitsV1            `json:"limits"`
 	ParticipantTemplates []ParticipantTemplateV1 `json:"participantTemplates"`
+	Harnesses            []HarnessCapabilityV1   `json:"harnesses"`
 	CatalogHash          string                  `json:"catalogHash"`
 }
 
@@ -764,6 +780,34 @@ func ValidateCapabilities(value TeamCapabilitiesV1) error {
 			if err := validateID(field, name); err != nil {
 				return err
 			}
+		}
+	}
+	if len(value.Harnesses) > MaxHarnessOptions {
+		return fmt.Errorf("harnesses count is out of bounds")
+	}
+	seenDrivers := make(map[string]struct{}, len(value.Harnesses))
+	for _, harness := range value.Harnesses {
+		if err := validateID(harness.Driver, "harness driver"); err != nil {
+			return err
+		}
+		if _, exists := seenDrivers[harness.Driver]; exists {
+			return fmt.Errorf("duplicate harness driver %q", harness.Driver)
+		}
+		seenDrivers[harness.Driver] = struct{}{}
+		if len(harness.Models) == 0 || len(harness.Models) > MaxModelsPerHarness {
+			return fmt.Errorf("models for harness %q are out of bounds", harness.Driver)
+		}
+		seenModels := make(map[string]struct{}, len(harness.Models))
+		for _, model := range harness.Models {
+			for name, field := range map[string]string{"harness modelId": model.ModelID, "harness provider": model.Provider, "harness model": model.Model} {
+				if err := validateID(field, name); err != nil {
+					return err
+				}
+			}
+			if _, exists := seenModels[model.ModelID]; exists {
+				return fmt.Errorf("duplicate model %q for harness %q", model.ModelID, harness.Driver)
+			}
+			seenModels[model.ModelID] = struct{}{}
 		}
 	}
 	return nil

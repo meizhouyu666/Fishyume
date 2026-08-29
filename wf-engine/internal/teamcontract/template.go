@@ -31,8 +31,8 @@ type TeamTemplateV1 struct {
 type TeamTemplateMemberV1 struct {
 	Label    string `json:"label"`
 	RoleHint string `json:"roleHint,omitempty"`
-	Driver   string `json:"driver"`
-	ModelID  string `json:"modelId"`
+	Driver   string `json:"driver,omitempty"`
+	ModelID  string `json:"modelId,omitempty"`
 }
 
 func ValidateTeamTemplate(value TeamTemplateV1) error {
@@ -65,11 +65,18 @@ func ValidateTeamTemplate(value TeamTemplateV1) error {
 		if err := validateTemplateText(member.RoleHint, MaxTemplateRoleHintBytes, "template member role hint", false); err != nil {
 			return err
 		}
-		if err := validateTemplateID(member.Driver, "template member driver"); err != nil {
-			return err
+		if member.Driver == "" && member.ModelID != "" {
+			return fmt.Errorf("template member modelId requires a Harness")
 		}
-		if err := validateTemplateText(member.ModelID, MaxTemplateModelIDBytes, "template member modelId", true); err != nil {
-			return err
+		if member.Driver != "" {
+			if err := validateTemplateID(member.Driver, "template member driver"); err != nil {
+				return err
+			}
+			if member.ModelID != "" {
+				if err := validateTemplateText(member.ModelID, MaxTemplateModelIDBytes, "template member modelId", true); err != nil {
+				return err
+				}
+			}
 		}
 		if _, exists := seen[member.Label]; exists {
 			return fmt.Errorf("duplicate template member label %q", member.Label)

@@ -39,10 +39,12 @@ type RunDetail = Run & { summary?: string; nodes?: RunNode[] }
 type RunEvent = { sequence: number; type: string; phase?: string; nodeId?: string; nodePhase?: string; conclusion?: string; reason?: string; message?: string; summary?: string; timestamp?: string; createdAt?: string; turnId?: string; messageId?: string }
 type Driver = { driver: string; available: boolean; teamEligible: boolean; workflowEligible: boolean; executable?: string; diagnostic?: string; modelCount?: number }
 type Route = { routeId: string; enabled: boolean; effective?: boolean; driver?: string; provider?: string; model?: string; driverAvailable?: boolean }
-type TeamTemplateMember = { label: string; roleHint?: string; driver: string; modelId: string }
+type TeamTemplateMember = { label: string; roleHint?: string; driver?: string; modelId?: string }
 type TeamTemplate = { schemaVersion?: string; templateId: string; name: string; description?: string; color?: string; members: TeamTemplateMember[]; createdAt?: string; updatedAt?: string }
 type TeamTemplateDraft = { templateId: string; name: string; description: string; color: string; members: TeamTemplateMember[] }
-type TeamCapabilities = { participantTemplates?: Array<{ label?: string; role?: string; modelId?: string; driver?: string; target?: string }> }
+type TeamModelOption = { modelId: string; provider?: string; model?: string; label?: string }
+type TeamHarnessOption = { driver: string; models: TeamModelOption[] }
+type TeamCapabilities = { participantTemplates?: Array<{ label?: string; role?: string; modelId?: string; driver?: string; target?: string }>; harnesses?: TeamHarnessOption[] }
 type TeamSection = 'tasks' | 'templates'
 type TemplateMode = 'list' | 'create'
 type PanelState = { open: boolean; view: View; teamSection: TeamSection; templateMode: TemplateMode; teams: Team[]; templates: TeamTemplate[]; capabilities?: TeamCapabilities; runs: Run[]; handoffs: Handoff[]; drivers: Driver[]; routes: Route[]; selectedTeam?: string; selectedTemplate?: string; selectedRun?: string; selectedHandoff?: string; selectedMember?: string; selectedNode?: string; selectedEvent?: number; teamDetail?: TeamDetail; teamMessages: TeamMessage[]; teamEvents: RunEvent[]; runDetail?: RunDetail; runEvents: RunEvent[]; token?: string; loading: boolean; error?: string; focusRevision: number }
@@ -300,25 +302,24 @@ async function loadTeamTemplates(): Promise<void> {
 }
 
 function templateModels(capabilities: TeamCapabilities | undefined, driver: string): Array<{ modelId: string; label: string }> {
-  return (capabilities?.participantTemplates ?? [])
+	const harness = capabilities?.harnesses?.find((item) => item.driver.toLowerCase() === driver.toLowerCase())
+	if (harness) return harness.models.map((model) => ({ modelId: model.modelId, label: model.label || model.model || model.modelId }))
+	return (capabilities?.participantTemplates ?? [])
     .filter((item) => (item.driver || '').toLowerCase() === driver.toLowerCase())
     .filter((item): item is { modelId: string; label?: string } => Boolean(item.modelId))
     .map((item) => ({ modelId: item.modelId, label: item.label || modelName(item.modelId) }))
 }
 
 function defaultTemplateDraft(capabilities?: TeamCapabilities): TeamTemplateDraft {
-  const options = capabilities?.participantTemplates ?? []
-  const first = options[0]
-  const second = options.find((item) => item.modelId && item.modelId !== first?.modelId) ?? options[1]
-  return {
+	return {
     templateId: '',
     name: '',
     description: '',
     color: 'cyan',
-    members: [
-      { label: '', roleHint: '', driver: first?.driver || 'codex', modelId: first?.modelId || '' },
-      { label: '', roleHint: '', driver: second?.driver || first?.driver || 'codex', modelId: second?.modelId || first?.modelId || '' },
-    ],
+		members: [
+			{ label: '', roleHint: '', driver: '', modelId: '' },
+			{ label: '', roleHint: '', driver: '', modelId: '' },
+		],
   }
 }
 
@@ -766,12 +767,11 @@ function TeamTemplateEditor({ template, capabilities }: { template?: TeamTemplat
   const updateMember = (index: number, patch: Partial<TeamTemplateMember>): void => setDraft((current) => ({ ...current, members: current.members.map((member, memberIndex) => memberIndex === index ? { ...member, ...patch } : member) }))
   const changeDriver = (index: number, driver: string): void => {
     const models = templateModels(capabilities, driver)
-    updateMember(index, { driver, modelId: models.some((model) => model.modelId === draft.members[index]?.modelId) ? draft.members[index].modelId : models[0]?.modelId || '' })
+    updateMember(index, { driver, modelId: driver && models.some((model) => model.modelId === draft.members[index]?.modelId) ? draft.members[index].modelId : '' })
   }
   const addMember = (): void => {
     if (draft.members.length >= 4) return
-    const option = capabilities?.participantTemplates?.find((item) => item.modelId && !draft.members.some((member) => member.modelId === item.modelId))
-    setDraft((current) => ({ ...current, members: [...current.members, { label: '', roleHint: '', driver: option?.driver || 'codex', modelId: option?.modelId || '' }] }))
+    setDraft((current) => ({ ...current, members: [...current.members, { label: '', roleHint: '', driver: '', modelId: '' }] }))
   }
   const removeMember = (index: number): void => { if (draft.members.length > 2) setDraft((current) => ({ ...current, members: current.members.filter((_, memberIndex) => memberIndex !== index) })) }
   const submit = async (): Promise<void> => {
@@ -782,12 +782,12 @@ function TeamTemplateEditor({ template, capabilities }: { template?: TeamTemplat
   return <div className="dsh-fishyume-template-page"><main className="dsh-fishyume-template-main"><header className="dsh-fishyume-template-header"><div><span className="dsh-fishyume-eyebrow">团队 / 团队模板 / {template ? '编辑' : '创建'}</span><h3>{template ? '编辑团队模板' : '创建团队模板'}</h3><p>配置成员与运行环境，保存后可由 Host Agent 启动。</p></div><div className="dsh-fishyume-template-actions"><button type="button" onClick={() => updatePanel({ templateMode: 'list', selectedTemplate: undefined, error: undefined })}>取消</button><button type="button" data-primary disabled={saving} onClick={() => void submit()}>{saving ? '保存中…' : '保存团队模板'}</button></div></header>
     {error ? <div className="dsh-fishyume-state" role="alert">{error}</div> : null}
     <section className="dsh-fishyume-template-section"><h4>基本信息</h4><div className="dsh-fishyume-template-fields"><label className="dsh-fishyume-template-field"><span>团队模板名称</span><input value={draft.name} placeholder="例如：秋招研究团队" onChange={(event) => update({ name: event.target.value })} /></label><label className="dsh-fishyume-template-field"><span>模板标识</span><input value={draft.templateId} placeholder="例如：campus-research" disabled={Boolean(template)} onChange={(event) => update({ templateId: event.target.value })} /><small>供 Host Agent 在启动任务时引用。</small></label><label className="dsh-fishyume-template-field" data-wide><span>模板说明</span><textarea value={draft.description} placeholder="说明这个模板适合解决哪类任务。" onChange={(event) => update({ description: event.target.value })} /></label><div className="dsh-fishyume-template-field"><span>图标颜色</span><div className="dsh-fishyume-template-color-row">{(['cyan', 'violet', 'blue', 'green', 'orange', 'red', 'gray'] as const).map((color) => <button key={color} type="button" className="dsh-fishyume-template-color" data-color={color} data-selected={draft.color === color ? '' : undefined} aria-label={color} onClick={() => update({ color })} />)}</div></div></div></section>
-    <section className="dsh-fishyume-template-section"><div className="dsh-fishyume-template-toolbar"><h4>团队成员</h4><button type="button" onClick={addMember} disabled={draft.members.length >= 4}>＋ 添加成员</button></div><div className="dsh-fishyume-template-members">{draft.members.map((member, index) => { const models = templateModels(capabilities, member.driver); return <article className="dsh-fishyume-template-member" key={`${index}-${member.label}`}><div className="dsh-fishyume-template-member-top"><span className="dsh-fishyume-template-avatar" aria-hidden="true">{(member.label || String.fromCharCode(65 + index)).slice(0, 1).toUpperCase()}</span><input aria-label={`成员 ${index + 1} 名称`} value={member.label} placeholder="成员名称" onChange={(event) => updateMember(index, { label: event.target.value })} /><input aria-label={`成员 ${index + 1} 角色提示`} value={member.roleHint || ''} placeholder="角色提示（可选）" onChange={(event) => updateMember(index, { roleHint: event.target.value })} /><div className="dsh-fishyume-template-member-tools"><button type="button" title="更多设置" aria-label="更多设置">…</button><button type="button" title="删除成员" aria-label="删除成员" disabled={draft.members.length <= 2} onClick={() => removeMember(index)}>⌫</button></div></div><div className="dsh-fishyume-template-member-grid"><label className="dsh-fishyume-template-member-select"><span>Harness</span><select value={member.driver} onChange={(event) => changeDriver(index, event.target.value)}><option value="opencode">OpenCode</option><option value="codex">Codex</option><option value="claude">Claude Code</option></select></label><label className="dsh-fishyume-template-member-select"><span>Model · 由 Harness 决定</span><select value={member.modelId} onChange={(event) => updateMember(index, { modelId: event.target.value })}>{member.modelId && !models.some((model) => model.modelId === member.modelId) ? <option value={member.modelId}>{modelName(member.modelId)}</option> : null}{models.map((model) => <option key={model.modelId} value={model.modelId}>{model.label}</option>)}</select></label></div><div className="dsh-fishyume-template-permission-note">权限由所选 Harness 的权限分级决定，模板不固定跨 Harness 权限。</div><details><summary>高级设置</summary></details></article> })}</div><button type="button" className="dsh-fishyume-template-add" onClick={addMember} disabled={draft.members.length >= 4}>＋ 添加成员</button></section>
+    <section className="dsh-fishyume-template-section"><div className="dsh-fishyume-template-toolbar"><h4>团队成员</h4><button type="button" onClick={addMember} disabled={draft.members.length >= 4}>＋ 添加成员</button></div><div className="dsh-fishyume-template-members">{draft.members.map((member, index) => { const models = templateModels(capabilities, member.driver || ''); return <article className="dsh-fishyume-template-member" key={`${index}-${member.label}`}><div className="dsh-fishyume-template-member-top"><span className="dsh-fishyume-template-avatar" aria-hidden="true">{(member.label || String.fromCharCode(65 + index)).slice(0, 1).toUpperCase()}</span><input aria-label={`成员 ${index + 1} 名称`} value={member.label} placeholder="成员名称" onChange={(event) => updateMember(index, { label: event.target.value })} /><input aria-label={`成员 ${index + 1} 角色提示`} value={member.roleHint || ''} placeholder="角色提示（可选）" onChange={(event) => updateMember(index, { roleHint: event.target.value })} /><div className="dsh-fishyume-template-member-tools"><button type="button" title="更多设置" aria-label="更多设置">…</button><button type="button" title="删除成员" aria-label="删除成员" disabled={draft.members.length <= 2} onClick={() => removeMember(index)}>⌫</button></div></div><div className="dsh-fishyume-template-member-grid"><label className="dsh-fishyume-template-member-select"><span>Harness（可选）</span><select value={member.driver || ''} onChange={(event) => changeDriver(index, event.target.value)}><option value="">不指定 Harness</option>{(capabilities?.harnesses ?? []).map((harness) => <option key={harness.driver} value={harness.driver}>{harness.driver}</option>)}{!(capabilities?.harnesses?.length) ? <><option value="opencode">OpenCode</option><option value="codex">Codex</option><option value="claude">Claude Code</option></> : null}</select></label><label className="dsh-fishyume-template-member-select"><span>Model（随 Harness 可选）</span><select value={member.modelId || ''} disabled={!member.driver} onChange={(event) => updateMember(index, { modelId: event.target.value })}><option value="">{member.driver ? '选择 Model' : '先选择 Harness'}</option>{member.modelId && !models.some((model) => model.modelId === member.modelId) ? <option value={member.modelId}>{modelName(member.modelId)}</option> : null}{models.map((model) => <option key={model.modelId} value={model.modelId}>{model.label}</option>)}</select></label></div><div className="dsh-fishyume-template-permission-note">权限由所选 Harness 的权限分级决定，模板不固定跨 Harness 权限。</div><details><summary>高级设置</summary></details></article> })}</div><button type="button" className="dsh-fishyume-template-add" onClick={addMember} disabled={draft.members.length >= 4}>＋ 添加成员</button></section>
   </main><aside className="dsh-fishyume-template-summary"><h3>模板摘要</h3><dl className="dsh-fishyume-template-summary-list"><div className="dsh-fishyume-template-summary-row"><dt>模板名称</dt><dd>{draft.name || '未命名模板'}</dd></div><div className="dsh-fishyume-template-summary-row"><dt>成员</dt><dd>{draft.members.length}</dd></div><div className="dsh-fishyume-template-summary-row"><dt>默认状态</dt><dd>未启动</dd></div><div className="dsh-fishyume-template-summary-row"><dt>模板标识</dt><dd>{draft.templateId || '尚未填写'}</dd></div></dl><h4>成员</h4><div className="dsh-fishyume-template-summary-members">{draft.members.map((member, index) => <div className="dsh-fishyume-template-summary-member" key={`${index}-${member.label}`}><span className="dsh-fishyume-template-summary-avatar">{(member.label || String.fromCharCode(65 + index)).slice(0, 1).toUpperCase()}</span><span>{member.label || '未命名成员'}</span><small>{harnessName(member.driver)} · {modelName(member.modelId)}</small></div>)}</div><h4>启动方式</h4><div className="dsh-fishyume-template-command"><span>{`启动 fishyume 的${draft.name || '团队'}`}</span><button type="button" aria-label="复制启动方式" title="复制" onClick={copyLaunch}>▣</button></div><p className="dsh-fishyume-template-summary-note">保存后，可在 Host Agent 会话中使用团队名称启动。<br /><br />团队模板仅保存配置，不会立即启动成员。</p></aside></div>
 }
 
 function TeamTemplatesView({ state }: { state: PanelState }): JSX.Element {
-  if (state.templateMode === 'create') return <section className="dsh-fishyume-template-main" aria-label="创建团队模板"><header className="dsh-fishyume-template-header"><div><span className="dsh-fishyume-eyebrow">团队 / 团队模板 / 创建</span><h3>创建团队模板</h3><p>模板编辑页面待实现。</p></div><div className="dsh-fishyume-template-actions"><button type="button" onClick={() => updatePanel({ templateMode: 'list', selectedTemplate: undefined })}>返回模板列表</button></div></header><div className="dsh-fishyume-template-empty"><p>创建团队模板将在后续版本开放。</p></div></section>
+  if (state.templateMode === 'create') return <TeamTemplateEditor capabilities={state.capabilities} template={state.templates.find((item) => item.templateId === state.selectedTemplate)} />
   return <TeamTemplateListView state={state} />
 }
 

@@ -252,6 +252,11 @@ func (s *Service) Start(ctx context.Context, request teamcontract.TeamStartReque
 			return StartResult{}, err
 		}
 		if len(request.Participants) == 0 {
+			for _, member := range template.Members {
+				if member.ModelID == "" {
+					return StartResult{}, fmt.Errorf("%w: template member %q has no Harness/Model selection; provide explicit participants for this launch", ErrInvalidArgument, member.Label)
+				}
+			}
 			request.Participants = templateParticipantSpecs(template)
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"wf.local/wf-engine/internal/explorationdriver"
@@ -41,6 +42,24 @@ func (s *Service) Capabilities() (teamcontract.TeamCapabilitiesV1, error) {
 	for index, model := range catalog.Models[:count] {
 		templates = append(templates, teamcontract.ParticipantTemplateV1{Label: presets[index].label, Role: presets[index].role, ModelID: model.ID, Driver: model.Target.Driver, Target: model.Target.Provider})
 	}
+	harnessModels := make(map[string][]teamcontract.HarnessModelOptionV1)
+	for _, model := range catalog.Models {
+		driver := model.Target.Driver
+		harnessModels[driver] = append(harnessModels[driver], teamcontract.HarnessModelOptionV1{
+			ModelID: model.ID, Provider: model.Target.Provider, Model: model.Target.Model,
+		})
+	}
+	drivers := make([]string, 0, len(harnessModels))
+	for driver := range harnessModels {
+		drivers = append(drivers, driver)
+	}
+	sort.Strings(drivers)
+	harnesses := make([]teamcontract.HarnessCapabilityV1, 0, len(drivers))
+	for _, driver := range drivers {
+		models := harnessModels[driver]
+		sort.SliceStable(models, func(i, j int) bool { return models[i].ModelID < models[j].ModelID })
+		harnesses = append(harnesses, teamcontract.HarnessCapabilityV1{Driver: driver, Models: models})
+	}
 	s.mu.Lock()
 	sessionEnabled := true
 	for _, template := range templates {
@@ -57,7 +76,7 @@ func (s *Service) Capabilities() (teamcontract.TeamCapabilitiesV1, error) {
 		modes = append(modes, teamcontract.ModeSession)
 		features.Session, features.FollowUp, features.CancelTurn, features.Close = true, true, true, true
 	}
-	value := teamcontract.TeamCapabilitiesV1{SchemaVersion: teamcontract.SchemaVersion, SupportedModes: modes, Features: features, Limits: teamcontract.DefaultLimits(), ParticipantTemplates: templates, CatalogHash: hash}
+	value := teamcontract.TeamCapabilitiesV1{SchemaVersion: teamcontract.SchemaVersion, SupportedModes: modes, Features: features, Limits: teamcontract.DefaultLimits(), ParticipantTemplates: templates, Harnesses: harnesses, CatalogHash: hash}
 	return value, teamcontract.ValidateCapabilities(value)
 }
 

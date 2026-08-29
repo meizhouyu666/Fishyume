@@ -49,3 +49,32 @@ func TestTeamTemplateLifecycleAndStartExpansion(t *testing.T) {
 		t.Fatal("deleted template was still readable")
 	}
 }
+
+func TestTeamTemplateAllowsUnassignedRoutingAndRejectsMismatchedModel(t *testing.T) {
+	service := NewService(store.New(t.TempDir()))
+	optional := teamcontract.TeamTemplateUpsertRequestV1{
+		SchemaVersion: teamcontract.TemplateSchemaVersion,
+		TemplateID:    "role-only",
+		Name:         "Role only",
+		Members: []teamcontract.TeamTemplateMemberV1{
+			{Label: "researcher"},
+			{Label: "reviewer"},
+		},
+	}
+	if _, err := service.TemplateUpsert(optional); err != nil {
+		t.Fatalf("optional routing template rejected: %v", err)
+	}
+	capabilities, err := service.Capabilities()
+	if err != nil || len(capabilities.Harnesses) != 1 || len(capabilities.Harnesses[0].Models) < 2 {
+		t.Fatalf("capabilities=%+v err=%v", capabilities, err)
+	}
+	mismatched := optional
+	mismatched.TemplateID = "mismatched"
+	mismatched.Members = []teamcontract.TeamTemplateMemberV1{
+		{Label: "one", Driver: "codex", ModelID: "missing/model"},
+		{Label: "two"},
+	}
+	if _, err := service.TemplateUpsert(mismatched); err == nil {
+		t.Fatal("mismatched model was accepted")
+	}
+}

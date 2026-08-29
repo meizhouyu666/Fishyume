@@ -48,7 +48,9 @@ test('native Team workspace exposes reusable template list and editor', () => {
   assert.match(source, /团队任务/)
   assert.match(source, /团队模板/)
   assert.match(source, /创建团队模板/)
-  assert.match(source, /模板编辑页面待实现/)
+  assert.match(source, /TeamTemplateEditor/)
+  assert.match(source, /Harness（可选）/)
+  assert.match(source, /随 Harness 可选/)
 })
 
 test('native Run workspace exposes explicit cancel and node actions', () => {

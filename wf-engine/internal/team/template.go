@@ -2,6 +2,7 @@ package team
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -53,6 +54,27 @@ func (s *Service) TemplateGet(request teamcontract.TeamTemplateGetRequestV1) (te
 func (s *Service) TemplateUpsert(request teamcontract.TeamTemplateUpsertRequestV1) (teamcontract.TeamTemplateV1, error) {
 	if err := teamcontract.ValidateTemplateUpsertRequest(request); err != nil {
 		return teamcontract.TeamTemplateV1{}, err
+	}
+	s.mu.Lock()
+	catalog := s.catalog
+	s.mu.Unlock()
+	for _, member := range request.Members {
+		if member.ModelID == "" {
+			continue
+		}
+		found := false
+		for _, model := range catalog.Models {
+			if model.ID == member.ModelID {
+				if model.Target.Driver != member.Driver {
+					return teamcontract.TeamTemplateV1{}, fmt.Errorf("template member model %q does not belong to Harness %q", member.ModelID, member.Driver)
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return teamcontract.TeamTemplateV1{}, fmt.Errorf("template member model %q is absent from the active Team catalog", member.ModelID)
+		}
 	}
 	now := time.Now().UTC()
 	item := teamcontract.TeamTemplateV1{SchemaVersion: teamcontract.TemplateSchemaVersion, TemplateID: request.TemplateID, Name: request.Name, Description: request.Description, Color: request.Color, Members: append([]teamcontract.TeamTemplateMemberV1(nil), request.Members...), CreatedAt: now, UpdatedAt: now}
