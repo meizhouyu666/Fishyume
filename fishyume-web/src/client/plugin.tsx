@@ -138,7 +138,7 @@ const nativeStyles = `
 .dsh-fishyume-member-drawer header button{width:32px;height:32px;padding:0}.dsh-fishyume-member-drawer h3{margin:2px 0 6px;font-size:18px;line-height:25px}.dsh-fishyume-member-drawer p{margin:0;color:var(--fy-text-secondary)}
 .dsh-fishyume-member-drawer h4{margin:22px 0 10px}.dsh-fishyume-member-drawer dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 14px;margin:0}.dsh-fishyume-member-drawer dt{color:var(--fy-text-tertiary)}.dsh-fishyume-member-drawer dd{margin:0;color:var(--fy-text-secondary);overflow-wrap:anywhere}
 .dsh-fishyume-member-activity{display:grid;gap:0;border-top:1px solid var(--fy-border)}.dsh-fishyume-member-activity>div{padding:10px 0;border-bottom:1px solid var(--fy-border)}.dsh-fishyume-member-activity small{display:block;color:var(--fy-text-tertiary);font-size:11px}.dsh-fishyume-member-activity p{margin:4px 0 0;color:var(--fy-text-secondary);white-space:pre-wrap;overflow-wrap:anywhere}
-.dsh-fishyume-live-status{margin-top:22px}.dsh-fishyume-live-status-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.dsh-fishyume-live-status-heading h4{margin:0}.dsh-fishyume-live-indicator{display:inline-flex;align-items:center;gap:6px;color:#52d4e8;font-size:12px}.dsh-fishyume-live-indicator::before{content:'';width:8px;height:8px;border-radius:50%;background:#33c4d7;box-shadow:0 0 0 3px rgba(51,196,215,.14)}
+.dsh-fishyume-live-status{margin-top:22px}.dsh-fishyume-live-status-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.dsh-fishyume-live-status-heading h4{margin:0}.dsh-fishyume-live-indicator{display:inline-flex;align-items:center;gap:6px;color:var(--fy-text-tertiary);font-size:12px}.dsh-fishyume-live-indicator::before{content:'';width:8px;height:8px;border-radius:50%;background:#68727d}.dsh-fishyume-live-indicator[data-live]{color:#52d4e8}.dsh-fishyume-live-indicator[data-live]::before{background:#33c4d7;box-shadow:0 0 0 3px rgba(51,196,215,.14)}
 .dsh-fishyume-live-scroll{position:relative;height:336px;min-height:336px;max-height:336px;overflow-y:scroll;overscroll-behavior:contain;padding:8px 12px 8px 0;border:1px solid var(--fy-border);border-radius:8px;background:var(--fy-bg-canvas);scrollbar-width:thin;scrollbar-color:var(--fy-border-strong) transparent}.dsh-fishyume-live-scroll::-webkit-scrollbar{width:7px}.dsh-fishyume-live-scroll::-webkit-scrollbar-thumb{border-radius:999px;background:var(--fy-border-strong)}.dsh-fishyume-live-scroll::-webkit-scrollbar-track{background:transparent}
 .dsh-fishyume-live-timeline{position:relative;display:grid;gap:0;padding:0 12px 0 42px}.dsh-fishyume-live-timeline::before{content:'';position:absolute;left:20px;top:15px;bottom:15px;width:1px;background:var(--fy-border-strong)}.dsh-fishyume-live-item{position:relative;display:grid;grid-template-columns:minmax(0,1fr) max-content;gap:8px;padding:9px 0;border-bottom:1px solid var(--fy-border)}.dsh-fishyume-live-item::before{content:'';position:absolute;left:-28px;top:15px;width:9px;height:9px;border:2px solid var(--fy-bg-canvas);border-radius:50%;background:#68727d;box-shadow:0 0 0 1px #68727d}.dsh-fishyume-live-item[data-tone="green"]::before{background:#39b86a;box-shadow:0 0 0 1px #39b86a}.dsh-fishyume-live-item[data-tone="cyan"]::before{width:11px;height:11px;left:-29px;top:14px;background:#33c4d7;box-shadow:0 0 0 1px #33c4d7,0 0 0 5px rgba(51,196,215,.16)}.dsh-fishyume-live-label{min-width:0;color:var(--fy-text-primary);font-size:13px;line-height:19px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dsh-fishyume-live-time{color:var(--fy-text-tertiary);font-size:11px;line-height:19px;white-space:nowrap}.dsh-fishyume-live-detail{grid-column:1/-1;margin:0;color:var(--fy-text-secondary);font-size:12px;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dsh-fishyume-live-history{position:absolute;right:0;bottom:0;left:0;display:flex;justify-content:center;padding:12px 0 10px;border-top:1px solid rgba(40,40,44,.86);background:linear-gradient(transparent,var(--fy-bg-canvas) 35%);pointer-events:none}.dsh-fishyume-live-history button{pointer-events:auto;color:var(--fy-text-secondary);background:transparent;border:0;font:12px/18px inherit;cursor:pointer}.dsh-fishyume-live-history button:hover{color:var(--fy-text-primary)}
 .dsh-fishyume-team-subnav{display:flex;align-items:center;gap:6px;min-height:48px;padding:0 20px;border-bottom:1px solid var(--fy-border);background:var(--fy-bg-surface)}
@@ -481,7 +481,7 @@ function TeamWorkspace({ state }: { state: PanelState }): JSX.Element {
 }
 
 function localizedPhase(value?: string): string {
-  return ({ queued: '排队中', pending: '待执行', running: '执行中', waiting: '等待确认', completed: '已完成', failed: '失败', cancelled: '已取消' } as Record<string, string>)[value ?? ''] ?? value ?? '未知'
+  return ({ queued: '排队中', pending: '待执行', running: '执行中', waiting: '等待确认', prepared: '已准备', dispatching: '派发中', active: '执行中', responded: '已响应', completed: '已完成', failed: '失败', indeterminate: '状态不确定', cancelling: '取消中', cancelled: '已取消' } as Record<string, string>)[value ?? ''] ?? value ?? '未知'
 }
 
 function localizedConclusion(value?: string): string {
@@ -662,7 +662,32 @@ function memberLiveActivities(team: TeamDetail | undefined, member: TeamParticip
   }).sort((a, b) => b.sequence - a.sequence)
 }
 
+function memberStatusState(team: TeamDetail | undefined, member: TeamParticipant, turn?: TeamTurn): string | undefined {
+  if (member.state) return member.state
+  if (turn?.state) return turn.state
+  const latestTurn = (team?.turns ?? [])
+    .filter((item) => item.participantId === member.participantId)
+    .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || '') - Date.parse(a.updatedAt || a.createdAt || ''))[0]
+  return latestTurn?.state
+}
+
+function isLiveParticipantState(state?: string): boolean {
+  return state === 'pending' || state === 'running' || state === 'prepared' || state === 'dispatching' || state === 'active' || state === 'cancelling'
+}
+
+function participantStatusLabel(state?: string): string {
+  if (isLiveParticipantState(state)) return '实时'
+  if (state === 'responded' || state === 'completed') return '已完成'
+  if (state === 'failed') return '失败'
+  if (state === 'indeterminate') return '状态不确定'
+  if (state === 'cancelled') return '已取消'
+  return '暂无状态'
+}
+
 function MemberLiveStatus({ team, member }: { team?: TeamDetail; member: TeamParticipant }): JSX.Element {
+  const turn = team?.turns?.find((item) => item.turnId === member.currentTurnId)
+  const status = memberStatusState(team, member, turn)
+  const live = isLiveParticipantState(status)
   const items = memberLiveActivities(team, member)
   const handleWheel = (event: WheelEvent<HTMLDivElement>): void => {
     const pane = event.currentTarget
@@ -673,7 +698,7 @@ function MemberLiveStatus({ team, member }: { team?: TeamDetail; member: TeamPar
     if (!canScroll || atTop || atBottom) event.preventDefault()
   }
   return <section className="dsh-fishyume-live-status" aria-label="实时状态">
-    <div className="dsh-fishyume-live-status-heading"><h4>实时状态</h4><span className="dsh-fishyume-live-indicator">Live</span></div>
+    <div className="dsh-fishyume-live-status-heading"><h4>Harness 活动</h4><span className="dsh-fishyume-live-indicator" data-live={live ? '' : undefined}>{participantStatusLabel(status)}</span></div>
     <div className="dsh-fishyume-live-scroll" role="log" aria-live="polite" onWheelCapture={handleWheel}>
       {items.length ? <div className="dsh-fishyume-live-timeline">{items.map((event, index) => <div className="dsh-fishyume-live-item" data-tone={liveActivityTone(event.type, index === 0)} key={String(event.sequence) + '-' + event.type}><span className="dsh-fishyume-live-label">{liveActivityLabel(event.type)}</span><time className="dsh-fishyume-live-time">{nativeTime(event.timestamp || event.createdAt)}</time>{event.summary || event.message ? <p className="dsh-fishyume-live-detail">{event.summary || event.message}</p> : null}</div>)}</div> : <p className="dsh-fishyume-state">暂无 Harness 活动。</p>}
     </div>
@@ -688,6 +713,7 @@ function AgentStatusStream({ team }: { team?: TeamDetail }): JSX.Element {
 function MemberDrawer({ team, member }: { team?: TeamDetail; member?: TeamParticipant }): JSX.Element | null {
   if (!member) return null
   const turn = team?.turns?.find((item) => item.turnId === member.currentTurnId)
+  const status = memberStatusState(team, member, turn)
   const close = (): void => updatePanel({ selectedMember: undefined })
   const relatedItems = contributionItems(team).filter((item) => item.member?.participantId === member.participantId || item.message.actor === member.label).slice(-5).reverse()
   return <>
@@ -695,7 +721,7 @@ function MemberDrawer({ team, member }: { team?: TeamDetail; member?: TeamPartic
     <aside className="dsh-fishyume-member-drawer" aria-label="成员详情">
       <header><div><span className="dsh-fishyume-eyebrow">成员详情</span><h3>{member.label || member.participantId}</h3><p>{member.role || '协作者'}</p></div><button type="button" aria-label="关闭成员详情" title="关闭" onClick={close}>×</button></header>
       <h4>当前状态</h4>
-      <dl><dt>状态</dt><dd>{localizedPhase(member.state)}</dd><dt>当前任务</dt><dd>{turn?.number !== undefined ? `第 ${turn.number} 轮` : member.currentTurnId || '暂无任务'}</dd><dt>目标</dt><dd>{member.target || turn?.target || '默认目标'}</dd><dt>执行阶段</dt><dd>{turn?.state ? localizedPhase(turn.state) : '暂无阶段信息'}</dd></dl>
+      <dl><dt>状态</dt><dd>{participantStatusLabel(status)}{status ? `（${localizedPhase(status)}）` : ''}</dd><dt>当前任务</dt><dd>{turn?.number !== undefined ? `第 ${turn.number} 轮` : member.currentTurnId || '暂无任务'}</dd><dt>目标</dt><dd>{member.target || turn?.target || '默认目标'}</dd><dt>执行阶段</dt><dd>{turn?.state ? localizedPhase(turn.state) : '暂无阶段信息'}</dd></dl>
       <h4>执行配置</h4>
       <dl><dt>Harness</dt><dd>{harnessName(member.driver)}</dd><dt>Model</dt><dd>{modelName(member.modelId)}</dd><dt>回合 ID</dt><dd>{member.currentTurnId || '暂无'}</dd></dl>
       <MemberLiveStatus team={team} member={member} />
@@ -825,16 +851,18 @@ function FishyumePanel(): JSX.Element {
   }, [state.open, state.focusRevision])
   useEffect(() => {
     const teamId = state.selectedTeam
-    if (!state.open || !teamId || !state.selectedMember) return
+    const member = state.teamDetail?.participants?.find((item) => item.participantId === state.selectedMember)
+    const memberState = member ? memberStatusState(state.teamDetail, member, state.teamDetail?.turns?.find((item) => item.turnId === member.currentTurnId)) : undefined
+    if (!state.open || !teamId || !state.selectedMember || !isLiveParticipantState(memberState)) return
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | undefined
     const pollTeam = async (): Promise<void> => {
-      try { await loadTeamDetail(teamId) } catch { /* retain the last live snapshot */ }
+      try { await loadTeamDetail(teamId) } catch { /* retain the last successful snapshot */ }
       if (!cancelled) timer = setTimeout(() => { void pollTeam() }, 1500)
     }
     timer = setTimeout(() => { void pollTeam() }, 1500)
     return () => { cancelled = true; if (timer) clearTimeout(timer) }
-  }, [state.open, state.selectedTeam, state.selectedMember])
+  }, [state.open, state.selectedTeam, state.selectedMember, state.teamDetail?.participants, state.teamDetail?.turns])
   return <div className="dsh-fishyume-panel" data-dsh-plugin="dsh-fishyume" role="region" aria-label="Fishyume 工作区"><EnhancedWorkspaceV2 state={state} /></div>
 }
 

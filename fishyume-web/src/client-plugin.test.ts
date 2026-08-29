@@ -100,8 +100,18 @@ test('member detail provides a fixed-height live harness activity timeline', () 
   assert.match(source, /onWheelCapture=\{handleWheel\}/)
   assert.match(source, /event\.stopPropagation\(\)/)
   assert.match(source, /event\.preventDefault\(\)/)
-  assert.match(source, /state\.selectedMember\]\)/)
+  assert.match(source, /state\.selectedMember, state\.teamDetail\?\.participants/)
   assert.match(source, /setTimeout\(\(\) => \{ void pollTeam\(\) \}, 1500\)/)
+})
+
+test('member status badge follows backend participant state instead of hardcoded Live', () => {
+  assert.match(source, /function memberStatusState\(team: TeamDetail \| undefined, member: TeamParticipant/)
+  assert.match(source, /function participantStatusLabel\(state\?: string\)/)
+  assert.match(source, /data-live=\{live \? '' : undefined\}/)
+  assert.match(source, /participantStatusLabel\(status\)/)
+  assert.doesNotMatch(source, />Live<\/span>/)
+  assert.match(source, /responded: '已响应'/)
+  assert.match(source, /indeterminate: '状态不确定'/)
 })
 
 test('team messages normalize structured payloads before rendering', () => {
