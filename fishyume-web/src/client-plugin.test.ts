@@ -99,6 +99,18 @@ test('agent status stream renders participant contributions instead of raw event
   assert.match(source, /message\.content\}/)
 })
 
+test('member contributions use file tags and expandable content', () => {
+  assert.match(source, /function contributionFileLabels\(message: TeamMessage\)/)
+  assert.match(source, /className="dsh-fishyume-output-file"/)
+  assert.match(source, /<details className="dsh-fishyume-agent-output"/)
+  assert.match(source, /className="dsh-fishyume-output-chevron"/)
+  assert.match(source, /contributionFileLabels\(message\)\.map/)
+  assert.match(source, /function TeamTasksView\(\{ state \}: \{ state: PanelState \}\)/)
+  const taskView = source.slice(source.indexOf('function TeamTasksView'), source.indexOf('function TeamTemplateListView'))
+  assert.match(taskView, /<EnhancedTeamMembers team=\{team\} \/>/)
+  assert.doesNotMatch(taskView, /交接/)
+})
+
 test('member detail provides a fixed-height live harness activity timeline', () => {
   assert.match(source, /function MemberLiveStatus\(/)
   assert.match(source, /dsh-fishyume-live-scroll/)

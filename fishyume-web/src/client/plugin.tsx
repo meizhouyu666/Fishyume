@@ -125,7 +125,7 @@ const nativeStyles = `
 .dsh-fishyume-agent-row[data-kind="tool"]::before{background:var(--fy-accent-soft)}
 .dsh-fishyume-agent-row small{color:var(--fy-text-tertiary);white-space:nowrap}
 .dsh-fishyume-agent-row span:last-child{min-width:0;color:var(--fy-text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsh-fishyume-agent-output{padding:12px 0;border-bottom:1px solid var(--fy-border)}.dsh-fishyume-agent-output>div{display:flex;align-items:baseline;gap:10px;min-width:0}.dsh-fishyume-agent-output strong{font-size:13px;color:var(--fy-text-primary)}.dsh-fishyume-agent-output small{color:var(--fy-text-tertiary);font-size:11px}.dsh-fishyume-agent-output p{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:6;overflow:hidden;margin:6px 0 0;padding:9px 10px;border:1px solid var(--fy-border);border-radius:6px;color:var(--fy-text-primary);background:var(--fy-bg-surface);white-space:pre-wrap;overflow-wrap:anywhere;line-height:20px}
+.dsh-fishyume-agent-output{padding:0;border-bottom:1px solid var(--fy-border)}.dsh-fishyume-agent-output summary{display:grid;grid-template-columns:max-content minmax(0,1fr) max-content;align-items:center;gap:10px;padding:11px 0;cursor:pointer;list-style:none}.dsh-fishyume-agent-output summary::-webkit-details-marker{display:none}.dsh-fishyume-agent-output summary>span:first-child{display:grid;gap:2px;min-width:0}.dsh-fishyume-agent-output strong{font-size:13px;color:var(--fy-text-primary)}.dsh-fishyume-agent-output small{color:var(--fy-text-tertiary);font-size:11px}.dsh-fishyume-output-files{display:flex;flex-wrap:wrap;align-items:center;gap:5px;min-width:0}.dsh-fishyume-output-file{display:inline-flex;align-items:center;max-width:100%;padding:2px 7px;border:1px solid var(--fy-border-strong);border-radius:999px;color:var(--fy-text-secondary);background:var(--fy-bg-surface);font-size:11px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dsh-fishyume-output-chevron{color:var(--fy-text-tertiary);font-size:17px;line-height:18px;transition:transform .15s}.dsh-fishyume-agent-output[open] .dsh-fishyume-output-chevron{transform:rotate(180deg);color:var(--fy-accent-soft)}.dsh-fishyume-agent-output-body{padding:0 0 12px}.dsh-fishyume-agent-output-body>p{margin:8px 0 0;padding:9px 10px;border:1px solid var(--fy-border);border-radius:6px;color:var(--fy-text-primary);background:var(--fy-bg-surface);white-space:pre-wrap;overflow-wrap:anywhere;line-height:20px}
 .dsh-fishyume-member-details{margin-top:12px;border-top:1px solid var(--fy-border)}
 .dsh-fishyume-member-details summary{padding:10px 0;color:var(--fy-accent-soft);font-size:12px;cursor:pointer}
 .dsh-fishyume-member-detail{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 14px;padding:0 0 12px;color:var(--fy-text-secondary);font-size:12px}
@@ -617,6 +617,37 @@ function activityKind(kind?: string, content?: string): { label: string; kind: '
 
 type ContributionItem = { message: TeamMessage; member?: TeamParticipant; turn?: TeamTurn }
 
+type ContributionEnvelope = { resultType?: string; output?: unknown; contentMarkdown?: string }
+
+function contributionEnvelope(message: TeamMessage): ContributionEnvelope | undefined {
+  try {
+    const value = JSON.parse(message.content || '') as unknown
+    if (!value || typeof value !== 'object') return undefined
+    return value as ContributionEnvelope
+  } catch {
+    return undefined
+  }
+}
+
+function contributionFileLabels(message: TeamMessage): string[] {
+  const value = contributionEnvelope(message)
+  const labels: string[] = []
+  const collect = (input: unknown, key = ''): void => {
+    if (typeof input === 'string' && /^(path|file|filename|artifact)s?$/i.test(key)) {
+      const normalized = input.replaceAll('\\', '/')
+      labels.push(normalized.slice(normalized.lastIndexOf('/') + 1) || input)
+      return
+    }
+    if (Array.isArray(input)) { input.forEach((item) => collect(item, key)); return }
+    if (input && typeof input === 'object') Object.entries(input).forEach(([childKey, childValue]) => collect(childValue, childKey))
+  }
+  collect(value?.output)
+  const unique = [...new Set(labels.filter(Boolean))]
+  if (unique.length) return unique.slice(0, 4)
+  const fallback = ({ report: 'report.md', decision: 'decision.json', artifact: 'artifact', data: 'data.json', question: 'question.md' } as Record<string, string>)[value?.resultType || '']
+  return fallback ? [fallback] : value?.contentMarkdown ? ['Markdown 产出'] : ['产出内容']
+}
+
 function contributionItems(team?: TeamDetail): ContributionItem[] {
   const members = Array.isArray(team?.participants) ? team.participants : []
   return panel.teamMessages
@@ -707,7 +738,7 @@ function MemberLiveStatus({ team, member }: { team?: TeamDetail; member: TeamPar
 
 function AgentStatusStream({ team }: { team?: TeamDetail }): JSX.Element {
   const items = contributionItems(team).slice(-8).reverse()
-  return <section className="dsh-fishyume-agent-status" aria-label="成员产出"><h4>成员产出</h4>{items.length ? <div className="dsh-fishyume-agent-stream">{items.map(({ message, member, turn }) => <article className="dsh-fishyume-agent-output" key={message.messageId}><div><strong>{member?.label || message.actor || '智能体'}</strong><small>{turn?.number !== undefined ? `第 ${turn.number} 轮 · ` : ''}{nativeTime(message.createdAt)}</small></div><p title={message.content}>{message.content}</p></article>)}</div> : <p>暂无成员产出。</p>}</section>
+  return <section className="dsh-fishyume-agent-status" aria-label="成员产出"><h4>成员产出</h4>{items.length ? <div className="dsh-fishyume-agent-stream">{items.map(({ message, member, turn }) => <details className="dsh-fishyume-agent-output" key={message.messageId}><summary><span><strong>{member?.label || message.actor || '智能体'}</strong><small>{turn?.number !== undefined ? `第 ${turn.number} 轮 · ` : ''}{nativeTime(message.createdAt)}</small></span><span className="dsh-fishyume-output-files">{contributionFileLabels(message).map((label) => <span className="dsh-fishyume-output-file" key={label}>▧ {label}</span>)}</span><span className="dsh-fishyume-output-chevron" aria-hidden="true">⌄</span></summary><div className="dsh-fishyume-agent-output-body"><div className="dsh-fishyume-output-files">{contributionFileLabels(message).map((label) => <span className="dsh-fishyume-output-file" key={label}>▧ {label}</span>)}</div><p title={message.content}>{message.content}</p></div></details>)}</div> : <p>暂无成员产出。</p>}</section>
 }
 
 function MemberDrawer({ team, member }: { team?: TeamDetail; member?: TeamParticipant }): JSX.Element | null {
@@ -726,7 +757,7 @@ function MemberDrawer({ team, member }: { team?: TeamDetail; member?: TeamPartic
       <dl><dt>Harness</dt><dd>{harnessName(member.driver)}</dd><dt>Model</dt><dd>{modelName(member.modelId)}</dd><dt>回合 ID</dt><dd>{member.currentTurnId || '暂无'}</dd></dl>
       <MemberLiveStatus team={team} member={member} />
       <h4>最近产出</h4>
-      {relatedItems.length ? <div className="dsh-fishyume-member-activity">{relatedItems.map(({ message, turn }) => <div key={message.messageId}><small>#{message.sequence} · {turn?.number !== undefined ? `第 ${turn.number} 轮 · ` : ''}{nativeTime(message.createdAt)}</small><p>{message.content}</p></div>)}</div> : <p>暂无相关产出。</p>}
+      {relatedItems.length ? <div className="dsh-fishyume-member-activity">{relatedItems.map(({ message, turn }) => <div key={message.messageId}><small>#{message.sequence} · {turn?.number !== undefined ? `第 ${turn.number} 轮 · ` : ''}{nativeTime(message.createdAt)}</small><div className="dsh-fishyume-output-files">{contributionFileLabels(message).map((label) => <span className="dsh-fishyume-output-file" key={label}>▧ {label}</span>)}</div></div>)}</div> : <p>暂无相关产出。</p>}
     </aside>
   </>
 }
@@ -770,7 +801,7 @@ function TeamSubnav({ state }: { state: PanelState }): JSX.Element {
 function TeamTasksView({ state }: { state: PanelState }): JSX.Element {
   const selected = state.teams.find((team) => team.teamId === state.selectedTeam)
   const team = state.teamDetail || selected
-  return <div className="dsh-fishyume-columns"><div className="dsh-fishyume-list" aria-label="团队任务列表">{state.teams.length ? state.teams.map((item) => <button key={item.teamId} type="button" className={item.teamId === state.selectedTeam ? 'is-selected' : ''} onClick={() => { updatePanel({ selectedTeam: item.teamId, selectedHandoff: undefined, selectedMember: undefined, teamDetail: undefined }); void loadTeamDetail(item.teamId) }}><strong>{item.topic || item.teamId}</strong><small>{localizedPhase(item.state || item.status)} · {item.mode || '团队'}</small><small>{Array.isArray(item.participants) ? item.participants.length : item.participants ?? 0} 位成员 · {nativeTime(item.updatedAt || item.createdAt)}</small></button>) : <div className="dsh-fishyume-state">暂无团队任务。</div>}</div><section className="dsh-fishyume-detail" aria-label="团队任务详情">{team ? <><span className="dsh-fishyume-eyebrow">团队任务</span><h3>{team.topic || team.teamId}</h3><p>{team.project || '项目路径不可用'}</p><small>{team.teamId}</small><div className="dsh-fishyume-metrics"><NativeMetric label="状态" value={localizedPhase(team.state || team.status)} /><NativeMetric label="模式" value={team.mode || '未知'} /><NativeMetric label="成员" value={Array.isArray(team.participants) ? team.participants.length : team.participants ?? 0} /><NativeMetric label="额度" value={`${team.costUsed ?? 0} / ${team.costGrant ?? 0}`} /></div><EnhancedTeamMembers team={team} /><h4>交接</h4>{state.handoffs.length ? state.handoffs.map((handoff) => <button key={handoff.handoffId} type="button" className={handoff.handoffId === state.selectedHandoff ? 'is-selected' : ''} onClick={() => updatePanel({ selectedHandoff: handoff.handoffId })}><strong>{handoff.goal}</strong><small>{handoff.handoffId}</small></button>) : <p>暂无交接。</p>}{state.teamMessages.length ? <><h4>最近消息</h4>{state.teamMessages.slice(-6).reverse().map((message) => <div className="dsh-fishyume-message" key={message.messageId}><small>#{message.sequence} · {message.actor || message.kind || '消息'} · {nativeTime(message.createdAt)}</small><div>{message.content || '空消息'}</div></div>)}</> : null}</> : <div className="dsh-fishyume-state">选择一个团队任务。</div>}</section></div>
+  return <div className="dsh-fishyume-columns"><div className="dsh-fishyume-list" aria-label="团队任务列表">{state.teams.length ? state.teams.map((item) => <button key={item.teamId} type="button" className={item.teamId === state.selectedTeam ? 'is-selected' : ''} onClick={() => { updatePanel({ selectedTeam: item.teamId, selectedHandoff: undefined, selectedMember: undefined, teamDetail: undefined }); void loadTeamDetail(item.teamId) }}><strong>{item.topic || item.teamId}</strong><small>{localizedPhase(item.state || item.status)} · {item.mode || '团队'}</small><small>{Array.isArray(item.participants) ? item.participants.length : item.participants ?? 0} 位成员 · {nativeTime(item.updatedAt || item.createdAt)}</small></button>) : <div className="dsh-fishyume-state">暂无团队任务。</div>}</div><section className="dsh-fishyume-detail" aria-label="团队任务详情">{team ? <><span className="dsh-fishyume-eyebrow">团队任务</span><h3>{team.topic || team.teamId}</h3><p>{team.project || '项目路径不可用'}</p><small>{team.teamId}</small><div className="dsh-fishyume-metrics"><NativeMetric label="状态" value={localizedPhase(team.state || team.status)} /><NativeMetric label="模式" value={team.mode || '未知'} /><NativeMetric label="成员" value={Array.isArray(team.participants) ? team.participants.length : team.participants ?? 0} /><NativeMetric label="额度" value={`${team.costUsed ?? 0} / ${team.costGrant ?? 0}`} /></div><EnhancedTeamMembers team={team} />{state.teamMessages.length ? <><h4>最近消息</h4>{state.teamMessages.slice(-6).reverse().map((message) => <div className="dsh-fishyume-message" key={message.messageId}><small>#{message.sequence} · {message.actor || message.kind || '消息'} · {nativeTime(message.createdAt)}</small><div>{message.content || '空消息'}</div></div>)}</> : null}</> : <div className="dsh-fishyume-state">选择一个团队任务。</div>}</section></div>
 }
 
 function TeamTemplateListView({ state }: { state: PanelState }): JSX.Element {
