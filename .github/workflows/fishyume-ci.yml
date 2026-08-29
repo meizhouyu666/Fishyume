@@ -45,7 +45,7 @@ jobs:
           npm --prefix wf run pack:audit:real
       - name: Optional Web client checks
         run: |
-          npm --prefix fishyume-web ci --ignore-scripts
+          npm --prefix fishyume-web ci --ignore-scripts --legacy-peer-deps
           npm --prefix fishyume-web run verify
           npm --prefix fishyume-web run smoke:install
       - name: Diff check

@@ -79,6 +79,19 @@ test('agent status stream renders participant contributions instead of raw event
   assert.match(source, /message\.content\}/)
 })
 
+test('member detail provides a fixed-height live harness activity timeline', () => {
+  assert.match(source, /function MemberLiveStatus\(/)
+  assert.match(source, /dsh-fishyume-live-scroll/)
+  assert.match(source, /height:336px;min-height:336px;max-height:336px/)
+  assert.match(source, /dsh-fishyume-live-timeline::before/)
+  assert.match(source, /data-tone=\{liveActivityTone/)
+  assert.match(source, /onWheelCapture=\{handleWheel\}/)
+  assert.match(source, /event\.stopPropagation\(\)/)
+  assert.match(source, /event\.preventDefault\(\)/)
+  assert.match(source, /state\.selectedMember\]\)/)
+  assert.match(source, /setTimeout\(\(\) => \{ void pollTeam\(\) \}, 1500\)/)
+})
+
 test('team messages normalize structured payloads before rendering', () => {
   assert.match(source, /function formatTeamMessage\(message: TeamMessage\)/)
   assert.match(source, /content: formatTeamMessage\(message\)/)

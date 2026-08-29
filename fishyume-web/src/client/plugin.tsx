@@ -1,5 +1,5 @@
 /** Native DSH client entry. Renders a React workspace; never creates an iframe. */
-import { useEffect, useState, useSyncExternalStore, type ComponentType } from 'react'
+import { useEffect, useState, useSyncExternalStore, type ComponentType, type WheelEvent } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { createConnectionTransport, createHttpTransport, createRemoteTransport, type RpcTransport } from './transport.js'
 import { FISHYUME_REMOTE, type FishyumeRemoteFace } from '../remote-contract.js'
@@ -36,7 +36,7 @@ type Handoff = { handoffId: string; teamId: string; goal: string; createdAt?: st
 type Run = { runId: string; workflowName?: string; project?: string; driver?: string; phase?: string; conclusion?: string; stateVersion?: number; cancelRequested?: boolean; updatedAt?: string }
 type RunNode = { nodeId: string; type?: string; title?: string; phase?: string; conclusion?: string; reason?: string; currentAttempt?: number; message?: string; diagnostic?: string; dependsOn?: string[]; parallelLayer?: number; attempt?: { number?: number; phase?: string; driver?: string; target?: string; startedAt?: string; updatedAt?: string; completedAt?: string; diagnostic?: string; contextHash?: string; activity?: { summary?: string; items?: Array<{ kind?: string; status?: string; message?: string }> }; routingDecision?: unknown; executionProfile?: unknown; routingUsage?: unknown; sideEffectStatus?: string; failureClass?: string }; result?: { summary?: string; artifacts?: string[]; warnings?: string[]; checks?: string[]; questions?: Array<{ id: string; prompt: string; choices?: string[]; required?: boolean }>; decision?: string; reason?: string; usage?: Record<string, number> } }
 type RunDetail = Run & { summary?: string; nodes?: RunNode[] }
-type RunEvent = { sequence: number; type: string; phase?: string; nodeId?: string; nodePhase?: string; conclusion?: string; reason?: string; message?: string; summary?: string; timestamp?: string; createdAt?: string }
+type RunEvent = { sequence: number; type: string; phase?: string; nodeId?: string; nodePhase?: string; conclusion?: string; reason?: string; message?: string; summary?: string; timestamp?: string; createdAt?: string; turnId?: string; messageId?: string }
 type Driver = { driver: string; available: boolean; teamEligible: boolean; workflowEligible: boolean; executable?: string; diagnostic?: string; modelCount?: number }
 type Route = { routeId: string; enabled: boolean; effective?: boolean; driver?: string; provider?: string; model?: string; driverAvailable?: boolean }
 type PanelState = { open: boolean; view: View; teams: Team[]; runs: Run[]; handoffs: Handoff[]; drivers: Driver[]; routes: Route[]; selectedTeam?: string; selectedRun?: string; selectedHandoff?: string; selectedMember?: string; selectedNode?: string; selectedEvent?: number; teamDetail?: TeamDetail; teamMessages: TeamMessage[]; teamEvents: RunEvent[]; runDetail?: RunDetail; runEvents: RunEvent[]; token?: string; loading: boolean; error?: string; focusRevision: number }
@@ -130,6 +130,9 @@ const nativeStyles = `
 .dsh-fishyume-member-drawer header button{width:32px;height:32px;padding:0}.dsh-fishyume-member-drawer h3{margin:2px 0 6px;font-size:18px;line-height:25px}.dsh-fishyume-member-drawer p{margin:0;color:var(--fy-text-secondary)}
 .dsh-fishyume-member-drawer h4{margin:22px 0 10px}.dsh-fishyume-member-drawer dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 14px;margin:0}.dsh-fishyume-member-drawer dt{color:var(--fy-text-tertiary)}.dsh-fishyume-member-drawer dd{margin:0;color:var(--fy-text-secondary);overflow-wrap:anywhere}
 .dsh-fishyume-member-activity{display:grid;gap:0;border-top:1px solid var(--fy-border)}.dsh-fishyume-member-activity>div{padding:10px 0;border-bottom:1px solid var(--fy-border)}.dsh-fishyume-member-activity small{display:block;color:var(--fy-text-tertiary);font-size:11px}.dsh-fishyume-member-activity p{margin:4px 0 0;color:var(--fy-text-secondary);white-space:pre-wrap;overflow-wrap:anywhere}
+.dsh-fishyume-live-status{margin-top:22px}.dsh-fishyume-live-status-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.dsh-fishyume-live-status-heading h4{margin:0}.dsh-fishyume-live-indicator{display:inline-flex;align-items:center;gap:6px;color:#52d4e8;font-size:12px}.dsh-fishyume-live-indicator::before{content:'';width:8px;height:8px;border-radius:50%;background:#33c4d7;box-shadow:0 0 0 3px rgba(51,196,215,.14)}
+.dsh-fishyume-live-scroll{position:relative;height:336px;min-height:336px;max-height:336px;overflow-y:scroll;overscroll-behavior:contain;padding:8px 12px 8px 0;border:1px solid var(--fy-border);border-radius:8px;background:var(--fy-bg-canvas);scrollbar-width:thin;scrollbar-color:var(--fy-border-strong) transparent}.dsh-fishyume-live-scroll::-webkit-scrollbar{width:7px}.dsh-fishyume-live-scroll::-webkit-scrollbar-thumb{border-radius:999px;background:var(--fy-border-strong)}.dsh-fishyume-live-scroll::-webkit-scrollbar-track{background:transparent}
+.dsh-fishyume-live-timeline{position:relative;display:grid;gap:0;padding:0 12px 0 42px}.dsh-fishyume-live-timeline::before{content:'';position:absolute;left:20px;top:15px;bottom:15px;width:1px;background:var(--fy-border-strong)}.dsh-fishyume-live-item{position:relative;display:grid;grid-template-columns:minmax(0,1fr) max-content;gap:8px;padding:9px 0;border-bottom:1px solid var(--fy-border)}.dsh-fishyume-live-item::before{content:'';position:absolute;left:-28px;top:15px;width:9px;height:9px;border:2px solid var(--fy-bg-canvas);border-radius:50%;background:#68727d;box-shadow:0 0 0 1px #68727d}.dsh-fishyume-live-item[data-tone="green"]::before{background:#39b86a;box-shadow:0 0 0 1px #39b86a}.dsh-fishyume-live-item[data-tone="cyan"]::before{width:11px;height:11px;left:-29px;top:14px;background:#33c4d7;box-shadow:0 0 0 1px #33c4d7,0 0 0 5px rgba(51,196,215,.16)}.dsh-fishyume-live-label{min-width:0;color:var(--fy-text-primary);font-size:13px;line-height:19px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dsh-fishyume-live-time{color:var(--fy-text-tertiary);font-size:11px;line-height:19px;white-space:nowrap}.dsh-fishyume-live-detail{grid-column:1/-1;margin:0;color:var(--fy-text-secondary);font-size:12px;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dsh-fishyume-live-history{position:absolute;right:0;bottom:0;left:0;display:flex;justify-content:center;padding:12px 0 10px;border-top:1px solid rgba(40,40,44,.86);background:linear-gradient(transparent,var(--fy-bg-canvas) 35%);pointer-events:none}.dsh-fishyume-live-history button{pointer-events:auto;color:var(--fy-text-secondary);background:transparent;border:0;font:12px/18px inherit;cursor:pointer}.dsh-fishyume-live-history button:hover{color:var(--fy-text-primary)}
 .dsh-fishyume-detail:has(.dsh-fishyume-message)>h4:last-of-type{margin-top:28px;padding-top:18px;border-top:1px solid var(--fy-border)}
 .dsh-fishyume-detail:has(.dsh-fishyume-agent-status):not(:has(.dsh-fishyume-resource))>h4:last-of-type,.dsh-fishyume-detail:has(.dsh-fishyume-agent-status):not(:has(.dsh-fishyume-resource))>.dsh-fishyume-message{display:none}
 .dsh-fishyume-handoff{margin-top:20px;padding-top:16px;border-top:1px solid var(--fy-border)}
@@ -564,6 +567,57 @@ function contributionItems(team?: TeamDetail): ContributionItem[] {
     .sort((a, b) => a.message.sequence - b.message.sequence)
 }
 
+function liveActivityLabel(type?: string): string {
+  const value = (type || '').toLowerCase()
+  if (value.includes('tool') || value.includes('function')) return '调用工具'
+  if (value.includes('command') || value.includes('shell') || value.includes('exec')) return '执行命令'
+  if (value.includes('output') || value.includes('response')) return value.includes('start') ? '开始响应' : '输出流'
+  if (value === 'session.connected' || value === 'connected') return '会话已连接'
+  if (value.includes('disconnected') || value.includes('closed')) return '会话已断开'
+  if (value.includes('presence.busy') || value === 'busy') return '正在工作'
+  if (value.includes('presence.idle') || value === 'idle') return '已空闲'
+  if (value.includes('message.received')) return '收到消息'
+  if (value.includes('message.updated')) return '产出更新'
+  if (value.includes('heartbeat')) return '心跳'
+  return '状态更新'
+}
+
+function liveActivityTone(type?: string, latest = false): 'cyan' | 'green' | 'gray' {
+  if (latest) return 'cyan'
+  const value = (type || '').toLowerCase()
+  if (value.includes('heartbeat') || value.includes('connected') || value.includes('disconnected')) return 'gray'
+  return 'green'
+}
+
+function memberLiveActivities(team: TeamDetail | undefined, member: TeamParticipant): RunEvent[] {
+  const turns = team?.turns ?? []
+  return panel.teamEvents.filter((event) => {
+    const turn = event.turnId ? turns.find((item) => item.turnId === event.turnId) : undefined
+    const message = event.messageId ? panel.teamMessages.find((item) => item.messageId === event.messageId) : undefined
+    if (turn) return turn.participantId === member.participantId
+    if (message) return message.actor === member.participantId || message.actor === member.label
+    return false
+  }).sort((a, b) => b.sequence - a.sequence)
+}
+
+function MemberLiveStatus({ team, member }: { team?: TeamDetail; member: TeamParticipant }): JSX.Element {
+  const items = memberLiveActivities(team, member)
+  const handleWheel = (event: WheelEvent<HTMLDivElement>): void => {
+    const pane = event.currentTarget
+    const canScroll = pane.scrollHeight > pane.clientHeight
+    const atTop = pane.scrollTop <= 0 && event.deltaY < 0
+    const atBottom = pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 1 && event.deltaY > 0
+    event.stopPropagation()
+    if (!canScroll || atTop || atBottom) event.preventDefault()
+  }
+  return <section className="dsh-fishyume-live-status" aria-label="实时状态">
+    <div className="dsh-fishyume-live-status-heading"><h4>实时状态</h4><span className="dsh-fishyume-live-indicator">Live</span></div>
+    <div className="dsh-fishyume-live-scroll" role="log" aria-live="polite" onWheelCapture={handleWheel}>
+      {items.length ? <div className="dsh-fishyume-live-timeline">{items.map((event, index) => <div className="dsh-fishyume-live-item" data-tone={liveActivityTone(event.type, index === 0)} key={String(event.sequence) + '-' + event.type}><span className="dsh-fishyume-live-label">{liveActivityLabel(event.type)}</span><time className="dsh-fishyume-live-time">{nativeTime(event.timestamp || event.createdAt)}</time>{event.summary || event.message ? <p className="dsh-fishyume-live-detail">{event.summary || event.message}</p> : null}</div>)}</div> : <p className="dsh-fishyume-state">暂无 Harness 活动。</p>}
+    </div>
+  </section>
+}
+
 function AgentStatusStream({ team }: { team?: TeamDetail }): JSX.Element {
   const items = contributionItems(team).slice(-8).reverse()
   return <section className="dsh-fishyume-agent-status" aria-label="成员产出"><h4>成员产出</h4>{items.length ? <div className="dsh-fishyume-agent-stream">{items.map(({ message, member, turn }) => <article className="dsh-fishyume-agent-output" key={message.messageId}><div><strong>{member?.label || message.actor || '智能体'}</strong><small>{turn?.number !== undefined ? `第 ${turn.number} 轮 · ` : ''}{nativeTime(message.createdAt)}</small></div><p title={message.content}>{message.content}</p></article>)}</div> : <p>暂无成员产出。</p>}</section>
@@ -582,6 +636,7 @@ function MemberDrawer({ team, member }: { team?: TeamDetail; member?: TeamPartic
       <dl><dt>状态</dt><dd>{localizedPhase(member.state)}</dd><dt>当前任务</dt><dd>{turn?.number !== undefined ? `第 ${turn.number} 轮` : member.currentTurnId || '暂无任务'}</dd><dt>目标</dt><dd>{member.target || turn?.target || '默认目标'}</dd><dt>执行阶段</dt><dd>{turn?.state ? localizedPhase(turn.state) : '暂无阶段信息'}</dd></dl>
       <h4>执行配置</h4>
       <dl><dt>Harness</dt><dd>{harnessName(member.driver)}</dd><dt>Model</dt><dd>{modelName(member.modelId)}</dd><dt>回合 ID</dt><dd>{member.currentTurnId || '暂无'}</dd></dl>
+      <MemberLiveStatus team={team} member={member} />
       <h4>最近产出</h4>
       {relatedItems.length ? <div className="dsh-fishyume-member-activity">{relatedItems.map(({ message, turn }) => <div key={message.messageId}><small>#{message.sequence} · {turn?.number !== undefined ? `第 ${turn.number} 轮 · ` : ''}{nativeTime(message.createdAt)}</small><p>{message.content}</p></div>)}</div> : <p>暂无相关产出。</p>}
     </aside>
@@ -632,6 +687,18 @@ function FishyumePanel(): JSX.Element {
     void poll()
     return () => { cancelled = true; if (timer) clearTimeout(timer) }
   }, [state.open, state.focusRevision])
+  useEffect(() => {
+    const teamId = state.selectedTeam
+    if (!state.open || !teamId || !state.selectedMember) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const pollTeam = async (): Promise<void> => {
+      try { await loadTeamDetail(teamId) } catch { /* retain the last live snapshot */ }
+      if (!cancelled) timer = setTimeout(() => { void pollTeam() }, 1500)
+    }
+    timer = setTimeout(() => { void pollTeam() }, 1500)
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  }, [state.open, state.selectedTeam, state.selectedMember])
   return <div className="dsh-fishyume-panel" data-dsh-plugin="dsh-fishyume" role="region" aria-label="Fishyume 工作区"><EnhancedWorkspace state={state} /></div>
 }
 
