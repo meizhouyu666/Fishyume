@@ -11,9 +11,9 @@ try {
   const packed = spawnSync(process.execPath, [process.env.npm_execpath, 'pack', '--json', '--pack-destination', packs], {encoding: 'utf8'});
   if (packed.status !== 0) throw new Error(packed.stderr || packed.stdout);
   const filename = JSON.parse(packed.stdout)[0].filename;
-  const installed = spawnSync(process.execPath, [process.env.npm_execpath, 'install', '--prefix', install, join(packs, filename), '--ignore-scripts', '--no-audit', '--no-fund'], {encoding: 'utf8'});
+  const installed = spawnSync(process.execPath, [process.env.npm_execpath, 'install', '--prefix', install, join(packs, filename), '--ignore-scripts', '--legacy-peer-deps', '--no-audit', '--no-fund'], {encoding: 'utf8'});
   if (installed.status !== 0) throw new Error(installed.stderr || installed.stdout);
-  const command = join(install, 'node_modules', 'fishyume-web', 'dist', 'server.js');
+  const command = join(install, 'node_modules', 'dsh-fishyume', 'dist', 'server.js');
   const help = spawnSync(process.execPath, [command, '--help'], {encoding: 'utf8'});
   if (help.status !== 0 || !help.stdout.includes('authenticated loopback')) throw new Error(help.stderr || 'installed help is incomplete');
   process.stdout.write('Verified installed Fishyume Web package\n');
