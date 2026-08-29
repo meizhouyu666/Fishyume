@@ -7,11 +7,11 @@ export interface GatewayLimits {maxConcurrentRequests: number; maxRequestBytes: 
 
 const defaultLimits: GatewayLimits = {maxConcurrentRequests, maxRequestBytes, maxResponseBytes, requestTimeoutMs, probeRequestTimeoutMs};
 
-export function createGatewayHandler(engine: EngineGateway, identity: () => GatewayIdentity, limits: GatewayLimits = defaultLimits) {
+export function createGatewayHandler(engine: EngineGateway, identity: () => GatewayIdentity, limits: GatewayLimits = defaultLimits, routePath = '/api/rpc') {
   let active = 0;
   return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     for (const [name, value] of Object.entries(securityHeaders)) response.setHeader(name, value);
-    if (request.method !== 'POST' || request.url !== '/api/rpc') {writeJSON(response, 404, {error: {code: 'not_found', message: 'route not found'}}); return}
+    if (request.method !== 'POST' || request.url !== routePath) {writeJSON(response, 404, {error: {code: 'not_found', message: 'route not found'}}); return}
     const authorizationError = authorizeRequest(request, identity().host, identity().origin, identity().token);
     if (authorizationError) {writeJSON(response, 403, {error: {code: 'forbidden', message: authorizationError}}); return}
     if (active >= limits.maxConcurrentRequests) {writeJSON(response, 429, {error: {code: 'busy', message: 'too many concurrent requests'}}, limits.maxResponseBytes); return}

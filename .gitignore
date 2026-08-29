@@ -16,5 +16,8 @@ wf-state/
 _trash/
 .claude/
 .codex/
+.iiimage/
+output/
+session.json
 *.test
 *.out

@@ -1,8 +1,8 @@
 # dsh-fishyume bundle patch: mounts the Fishyume console plugin into the host
 # composition of a dsh profile. The host plane registers the Fishyume Web
 # gateway + static client routes on the shared web server, and the client plane
-# mounts an iframe panel into `shell.overlay`, so the Fishyume Team/Run console
-# opens inside the DSH Web GUI without a separate loopback server.
+# contributes a native sidebar footer entry plus a React workspace in
+# `shell.overlay`. The standalone Web client remains optional.
 #
 # Install: `dsh plugin --profile <name> add <this package>` (npm or a local
 # path). The `dsh plugin` command pnpm-installs the package into the profile

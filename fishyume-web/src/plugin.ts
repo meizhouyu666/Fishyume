@@ -14,6 +14,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { EngineBridge, type EngineClient } from '../../wf/src/bridge/engine.js'
 import { createGatewayHandler, type EngineGateway } from './gateway.js'
+import { FishyumeRemote } from './remote.js'
+import { FISHYUME_TYPERT_MANIFEST } from './remote-contract.js'
 import { securityHeaders } from './security.js'
 
 /** Structural slice of the DSH web server service (kind/path route registration). */
@@ -72,7 +74,9 @@ function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
 export const name = 'dsh-fishyume'
 // No required services: the web server is discovered lazily so headless
 // profiles keep the plugin loaded without a route surface.
-export const inject: string[] = []
+// Typert is required for the native DSH client contract. webServer remains
+// lazy so the same plugin can still load in headless profiles.
+export const inject = ['typert']
 
 /** Minimal structural slice of the cordis Context the host plane uses. Kept
  *  local so the plugin typechecks without @deepseek-ai devDependencies; the
@@ -81,6 +85,10 @@ export interface PluginContext {
   get(name: string): unknown
   effect(setup: () => void | (() => void), label?: string): void
   on(event: string, listener: (name: string) => void): void
+}
+
+interface TypertHost {
+  register(manifest: unknown): () => void
 }
 
 export interface Config {
@@ -110,7 +118,19 @@ export function apply(ctx: PluginContext, config: Config): void {
   // server service exposes its canonical origin.
   let host = ''
   let origin = ''
-  const gateway = createGatewayHandler(engineGateway, () => ({ host, origin, token }))
+  const gateway = createGatewayHandler(engineGateway, () => ({ host, origin, token }), undefined, '/plugins/dsh-fishyume/api/rpc')
+
+  // Native DSH clients use this Typert Remote. The gateway remains available
+  // for the standalone client and as a practical fallback on older profiles.
+  let remote: FishyumeRemote | undefined
+  let remoteManifestDispose: (() => void) | undefined
+  const registerRemote = (): void => {
+    if (remote !== undefined) return
+    const typert = ctx.get('typert') as TypertHost | undefined
+    if (typert === undefined) return
+    remote = new FishyumeRemote(ctx, engineGateway)
+    remoteManifestDispose = typert.register(FISHYUME_TYPERT_MANIFEST)
+  }
 
   let registered = false
   const registerWebSurface = (): void => {
@@ -118,6 +138,17 @@ export function apply(ctx: PluginContext, config: Config): void {
     const webServer = ctx.get('webServer') as WebRouteHost | undefined
     if (webServer === undefined) return
     registered = true
+
+    // The DSH web server is the canonical origin for the embedded console.
+    // Capture it from the first request because the public service shape does
+    // not expose a stable origin across DSH releases.
+    const captureIdentity = (req: IncomingMessage): void => {
+      if (host !== '') return
+      const requestHost = req.headers?.host
+      if (!requestHost) return
+      host = requestHost
+      origin = req.headers?.origin ?? `http://${requestHost}`
+    }
 
     // Public client token (same-origin; the gateway still requires the Bearer
     // token on /api/rpc, so this route only helps the panel build its iframe
@@ -155,7 +186,7 @@ export function apply(ctx: PluginContext, config: Config): void {
     ctx.effect(() => webServer.register({
       kind: 'exact',
       path: '/plugins/dsh-fishyume/api/rpc',
-      handler: (req, res) => { void gateway(req, res) },
+      handler: async (req, res) => { captureIdentity(req); await gateway(req, res) },
     }), 'dsh-fishyume: rpc route')
 
     // Static client files (index.html / app.js / styles.css).
@@ -164,7 +195,15 @@ export function apply(ctx: PluginContext, config: Config): void {
       kind: 'prefix',
       path: '/plugins/dsh-fishyume/',
       handler: async (req, res) => {
-        for (const [name, value] of Object.entries(securityHeaders)) res.setHeader(name, value)
+        captureIdentity(req)
+        for (const [name, value] of Object.entries(securityHeaders)) {
+          if (name === 'Content-Security-Policy' || name === 'X-Frame-Options') continue
+          res.setHeader(name, value)
+        }
+        // This page is intentionally loaded by the DSH shell's same-origin
+        // iframe; the standalone sidecar keeps the stricter frame-deny policy.
+        res.setHeader('Content-Security-Policy', securityHeaders['Content-Security-Policy'].replace("frame-ancestors 'none'", "frame-ancestors 'self'"))
+        res.setHeader('X-Frame-Options', 'SAMEORIGIN')
         const path = (new URL(req.url ?? '/', 'http://x').pathname).replace(/^\/plugins\/dsh-fishyume\//, '') || 'index.html'
         if (path.includes('..') || path.includes('\\')) { res.writeHead(404); res.end(); return }
         try {
@@ -180,7 +219,14 @@ export function apply(ctx: PluginContext, config: Config): void {
   }
 
   registerWebSurface()
+  registerRemote()
   ctx.on('internal/service', (service) => {
     if (service === 'webServer') registerWebSurface()
+    if (service === 'typert') registerRemote()
   })
+  ctx.effect(() => () => {
+    remoteManifestDispose?.()
+    remoteManifestDispose = undefined
+    remote = undefined
+  }, 'dsh-fishyume: remote manifest')
 }

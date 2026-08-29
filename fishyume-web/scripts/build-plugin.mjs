@@ -41,6 +41,7 @@ await build({
   jsx: 'automatic',
   sourcemap: true,
   minify: true,
+  loader: { '.png': 'dataurl', '.svg': 'dataurl', '.ico': 'dataurl' },
   external: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/*'],
   banner: {
     js: `window.__ModuleLoader__.load({ id: ${JSON.stringify(packageName)}, factory: (require) => {\nvar module = { exports: {} }; var exports = module.exports;`,

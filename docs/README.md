@@ -4,6 +4,12 @@ This index separates the current product baseline from milestone evidence and
 historical design records. Milestone documents remain in place so existing
 links and review evidence stay stable.
 
+## Project Guide and Plans
+
+- [Architecture and development guide](fishyume-architecture-and-development-guide.md): current system map, layer boundaries, implementation status, and next steps.
+- [Native DSH plugin UI plan](fishyume-dsh-native-plugin-ui-plan.md): proposed
+  migration from the iframe overlay to a native sidebar-footer/dock workspace.
+
 ## Current baseline
 
 - [Product scope](fishyume-product-scope.md): current supported path,

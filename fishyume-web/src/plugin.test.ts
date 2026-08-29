@@ -37,7 +37,7 @@ function fakeContext(webServer: ReturnType<typeof fakeWebServer>): PluginContext
 
 test('plugin exports its identity and registers token/rpc/static routes', () => {
   assert.equal(name, 'dsh-fishyume')
-  assert.deepEqual(inject, [])
+  assert.deepEqual(inject, ['typert'])
   const server = fakeWebServer()
   apply(fakeContext(server), {})
   const paths = server.routes.map((r) => `${r.kind}:${r.path}`)
@@ -45,6 +45,18 @@ test('plugin exports its identity and registers token/rpc/static routes', () => 
   assert.ok(paths.includes('exact:/plugins/dsh-fishyume/api/focus'), `focus route missing: ${paths.join(', ')}`)
   assert.ok(paths.includes('exact:/plugins/dsh-fishyume/api/rpc'), `rpc route missing: ${paths.join(', ')}`)
   assert.ok(paths.includes('prefix:/plugins/dsh-fishyume/'), `static route missing: ${paths.join(', ')}`)
+})
+
+test('plugin registers the Typert host manifest when DSH provides typert', () => {
+  const server = fakeWebServer()
+  const manifests: unknown[] = []
+  const ctx = fakeContext(server)
+  const originalGet = ctx.get
+  ctx.get = (name) => name === 'typert' ? { register: (manifest: unknown) => { manifests.push(manifest); return () => {} } } : originalGet(name)
+  apply(ctx, {})
+  assert.equal(manifests.length, 1)
+  assert.equal((manifests[0] as { package?: string }).package, 'dsh-fishyume')
+  assert.equal((manifests[0] as { face?: string }).face, 'host')
 })
 
 test('token route returns a JSON bearer token without touching the engine', async () => {
@@ -67,6 +79,28 @@ test('static route responds 200 or 404 without throwing (missing public dir is s
   const res = fakeResponse()
   await route!.handler({ url: '/plugins/dsh-fishyume/index.html' }, res)
   assert.ok(res.status === 200 || res.status === 404, `static route status = ${res.status}`)
+  assert.equal(res.headers['X-Frame-Options'], 'SAMEORIGIN')
+  assert.match(res.headers['Content-Security-Policy'] ?? '', /frame-ancestors 'self'/)
+})
+
+test('prefixed RPC route reaches gateway authorization with the DSH origin', async () => {
+  const server = fakeWebServer()
+  apply(fakeContext(server), {})
+  const route = server.routes.find((r) => r.path === '/plugins/dsh-fishyume/api/rpc')
+  assert.ok(route)
+  const res = fakeResponse()
+  const req = {
+    method: 'POST',
+    url: '/plugins/dsh-fishyume/api/rpc',
+    headers: {host: '127.0.0.1:3080', origin: 'http://127.0.0.1:3080'},
+    socket: {remoteAddress: '127.0.0.1'},
+    on(event: string, cb: (...args: unknown[]) => void) {
+      if (event === 'end') cb()
+      return undefined
+    },
+  }
+  await route!.handler(req, res)
+  assert.equal(res.status, 403)
 })
 
 test('disabled config skips route registration', () => {

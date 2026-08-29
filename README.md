@@ -174,6 +174,7 @@ Fishyume 已完成 M6 核心合同冻结、M7 Team/Web 能力和 M7.9 Team 零�
 
 ## 文档
 
+- [总体架构与开发指南](./docs/fishyume-architecture-and-development-guide.md)
 - [当前产品边界](./docs/fishyume-product-scope.md)
 
 - [文档索引](./docs/README.md)
