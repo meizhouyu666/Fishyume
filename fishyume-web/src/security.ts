@@ -8,7 +8,7 @@ export const requestTimeoutMs = 15_000;
 export const probeRequestTimeoutMs = 150_000;
 
 export const allowedMethods = new Set([
-  'team.list', 'team.get', 'team.events', 'team.messages', 'team.action',
+  'team.capabilities', 'team.list', 'team.get', 'team.events', 'team.messages', 'team.action',
   'team.handoff.list', 'team.handoff.get',
   'team.template.list', 'team.template.get', 'team.template.upsert', 'team.template.delete',
   'run.list', 'run.get', 'run.events', 'run.action',

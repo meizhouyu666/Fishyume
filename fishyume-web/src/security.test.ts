@@ -36,6 +36,7 @@ test('RPC envelope is strict, bounded, and method allowlisted', () => {
   assert.equal(allowedMethods.has('driver.models.probe'), true);
   assert.equal(allowedMethods.has('team.routes.refresh'), true);
   assert.equal(allowedMethods.has('team.events'), true);
+  assert.equal(allowedMethods.has('team.capabilities'), true);
   assert.equal(allowedMethods.has('team.routes.refresh'), true);
   assert.equal(allowedMethods.has('team.template.list'), true);
   assert.equal(allowedMethods.has('team.template.upsert'), true);
