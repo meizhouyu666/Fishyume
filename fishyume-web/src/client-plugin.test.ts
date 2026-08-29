@@ -41,6 +41,16 @@ test('native workspace covers durable Team, Handoff, Run, and Routing reads', ()
   assert.match(source, /团队设置/)
 })
 
+test('native Team workspace exposes reusable template list and editor', () => {
+  for (const method of ['team.template.list', 'team.template.upsert']) {
+    assert.match(source, new RegExp(`['"]${method}['"]`), `missing ${method} adapter call`)
+  }
+  assert.match(source, /团队任务/)
+  assert.match(source, /团队模板/)
+  assert.match(source, /创建团队模板/)
+  assert.match(source, /模板编辑页面待实现/)
+})
+
 test('native Run workspace exposes explicit cancel and node actions', () => {
   assert.match(source, /runNodeAction\(/)
   assert.match(source, /type: 'cancel'/)

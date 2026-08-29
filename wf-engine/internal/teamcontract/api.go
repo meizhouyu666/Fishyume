@@ -17,6 +17,7 @@ const (
 var StableMethods = []string{
 	"team.capabilities", "team.start", "team.list", "team.get", "team.events", "team.messages", "team.action",
 	"team.handoff.create", "team.handoff.get", "team.handoff.list", "team.handoff.bindRun",
+	"team.template.list", "team.template.get", "team.template.upsert", "team.template.delete",
 }
 
 type TeamCapabilitiesRequestV1 struct {
@@ -27,6 +28,47 @@ type TeamStartResponseV1 struct {
 	SchemaVersion string        `json:"schemaVersion"`
 	Team          TeamSessionV1 `json:"team"`
 	Replayed      bool          `json:"replayed"`
+}
+
+type TeamTemplateListRequestV1 struct {
+	SchemaVersion string `json:"schemaVersion"`
+	Cursor        string `json:"cursor,omitempty"`
+	Limit         int    `json:"limit,omitempty"`
+}
+
+type TeamTemplateListResponseV1 struct {
+	SchemaVersion string           `json:"schemaVersion"`
+	Items         []TeamTemplateV1 `json:"items"`
+	NextCursor    string           `json:"nextCursor,omitempty"`
+}
+
+type TeamTemplateGetRequestV1 struct {
+	SchemaVersion string `json:"schemaVersion"`
+	TemplateID    string `json:"templateId"`
+}
+
+type TeamTemplateUpsertRequestV1 struct {
+	SchemaVersion string                 `json:"schemaVersion"`
+	TemplateID    string                 `json:"templateId"`
+	Name          string                 `json:"name"`
+	Description   string                 `json:"description,omitempty"`
+	Color         string                 `json:"color,omitempty"`
+	Members       []TeamTemplateMemberV1 `json:"members"`
+}
+
+type TeamTemplateUpsertResponseV1 struct {
+	SchemaVersion string         `json:"schemaVersion"`
+	Template      TeamTemplateV1 `json:"template"`
+}
+
+type TeamTemplateDeleteRequestV1 struct {
+	SchemaVersion string `json:"schemaVersion"`
+	TemplateID    string `json:"templateId"`
+}
+
+type TeamTemplateDeleteResponseV1 struct {
+	SchemaVersion string `json:"schemaVersion"`
+	TemplateID    string `json:"templateId"`
 }
 
 type TeamSummaryV1 struct {
@@ -180,6 +222,32 @@ func ValidateListRequest(value TeamListRequestV1) error {
 		return fmt.Errorf("unsupported team lifecycle %q", value.State)
 	}
 	return validatePage(value.Cursor, value.Limit)
+}
+
+func ValidateTemplateListRequest(value TeamTemplateListRequestV1) error {
+	if value.SchemaVersion != TemplateSchemaVersion {
+		return fmt.Errorf("unsupported team template schema version %q", value.SchemaVersion)
+	}
+	return validatePage(value.Cursor, value.Limit)
+}
+
+func ValidateTemplateGetRequest(value TeamTemplateGetRequestV1) error {
+	if value.SchemaVersion != TemplateSchemaVersion {
+		return fmt.Errorf("unsupported team template schema version %q", value.SchemaVersion)
+	}
+	return validateTemplateID(value.TemplateID, "templateId")
+}
+
+func ValidateTemplateUpsertRequest(value TeamTemplateUpsertRequestV1) error {
+	template := TeamTemplateV1{SchemaVersion: TemplateSchemaVersion, TemplateID: value.TemplateID, Name: value.Name, Description: value.Description, Color: value.Color, Members: value.Members}
+	return ValidateTeamTemplate(template)
+}
+
+func ValidateTemplateDeleteRequest(value TeamTemplateDeleteRequestV1) error {
+	if value.SchemaVersion != TemplateSchemaVersion {
+		return fmt.Errorf("unsupported team template schema version %q", value.SchemaVersion)
+	}
+	return validateTemplateID(value.TemplateID, "templateId")
 }
 
 func ValidateCapabilitiesRequest(value TeamCapabilitiesRequestV1) error {

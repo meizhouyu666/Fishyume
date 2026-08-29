@@ -17,6 +17,62 @@ import (
 )
 
 func (s *Store) TeamDir(teamID string) string { return filepath.Join(s.root, "teams", teamID) }
+func (s *Store) TeamTemplatePath(templateID string) string {
+	return filepath.Join(s.root, "team-templates", templateID+".json")
+}
+
+func (s *Store) WriteTeamTemplate(value teamcontract.TeamTemplateV1) error {
+	if err := teamcontract.ValidateTeamTemplate(value); err != nil {
+		return err
+	}
+	return s.writeJSON(s.TeamTemplatePath(value.TemplateID), value)
+}
+
+func (s *Store) ReadTeamTemplate(templateID string, target *teamcontract.TeamTemplateV1) error {
+	if err := validateID("template", templateID); err != nil {
+		return err
+	}
+	if err := readTeamContractJSON(s.TeamTemplatePath(templateID), target); err != nil {
+		return err
+	}
+	if target.TemplateID != templateID {
+		return fmt.Errorf("template ID %q does not match %q", target.TemplateID, templateID)
+	}
+	return teamcontract.ValidateTeamTemplate(*target)
+}
+
+func (s *Store) ListTeamTemplateIDs() ([]string, error) {
+	entries, err := os.ReadDir(filepath.Join(s.root, "team-templates"))
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		if safeID.MatchString(id) {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func (s *Store) DeleteTeamTemplate(templateID string) error {
+	if err := validateID("template", templateID); err != nil {
+		return err
+	}
+	if err := os.Remove(s.TeamTemplatePath(templateID)); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Store) TeamSnapshotPath(teamID string) string {
 	return filepath.Join(s.TeamDir(teamID), "team.json")
 }

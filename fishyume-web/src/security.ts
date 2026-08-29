@@ -10,6 +10,7 @@ export const probeRequestTimeoutMs = 150_000;
 export const allowedMethods = new Set([
   'team.list', 'team.get', 'team.events', 'team.messages', 'team.action',
   'team.handoff.list', 'team.handoff.get',
+  'team.template.list', 'team.template.get', 'team.template.upsert', 'team.template.delete',
   'run.list', 'run.get', 'run.events', 'run.action',
   'driver.list', 'driver.models.discover', 'driver.models.probe',
   'routing.config.get', 'routing.config.update', 'routing.availability', 'routing.catalog.effective',

@@ -37,6 +37,8 @@ test('RPC envelope is strict, bounded, and method allowlisted', () => {
   assert.equal(allowedMethods.has('team.routes.refresh'), true);
   assert.equal(allowedMethods.has('team.events'), true);
   assert.equal(allowedMethods.has('team.routes.refresh'), true);
+  assert.equal(allowedMethods.has('team.template.list'), true);
+  assert.equal(allowedMethods.has('team.template.upsert'), true);
   assert.equal(allowedMethods.has('run.start'), false);
   assert.equal(allowedMethods.has('team.handoff.create'), false);
   assert.equal(allowedMethods.has('team.handoff.bindRun'), false);

@@ -188,6 +188,7 @@ type TeamStartRequestV1 struct {
 	Mode            Mode                `json:"mode"`
 	Topic           string              `json:"topic"`
 	Instructions    string              `json:"instructions,omitempty"`
+	TemplateID      string              `json:"templateId,omitempty"`
 	Participants    []ParticipantSpecV1 `json:"participants,omitempty"`
 	CostGrant       int                 `json:"costGrant,omitempty"`
 }
@@ -510,6 +511,11 @@ func ValidateStartRequest(value TeamStartRequestV1) error {
 	}
 	if err := validateBounded(value.Instructions, MaxInstructionsBytes, "instructions"); err != nil {
 		return err
+	}
+	if value.TemplateID != "" {
+		if err := validateTemplateID(value.TemplateID, "templateId"); err != nil {
+			return err
+		}
 	}
 	if len(value.Participants) != 0 && (len(value.Participants) < MinParticipants || len(value.Participants) > MaxParticipants) {
 		return fmt.Errorf("explicit participants must contain %d-%d entries", MinParticipants, MaxParticipants)

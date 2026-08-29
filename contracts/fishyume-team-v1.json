@@ -13,7 +13,11 @@
     "team.handoff.create",
     "team.handoff.get",
     "team.handoff.list",
-    "team.handoff.bindRun"
+    "team.handoff.bindRun",
+    "team.template.list",
+    "team.template.get",
+    "team.template.upsert",
+    "team.template.delete"
   ],
   "actions": ["follow_up", "cancel_turn", "close", "cancel"],
   "errorCodes": [

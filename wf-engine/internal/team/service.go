@@ -246,6 +246,15 @@ func (s *Service) Start(ctx context.Context, request teamcontract.TeamStartReque
 	if err := teamcontract.ValidateStartRequest(request); err != nil {
 		return StartResult{}, err
 	}
+	if request.TemplateID != "" {
+		template, err := s.TemplateGet(teamcontract.TeamTemplateGetRequestV1{SchemaVersion: teamcontract.TemplateSchemaVersion, TemplateID: request.TemplateID})
+		if err != nil {
+			return StartResult{}, err
+		}
+		if len(request.Participants) == 0 {
+			request.Participants = templateParticipantSpecs(template)
+		}
+	}
 	if request.Mode != teamcontract.ModePanel && request.Mode != teamcontract.ModeSession {
 		return StartResult{}, ErrCapabilityUnavailable
 	}

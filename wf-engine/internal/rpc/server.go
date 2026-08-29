@@ -262,6 +262,26 @@ func (s *Server) handle(ctx context.Context, request Request) {
 			result, err := s.teams.Begin(ctx, value)
 			return teamcontract.TeamStartResponseV1{SchemaVersion: teamcontract.SchemaVersion, Team: result.Team, Replayed: result.Replayed}, err
 		})
+	case "team.template.list":
+		invokeTeam(ctx, s, id, request.Params, teamcontract.TeamTemplateListRequestV1{}, func(_ context.Context, value teamcontract.TeamTemplateListRequestV1) (teamcontract.TeamTemplateListResponseV1, error) {
+			return s.teams.TemplateList(value)
+		})
+	case "team.template.get":
+		invokeTeam(ctx, s, id, request.Params, teamcontract.TeamTemplateGetRequestV1{}, func(_ context.Context, value teamcontract.TeamTemplateGetRequestV1) (teamcontract.TeamTemplateV1, error) {
+			return s.teams.TemplateGet(value)
+		})
+	case "team.template.upsert":
+		invokeTeam(ctx, s, id, request.Params, teamcontract.TeamTemplateUpsertRequestV1{}, func(_ context.Context, value teamcontract.TeamTemplateUpsertRequestV1) (teamcontract.TeamTemplateUpsertResponseV1, error) {
+			template, err := s.teams.TemplateUpsert(value)
+			return teamcontract.TeamTemplateUpsertResponseV1{SchemaVersion: teamcontract.TemplateSchemaVersion, Template: template}, err
+		})
+	case "team.template.delete":
+		invokeTeam(ctx, s, id, request.Params, teamcontract.TeamTemplateDeleteRequestV1{}, func(_ context.Context, value teamcontract.TeamTemplateDeleteRequestV1) (teamcontract.TeamTemplateDeleteResponseV1, error) {
+			if err := s.teams.TemplateDelete(value); err != nil {
+				return teamcontract.TeamTemplateDeleteResponseV1{}, err
+			}
+			return teamcontract.TeamTemplateDeleteResponseV1{SchemaVersion: teamcontract.TemplateSchemaVersion, TemplateID: value.TemplateID}, nil
+		})
 	case "team.list":
 		invokeTeam(ctx, s, id, request.Params, teamcontract.TeamListRequestV1{}, func(_ context.Context, value teamcontract.TeamListRequestV1) (teamcontract.TeamListResponseV1, error) {
 			return s.teams.List(value)
@@ -312,7 +332,7 @@ func (s *Server) handle(ctx context.Context, request Request) {
 
 func isMutation(method string) bool {
 	switch method {
-	case "run.start", "run.action", "memory.create", "memory.supersede", "memory.delete", "memory.host.create", "memory.host.supersede", "memory.host.delete", "team.start", "team.action", "team.handoff.create", "team.handoff.bindRun", "driver.models.discover", "driver.models.probe", "routing.config.update", "team.routes.refresh", "team.routes.upsert", "team.routes.remove":
+	case "run.start", "run.action", "memory.create", "memory.supersede", "memory.delete", "memory.host.create", "memory.host.supersede", "memory.host.delete", "team.start", "team.action", "team.handoff.create", "team.handoff.bindRun", "team.template.upsert", "team.template.delete", "driver.models.discover", "driver.models.probe", "routing.config.update", "team.routes.refresh", "team.routes.upsert", "team.routes.remove":
 		return true
 	default:
 		return false
@@ -524,6 +544,14 @@ func validateTeamRequest(value any) error {
 		return teamcontract.ValidateCapabilitiesRequest(request)
 	case teamcontract.TeamStartRequestV1:
 		return teamcontract.ValidateStartRequest(request)
+	case teamcontract.TeamTemplateListRequestV1:
+		return teamcontract.ValidateTemplateListRequest(request)
+	case teamcontract.TeamTemplateGetRequestV1:
+		return teamcontract.ValidateTemplateGetRequest(request)
+	case teamcontract.TeamTemplateUpsertRequestV1:
+		return teamcontract.ValidateTemplateUpsertRequest(request)
+	case teamcontract.TeamTemplateDeleteRequestV1:
+		return teamcontract.ValidateTemplateDeleteRequest(request)
 	case teamcontract.TeamListRequestV1:
 		return teamcontract.ValidateListRequest(request)
 	case teamcontract.TeamGetRequestV1:
