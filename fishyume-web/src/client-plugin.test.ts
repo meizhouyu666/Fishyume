@@ -60,6 +60,8 @@ test('native Team workspace exposes reusable template list and editor', () => {
   assert.match(source, /TemplateHarnessBadge/)
   assert.match(source, /Host Agent 声明/)
   assert.doesNotMatch(source, /copyLaunch/)
+  assert.match(source, /grid-template-columns:max-content minmax\(0,1fr\);gap:4px/)
+  assert.match(source, /height:175px;min-height:175px/)
   assert.match(source, /Harness（可选）/)
   assert.match(source, /随 Harness 可选/)
 })
