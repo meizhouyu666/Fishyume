@@ -54,17 +54,17 @@ let panel: PanelState = { open: false, view: 'teams', teamSection: 'tasks', temp
 let transport: RpcTransport = createHttpTransport({ rpcPath: '/plugins/dsh-fishyume/api/rpc', tokenPath: '/plugins/dsh-fishyume/token' })
 const nativeStyles = `
 .dsh-fishyume-panel{--fy-bg-canvas:#08090a;--fy-bg-surface:#0f1011;--fy-bg-elevated:#1c1c1f;--fy-bg-hover:#232326;--fy-border:#28282c;--fy-border-strong:#3e3e44;--fy-text-primary:#f7f8f8;--fy-text-secondary:#8a8f98;--fy-text-tertiary:#62666d;--fy-accent:#5e6ad2;--fy-accent-soft:#828fff;--fy-success:#27a644;--fy-warning:#f0bf00;--fy-danger:#eb5757;--fy-info:#4ea7fc;width:100%;height:100%;display:flex;overflow:hidden;color:var(--fy-text-primary);background:var(--fy-bg-canvas);font:14px/21px Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-.dsh-fishyume-workspace{position:relative;display:flex;flex:1;min-width:0;flex-direction:column;background:var(--fy-bg-canvas)}
-.dsh-fishyume-header{box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;height:64px;padding:0 20px;border-bottom:1px solid var(--fy-border);background:var(--fy-bg-surface)}
-.dsh-fishyume-header h2{margin:2px 0 0;font-size:20px;line-height:28px;font-weight:650;letter-spacing:0}
-.dsh-fishyume-header button,.dsh-fishyume-tabs button,.dsh-fishyume-state button{color:var(--fy-text-secondary);background:transparent;border:1px solid var(--fy-border);border-radius:6px;padding:6px 10px;font:600 13px/18px inherit;cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+.dsh-fishyume-workspace{position:relative;display:flex;flex:1;min-width:0;min-height:0;box-sizing:border-box;gap:10px;padding:14px 16px 16px;flex-direction:column;background:var(--fy-bg-canvas)}
+.dsh-fishyume-header{box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;min-height:32px;padding:0;border-bottom:0;background:transparent}
+.dsh-fishyume-header h2{margin:0;font-size:16px;line-height:22px;font-weight:700;letter-spacing:0}
+.dsh-fishyume-header button,.dsh-fishyume-tabs button,.dsh-fishyume-state button{color:var(--fy-text-secondary);background:transparent;border:1px solid var(--fy-border);border-radius:8px;padding:5px 12px;font:600 12px/18px inherit;cursor:pointer;transition:background .15s,border-color .15s,color .15s}
 .dsh-fishyume-header button:hover,.dsh-fishyume-tabs button:hover,.dsh-fishyume-state button:hover{color:var(--fy-text-primary);background:var(--fy-bg-hover);border-color:var(--fy-border-strong)}
 .dsh-fishyume-header button:focus-visible,.dsh-fishyume-tabs button:focus-visible,.dsh-fishyume-list button:focus-visible,.dsh-fishyume-state button:focus-visible,.dsh-fishyume-node:focus-visible,.dsh-fishyume-event:focus-visible,.dsh-fishyume-member:focus-visible{outline:2px solid var(--fy-accent-soft);outline-offset:2px}
 .dsh-fishyume-header div:last-child{display:flex;gap:8px}
 .dsh-fishyume-brand{display:flex;align-items:center;gap:10px;min-width:0}
 .dsh-fishyume-logo{display:block;width:34px;height:34px;flex:none;object-fit:contain}
 .dsh-fishyume-eyebrow{font-size:11px;line-height:16px;color:var(--fy-accent-soft);font-weight:600;letter-spacing:.08em}
-.dsh-fishyume-tabs{display:flex;align-items:center;gap:4px;height:48px;box-sizing:border-box;padding:0 16px;border-bottom:1px solid var(--fy-border);background:var(--fy-bg-surface)}
+.dsh-fishyume-tabs{display:flex;align-items:center;gap:2px;min-height:34px;box-sizing:border-box;padding:0;border-bottom:1px solid var(--fy-border);background:transparent}
 .dsh-fishyume-tabs button{border-color:transparent;color:var(--fy-text-secondary);font-weight:500}
 .dsh-fishyume-tabs button[aria-current=page]{color:var(--fy-text-primary);background:var(--fy-bg-elevated);border-color:var(--fy-border-strong)}
 .dsh-fishyume-columns{display:grid;grid-template-columns:minmax(210px,.68fr) minmax(0,1.8fr);min-height:0;flex:1}
@@ -158,7 +158,7 @@ const centerStyles = `
 .dsh-fishyume-view{position:absolute;inset:0;display:none;z-index:60;background:var(--fy-bg-canvas,#08090a);min-width:0;min-height:0}
 .dsh-fishyume-view[data-active]{display:flex}
 .dsh-fishyume-view .dsh-fishyume-panel{width:100%;height:100%;border:0;margin:0}
-.dsh-fishyume-back{display:inline-flex;align-items:center;gap:6px;margin-right:12px}
+.dsh-fishyume-back{display:inline-flex;align-items:center;gap:4px;margin-right:10px;padding:5px 12px!important;border-radius:8px!important;color:var(--fy-text-primary)!important;font-size:12px!important;line-height:18px!important}
 .dsh-fishyume-back span:first-child{font-size:18px;line-height:1}
 .dsh-fishyume-workflow-summary{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
 .dsh-fishyume-workflow-chip{display:inline-flex;align-items:center;gap:5px;padding:5px 9px;border:1px solid var(--fy-border);border-radius:6px;color:var(--fy-text-secondary);font-size:12px;line-height:17px}
@@ -916,9 +916,19 @@ function mountCenterWorkspace(): () => void {
     const detail = (event as CustomEvent).detail
     if (detail !== 'fishyume' && panel.open) updatePanel({ open: false })
   }
+  // Hand the center column back to DSH before it processes a session switch.
+  // This also handles clicking the already-open session, which may not emit a
+  // navigation event from the host shell.
+  const SIDEBAR_ROW_SELECTOR = '[class*="sessionRow"], [class*="projectRow"], [class*="searchResultRow"], [class*="searchResultWorkspace"], [class*="newSession"]'
+  const onClickSidebarRow = (event: MouseEvent): void => {
+    if (!panel.open) return
+    const target = event.target as HTMLElement | null
+    if (target?.closest(SIDEBAR_ROW_SELECTOR) !== null) updatePanel({ open: false })
+  }
   const observer = new MutationObserver(ensure)
   observer.observe(document.body, { childList: true, subtree: true })
   document.addEventListener(PANEL_ACTIVATE_EVENT, onOtherPanel)
+  document.addEventListener('click', onClickSidebarRow, true)
   const unsubscribe = subscribe(applyActive)
   ensure()
   applyActive()
@@ -926,6 +936,7 @@ function mountCenterWorkspace(): () => void {
     observer.disconnect()
     if (retryTimer) clearTimeout(retryTimer)
     document.removeEventListener(PANEL_ACTIVATE_EVENT, onOtherPanel)
+    document.removeEventListener('click', onClickSidebarRow, true)
     unsubscribe()
     document.documentElement.removeAttribute(FISHYUME_ACTIVE_ATTR)
     root?.unmount()

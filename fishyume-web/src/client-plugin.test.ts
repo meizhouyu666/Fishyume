@@ -18,6 +18,14 @@ test('native client registers a top-level sidebar entry and center workspace', (
   assert.doesNotMatch(source, /ctx\.slots\.inject\('shell\.overlay'/)
 })
 
+test('native center workspace follows DSH panel spacing and closes on session navigation', () => {
+  assert.match(source, /padding:14px 16px 16px/)
+  assert.match(source, /\.dsh-fishyume-back\{[^}]*padding:5px 12px!important[^}]*border-radius:8px!important/s)
+  assert.match(source, /const SIDEBAR_ROW_SELECTOR = '\[class\*="sessionRow"\]/)
+  assert.match(source, /document\.addEventListener\('click', onClickSidebarRow, true\)/)
+  assert.match(source, /document\.removeEventListener\('click', onClickSidebarRow, true\)/)
+})
+
 test('native client mounts the DSH Remote when the runtime exposes it', () => {
   assert.match(source, /\$mount\(FISHYUME_REMOTE\)/)
   assert.match(source, /remote\.fishyume/)
