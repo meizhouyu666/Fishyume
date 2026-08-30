@@ -187,6 +187,8 @@ func (s *Server) handle(ctx context.Context, request Request) {
 		s.invokeRoutingDiscover(ctx, id, request.Params)
 	case "driver.models.probe":
 		s.invokeRoutingProbe(ctx, id, request.Params)
+	case "driver.inventory":
+		s.invokeRoutingRead(id, request.Params, func() any { return s.routingConfig.DriverInventory() })
 	case "routing.config.get":
 		s.invokeRoutingRead(id, request.Params, func() any { return s.routingConfig.ConfigGet() })
 	case "routing.config.update":
@@ -586,8 +588,6 @@ func (s *Server) writeMappedTeamError(id any, err error) {
 		code = teamcontract.ErrorCapabilityUnavailable
 	case errors.Is(err, team.ErrQuotaExceeded):
 		code = teamcontract.ErrorQuotaExceeded
-	case errors.Is(err, team.ErrSessionLost):
-		code = teamcontract.ErrorSessionLost
 	case errors.Is(err, os.ErrNotExist):
 		code = teamcontract.ErrorNotFound
 	}

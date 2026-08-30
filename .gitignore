@@ -21,3 +21,4 @@ output/
 session.json
 *.test
 *.out
+.npm-cache/

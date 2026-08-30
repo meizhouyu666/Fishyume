@@ -1,7 +1,7 @@
 import {createIcons, MessagesSquare, Workflow, RefreshCw, Send, XCircle, Square, RotateCcw, Check, X, Link, GitBranch, Inbox, Route, Maximize2, Scan, Terminal, FileCode2, FileText, FileJson, FileCog, Wrench, Plus} from 'lucide';
 import type {ApplicationEvent, ApplicationNodeView, RunEventsResponse, RunGetResponse, RunListResponse, RunSummary} from '../../../wf/src/bridge/application.js';
 import type {HandoffArtifact, Participant, ParticipantSpec, ParticipantTurn, TeamGetResponse, TeamListResponse, TeamMessage, TeamMessagesResponse, TeamStartResponse, TeamSummary} from '../../../wf/src/bridge/team.js';
-import type {DriverListResponse, EffectiveCatalogResponse, RoutingConfig, TeamRoutesResponse} from '../../../wf/src/bridge/routing.js';
+import type {DriverInventoryResponse, DriverListResponse, EffectiveCatalogResponse, RoutingConfig, TeamRoutesResponse} from '../../../wf/src/bridge/routing.js';
 import {findWorkflowNode, relatedWorkflowNodeIds, workflowEdges, workflowGraphLayout} from './workflow-view.js';
 import {messageContent} from './team-view.js';
 
@@ -19,7 +19,7 @@ const state: {
   selectedTeam?: string; selectedRun?: string; selectedNode?: string; selectedParticipant?: string; teamView?: TeamGetResponse; messages?: TeamMessagesResponse;
   handoffs: HandoffArtifact[]; runView?: RunGetResponse; busy: boolean; refreshing: boolean; focusRevision: number; pendingFocus?: FocusTarget;
   eventRunId?: string; eventCursor: number; lastRunEvent?: ApplicationEvent; eventsBusy: boolean; graphScale: 'actual' | 'fit';
-  routingView?: EffectiveCatalogResponse; routingConfig?: RoutingConfig; teamRoutes?: TeamRoutesResponse; drivers?: DriverListResponse; routingErrors: string[];
+  routingView?: EffectiveCatalogResponse; routingConfig?: RoutingConfig; teamRoutes?: TeamRoutesResponse; drivers?: DriverListResponse; inventory?: DriverInventoryResponse; routingErrors: string[];
 } = {token: launch.token, view: launch.view, filter: 'all', tab: launch.target?.kind === 'handoff' ? 'handoffs' : 'discussion', teams: [], runs: [], handoffs: [], busy: false, refreshing: false, focusRevision: 0, pendingFocus: launch.target, eventCursor: 0, eventsBusy: false, graphScale: 'actual', routingErrors: []};
 
 const collection = element('collection-list');
@@ -102,8 +102,7 @@ function renderTeamStartDialog(): void {
   const form = document.createElement('form'); form.className = 'team-start-form';
   const project = document.createElement('input'); project.name = 'project'; project.required = true; project.placeholder = '项目目录'; project.value = state.teamView?.team.project ?? state.teams[0]?.project ?? '';
   const topic = document.createElement('textarea'); topic.name = 'topic'; topic.required = true; topic.rows = 3; topic.maxLength = 16 * 1024; topic.placeholder = '你希望团队解决什么问题？';
-  const mode = document.createElement('select'); mode.name = 'mode'; for (const [value, label] of [['panel', 'Panel：一次性并行分析'], ['session', 'Session：可继续追问']] as const) {const option = document.createElement('option'); option.value = value; option.textContent = label; mode.append(option)}
-  form.append(field('项目', project), field('任务主题', topic), field('模式', mode));
+  form.append(field('项目', project), field('任务主题', topic));
   const harnessSection = div('start-harness-section'); harnessSection.append(text('h3', 'section-title', '本机 Harness'), text('p', 'section-note', 'Team 当前支持 Claude、Codex、OpenCode；认证和 Provider 配置仍由各自 CLI 管理。'));
   const harnessList = div('start-harness-list');
   for (const driver of state.teamRoutes?.drivers ?? []) {
@@ -132,7 +131,7 @@ async function submitTeamStart(form: HTMLFormElement, routes: TeamRoutesResponse
   const participants: ParticipantSpec[] = selected.map((routeId, index) => {const route = routes.find(candidate => candidate.routeId === routeId)!; return {label: `${route.driver}-${index + 1}`, role: index === 0 ? '分析者' : `协作者 ${index}`, modelId: route.routeId}});
   submit.disabled = true;
   try {
-    const response = await rpc<TeamStartResponse>('team.start', {schemaVersion: teamVersion, clientRequestId: `web-team-${crypto.randomUUID()}`, project, mode: String(data.get('mode') ?? 'panel'), topic, participants});
+    const response = await rpc<TeamStartResponse>('team.start', {schemaVersion: teamVersion, clientRequestId: `web-team-${crypto.randomUUID()}`, project, topic, participants});
     closeTeamStartDialog(); state.view = 'teams'; state.selectedTeam = response.team.teamId; state.selectedParticipant = undefined; updateViewControls(); await refreshTeams();
   } catch (error) {showError(error); submit.disabled = false}
 }
@@ -164,19 +163,21 @@ async function refreshRuns(): Promise<void> {
 }
 
 async function refreshRouting(): Promise<void> {
-  const methods = ['routing.catalog.effective', 'routing.config.get', 'team.routes.get', 'driver.list'] as const;
-  const [effective, config, teamRoutes, drivers] = await Promise.allSettled([
+  const methods = ['routing.catalog.effective', 'routing.config.get', 'team.routes.get', 'driver.list', 'driver.inventory'] as const;
+  const [effective, config, teamRoutes, drivers, inventory] = await Promise.allSettled([
     rpc<EffectiveCatalogResponse>('routing.catalog.effective', {schemaVersion: 'fishyume.config/v1'}),
     rpc<{config: RoutingConfig}>('routing.config.get', {schemaVersion: 'fishyume.config/v1'}),
     rpc<TeamRoutesResponse>('team.routes.get', {schemaVersion: 'fishyume.config/v1'}),
     rpc<DriverListResponse>('driver.list', {schemaVersion: 'fishyume.config/v1'}),
+    rpc<DriverInventoryResponse>('driver.inventory', {schemaVersion: 'fishyume.config/v1'}),
   ]);
-  const results = [effective, config, teamRoutes, drivers];
+  const results = [effective, config, teamRoutes, drivers, inventory];
   state.routingErrors = results.flatMap((result, index) => result.status === 'rejected' ? [`${methods[index]}: ${errorMessage(result.reason)}`] : []);
   state.routingView = effective.status === 'fulfilled' ? effective.value : undefined;
   state.routingConfig = config.status === 'fulfilled' ? config.value.config : undefined;
   state.teamRoutes = teamRoutes.status === 'fulfilled' ? teamRoutes.value : undefined;
   state.drivers = drivers.status === 'fulfilled' ? drivers.value : undefined;
+  state.inventory = inventory.status === 'fulfilled' ? inventory.value : undefined;
   renderRoutingCollection(); renderRoutingDetail();
 }
 
@@ -201,10 +202,14 @@ function renderRoutingDetail(): void {
   detail.append(metrics([['本机 Agent', String(drivers?.drivers.filter(driver => driver.available).length ?? 0)], ['Team 路由', String(teamRoutes?.routes.filter(route => route.effective).length ?? 0)], ['Codex 已发现', String(view?.routes.filter(route => route.discovered).length ?? 0)], ['Workflow 可路由', String(view?.routes.filter(route => route.routable).length ?? 0)]]));
   const content = div('detail-content');
   if (state.routingErrors.length) content.append(routingNotice(state.routingErrors));
+  const inventory = state.inventory; const byDriver = new Map((inventory?.drivers ?? []).map(entry => [entry.driver, entry]));
   const driverSection = div('section routing-table'); const driverHeading = div('section-title-row'); driverHeading.append(text('h3', 'section-title', '本机 Agent'), text('span', 'section-note', `${drivers?.drivers.length ?? 0} 个 Driver`)); driverSection.append(driverHeading);
   if (!drivers?.drivers.length) driverSection.append(empty('暂无可显示的本机 Agent'));
   for (const driver of drivers?.drivers ?? []) {
-    const item = div('route-row driver-route-row'); const identity = div('route-identity'); identity.append(text('strong', '', driver.driver), text('span', 'section-note', `${driver.provider} · ${driver.modelCount} 个模型`));
+    const probe = byDriver.get(driver.driver);
+    const version = probe?.version ? ` · ${probe.version}` : '';
+    const auth = probe ? (probe.authenticated ? ' · 已认证' : ' · 未认证') : '';
+    const item = div('route-row driver-route-row'); const identity = div('route-identity'); identity.append(text('strong', '', driver.driver), text('span', 'section-note', `${driver.provider} · ${driver.modelCount} 个模型${version}${auth}`));
     const states = div('route-states'); states.append(stateMark('Team', driver.teamEligible), stateMark('Workflow', driver.workflowEligible), status(driver.available ? 'available' : 'unavailable')); item.append(identity, states); driverSection.append(item);
   }
   content.append(driverSection);
@@ -305,7 +310,7 @@ function teamListItem(team: TeamSummary): HTMLButtonElement {
   button.dataset.id = team.teamId;
   const title = text('span', 'item-title', team.topic); title.title = team.topic;
   const top = div('item-topline'); top.append(title, status(team.state));
-  const meta = div('item-meta'); meta.append(text('span', '', `${modeLabel(team.mode)} · ${team.participants} 位参与者`), text('span', '', relativeTime(team.updatedAt)));
+  const meta = div('item-meta'); meta.append(text('span', '', `${team.participants} 位参与者`), text('span', '', relativeTime(team.updatedAt)));
   const progress = div('item-progress'); const bar = document.createElement('span'); bar.style.width = `${Math.min(100, Math.round(team.costUsed / team.costGrant * 100))}%`; progress.append(bar);
   button.append(top, meta, progress); button.addEventListener('click', () => selectTeam(team.teamId)); return button;
 }
@@ -324,9 +329,8 @@ function renderTeamDetail(): void {
   detail.replaceChildren();
   const header = div('detail-header');
   const titleRow = div('detail-title-row');
-  const title = document.createElement('div'); title.append(text('span', 'eyebrow', `${team.mode.toUpperCase()} · ${team.teamId}`), text('h2', 'detail-title', team.topic), text('div', 'detail-subtitle', team.project));
+  const title = document.createElement('div'); title.append(text('span', 'eyebrow', `PANEL · ${team.teamId}`), text('h2', 'detail-title', team.topic), text('div', 'detail-subtitle', team.project));
   const actions = div('header-actions');
-  if (team.mode === 'session' && (team.state === 'open' || team.state === 'running')) actions.append(actionButton('square', '关闭', 'close-team'));
   if (team.state !== 'closed') actions.append(actionButton('x-circle', '取消', 'cancel-team', 'danger'));
   titleRow.append(title, actions); header.append(titleRow); detail.append(header);
   detail.append(metrics([
@@ -349,17 +353,16 @@ function renderDiscussion(view: TeamGetResponse, messages: TeamMessagesResponse)
   const participants = div('section');
   const heading = div('section-title-row'); heading.append(text('h3', 'section-title', '参与者'), text('span', 'section-note', `${view.turns.length} 轮`)); participants.append(heading);
   const grid = div('participant-grid');
-  for (const participant of view.team.participants) grid.append(participantView(participant, view.turns, view.team.mode === 'session'));
+  for (const participant of view.team.participants) grid.append(participantView(participant, view.turns));
   participants.append(grid); fragment.append(participants);
   const selectedParticipant = view.team.participants.find(participant => participant.participantId === state.selectedParticipant);
   if (selectedParticipant) fragment.append(renderParticipantContribution(selectedParticipant, view.turns, messages.messages));
   const discussion = div('section discussion'); discussion.append(text('h3', 'section-title', '讨论'));
   if (!messages.messages.length) discussion.append(empty('暂无已提交消息')); else for (const message of messages.messages) discussion.append(messageView(message));
-  if (view.team.mode === 'session' && view.team.state === 'open') discussion.append(followUpComposer(view.team.participants));
   fragment.append(discussion); return fragment;
 }
 
-function participantView(participant: Participant, turns: ParticipantTurn[], allowTurnCancel: boolean): HTMLElement {
+function participantView(participant: Participant, turns: ParticipantTurn[]): HTMLElement {
   const selected = participant.participantId === state.selectedParticipant;
   const item = div(`participant${selected ? ' is-selected' : ''}`); item.tabIndex = 0; item.setAttribute('role', 'button'); item.setAttribute('aria-pressed', String(selected)); item.title = `查看 ${participant.label} 的产出`;
   item.addEventListener('click', event => {if ((event.target as HTMLElement).closest('button')) return; state.selectedParticipant = selected ? undefined : participant.participantId; renderTeamDetail()});
@@ -368,7 +371,7 @@ function participantView(participant: Participant, turns: ParticipantTurn[], all
   const relevant = turns.filter(turn => turn.participantId === participant.participantId).sort((a, b) => b.number - a.number).slice(0, 2);
   for (const turn of relevant) {
     const row = div('turn-row'); row.append(text('span', '', `第 ${turn.number} 轮`), status(turn.state));
-    if (allowTurnCancel && turn.state === 'active') row.append(actionButton('x-circle', '取消', 'cancel-turn', 'danger', turn.turnId)); else row.append(document.createElement('span'));
+    row.append(document.createElement('span'));
     item.append(row);
   }
   return item;
@@ -398,15 +401,6 @@ function messageView(message: TeamMessage): HTMLElement {
   if (message.referencedMessageIds?.length) body.append(text('div', 'message-ref', `引用 ${message.referencedMessageIds.join(', ')}`));
   const toggle = document.createElement('label'); toggle.className = 'reference-toggle'; const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.name = 'reference-message'; checkbox.value = message.messageId; toggle.append(checkbox, document.createTextNode('在追问中引用')); body.append(toggle);
   item.append(body); return item;
-}
-
-function followUpComposer(participants: Participant[]): HTMLElement {
-  const form = document.createElement('form'); form.className = 'composer'; form.id = 'follow-up-form';
-  form.append(text('h3', 'section-title', '定向追问'));
-  const textarea = document.createElement('textarea'); textarea.name = 'content'; textarea.required = true; textarea.maxLength = 16_384; textarea.placeholder = '让选中的参与者比较、质疑或完善一个决策'; form.append(textarea);
-  const options = div('composer-options'); const recipients = div('recipient-list');
-  for (const participant of participants) {const label = document.createElement('label'); label.className = 'check'; const input = document.createElement('input'); input.type = 'checkbox'; input.name = 'participant'; input.value = participant.participantId; label.append(input, document.createTextNode(participant.label)); recipients.append(label)}
-  const send = actionButton('send', '发送追问', 'submit-follow-up', 'primary'); send.type = 'submit'; options.append(recipients, send); form.append(options); return form;
 }
 
 function renderHandoffs(): HTMLElement {
@@ -721,17 +715,7 @@ function answerForm(node: ApplicationNodeView): HTMLElement {
 }
 
 function wireTeamActions(): void {
-  document.getElementById('follow-up-form')?.addEventListener('submit', event => {event.preventDefault(); void submitFollowUp(event.currentTarget as HTMLFormElement)});
-  for (const button of detail.querySelectorAll<HTMLButtonElement>('[data-action="cancel-turn"]')) button.addEventListener('click', () => void teamAction('cancel_turn', {cancelTurn: {turnId: button.dataset.value}}));
-  detail.querySelector<HTMLButtonElement>('[data-action="close-team"]')?.addEventListener('click', () => void teamAction('close', {close: {reason: 'host_closed'}}));
   detail.querySelector<HTMLButtonElement>('[data-action="cancel-team"]')?.addEventListener('click', () => void teamAction('cancel', {}));
-}
-
-async function submitFollowUp(form: HTMLFormElement): Promise<void> {
-  const data = new FormData(form); const participantIds = data.getAll('participant').map(String); const content = String(data.get('content') ?? '').trim();
-  const referencedMessageIds = [...detail.querySelectorAll<HTMLInputElement>('input[name="reference-message"]:checked')].map(input => input.value);
-  if (!content || !participantIds.length) {showError(new Error('Select at least one participant and enter a follow-up')); return}
-  await teamAction('follow_up', {followUp: {content, participantIds, referencedMessageIds}});
 }
 
 async function teamAction(type: string, payload: Record<string, unknown>): Promise<void> {
@@ -797,7 +781,6 @@ function statusLabel(value: string): string {
   const labels: Record<string, string> = {created: '已创建', running: '运行中', open: '开放', closing: '关闭中', cancelling: '取消中', closed: '已关闭', active: '进行中', responded: '已响应', completed: '已完成', succeeded: '成功', failed: '失败', cancelled: '已取消', waiting: '等待处理', paused: '已暂停', skipped: '已跳过', indeterminate: '未确定', pending: '待处理', approval: '等待批准', needs_input: '等待输入', not_started: '尚未开始'};
   return labels[value] ?? value.replaceAll('_', ' ');
 }
-function modeLabel(value: string): string {return value === 'session' ? '会话' : value === 'panel' ? '面板' : value}
 function nodeTypeLabel(value: string): string {return value === 'agent' ? 'Agent 节点' : value === 'approval' ? '审批节点' : value}
 function actionButton(icon: string, label: string, action: string, variant = '', value?: string): HTMLButtonElement {const button = document.createElement('button'); button.className = `command-button ${variant}`.trim(); button.dataset.action = action; if (value) button.dataset.value = value; const i = document.createElement('i'); i.dataset.lucide = icon; button.append(i, document.createTextNode(label)); return button}
 function div(className: string): HTMLDivElement {const value = document.createElement('div'); value.className = className; return value}

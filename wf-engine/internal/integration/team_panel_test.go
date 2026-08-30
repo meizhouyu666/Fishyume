@@ -52,7 +52,7 @@ func TestOneRoundPanelUsesDistinctModelsWithoutRunsMemoryOrWorkspaceWrites(t *te
 	if err := service.SetDriver(codexprocess.NewExplorationAdapter(process)); err != nil {
 		t.Fatal(err)
 	}
-	started, err := service.Start(context.Background(), teamcontract.TeamStartRequestV1{SchemaVersion: teamcontract.SchemaVersion, ClientRequestID: "integration-panel", Project: workspace, Mode: teamcontract.ModePanel, Topic: "Compare two recovery designs"})
+	started, err := service.Start(context.Background(), teamcontract.TeamStartRequestV1{SchemaVersion: teamcontract.SchemaVersion, ClientRequestID: "integration-panel", Project: workspace, Topic: "Compare two recovery designs"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestOneRoundPanelPreservesSuccessfulContributionWhenPeerFails(t *testing.T)
 	if err := service.SetDriver(codexprocess.NewExplorationAdapter(process)); err != nil {
 		t.Fatal(err)
 	}
-	started, err := service.Start(context.Background(), teamcontract.TeamStartRequestV1{SchemaVersion: teamcontract.SchemaVersion, ClientRequestID: "integration-partial-panel", Project: workspace, Mode: teamcontract.ModePanel, Topic: "scenario:team-partial\nCompare two recovery designs"})
+	started, err := service.Start(context.Background(), teamcontract.TeamStartRequestV1{SchemaVersion: teamcontract.SchemaVersion, ClientRequestID: "integration-partial-panel", Project: workspace, Topic: "scenario:team-partial\nCompare two recovery designs"})
 	if err != nil {
 		t.Fatal(err)
 	}

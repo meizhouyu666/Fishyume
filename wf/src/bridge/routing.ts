@@ -3,7 +3,7 @@ import type {RoutingCatalog} from './application.js';
 
 export const configApiVersion = 'fishyume.config/v1' as const;
 export const routingMethods = [
-  'driver.list', 'driver.models.discover', 'driver.models.probe',
+  'driver.list', 'driver.models.discover', 'driver.models.probe', 'driver.inventory',
   'routing.config.get', 'routing.config.update', 'routing.availability', 'routing.catalog.effective',
   'team.routes.get', 'team.routes.refresh', 'team.routes.upsert', 'team.routes.remove',
 ] as const;
@@ -29,11 +29,14 @@ export interface TeamDriverStatus {driver: string; available: boolean; executabl
 export interface TeamRouteView extends TeamRouteSetting {driverAvailable: boolean; effective: boolean; diagnostic?: string}
 export interface TeamRoutesResponse {schemaVersion: typeof configApiVersion; config: TeamRouteConfig; drivers: TeamDriverStatus[]; routes: TeamRouteView[]; catalogHash?: string}
 export interface TeamRoutesMutationResponse extends TeamRoutesResponse {replayed: boolean}
+export interface DriverInventoryEntry {driver: string; installed: boolean; version?: string; authenticated: boolean; models: string[]; executable?: string; diagnostic?: string; observedAt: string}
+export interface DriverInventoryResponse {schemaVersion: 'fishyume.driver-inventory/v1'; drivers: DriverInventoryEntry[]}
 
 export interface RoutingResponses {
   'driver.list': DriverListResponse;
   'driver.models.discover': DiscoveryResponse;
   'driver.models.probe': ProbeResponse;
+  'driver.inventory': DriverInventoryResponse;
   'routing.config.get': ConfigGetResponse;
   'routing.config.update': ConfigUpdateResponse;
   'routing.availability': AvailabilityResponse;

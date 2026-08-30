@@ -300,21 +300,6 @@ func ValidateActionRequest(value TeamActionV1) error {
 	if err := validateAPIID(value.TeamID, "teamId"); err != nil {
 		return err
 	}
-	if value.FollowUp != nil {
-		for _, id := range value.FollowUp.ParticipantIDs {
-			if err := validateAPIID(id, "participantId"); err != nil {
-				return err
-			}
-		}
-		for _, id := range value.FollowUp.ReferencedMessageIDs {
-			if err := validateAPIID(id, "messageId"); err != nil {
-				return err
-			}
-		}
-	}
-	if value.CancelTurn != nil {
-		return validateAPIID(value.CancelTurn.TurnID, "turnId")
-	}
 	return nil
 }
 

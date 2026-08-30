@@ -13,7 +13,7 @@ var contractHash = strings.Repeat("a", 64)
 func validTeam() TeamSessionV1 {
 	now := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
 	return TeamSessionV1{
-		SchemaVersion: SchemaVersion, TeamID: "team-1", ClientRequestID: "request-1", RequestHash: contractHash, Project: `C:\project`, Mode: ModePanel,
+		SchemaVersion: SchemaVersion, TeamID: "team-1", ClientRequestID: "request-1", RequestHash: contractHash, Project: `C:\project`,
 		Topic: "比较两个实现方案", CatalogHash: contractHash, State: LifecycleRunning, StateVersion: 1, CostGrant: DefaultCostGrant, CreatedAt: now, UpdatedAt: now,
 		Participants: []ParticipantV1{
 			{ParticipantID: "participant-1", Label: "architect", Role: "propose a coherent architecture", ModelID: "codex/local/gpt-5.6", Driver: "codex", Target: "local", State: ParticipantRunning, CurrentTurnID: "turn-1"},
@@ -120,23 +120,16 @@ func TestValidateStructuredContribution(t *testing.T) {
 	}
 }
 
-func TestValidateAllFrozenActionShapes(t *testing.T) {
+func TestValidateFrozenActionShape(t *testing.T) {
 	base := TeamActionV1{SchemaVersion: SchemaVersion, ActionID: "action-1", TeamID: "team-1", ExpectedStateVersion: 2}
-	valid := []TeamActionV1{
-		{SchemaVersion: base.SchemaVersion, ActionID: base.ActionID, TeamID: base.TeamID, ExpectedStateVersion: base.ExpectedStateVersion, Type: ActionFollowUp, FollowUp: &FollowUpActionV1{Content: "next", ParticipantIDs: []string{"participant-1"}}},
-		{SchemaVersion: base.SchemaVersion, ActionID: base.ActionID, TeamID: base.TeamID, ExpectedStateVersion: base.ExpectedStateVersion, Type: ActionCancelTurn, CancelTurn: &CancelTurnActionV1{TurnID: "turn-1"}},
-		{SchemaVersion: base.SchemaVersion, ActionID: base.ActionID, TeamID: base.TeamID, ExpectedStateVersion: base.ExpectedStateVersion, Type: ActionClose, Close: &CloseActionV1{Reason: CloseHostClosed}},
-		{SchemaVersion: base.SchemaVersion, ActionID: base.ActionID, TeamID: base.TeamID, ExpectedStateVersion: base.ExpectedStateVersion, Type: ActionCancel},
+	valid := TeamActionV1{SchemaVersion: base.SchemaVersion, ActionID: base.ActionID, TeamID: base.TeamID, ExpectedStateVersion: base.ExpectedStateVersion, Type: ActionCancel}
+	if err := ValidateAction(valid); err != nil {
+		t.Fatalf("valid action rejected: %+v: %v", valid, err)
 	}
-	for _, action := range valid {
-		if err := ValidateAction(action); err != nil {
-			t.Fatalf("valid action rejected: %+v: %v", action, err)
-		}
-	}
-	invalid := valid[0]
-	invalid.CancelTurn = &CancelTurnActionV1{TurnID: "turn-1"}
+	invalid := valid
+	invalid.Type = ActionType("bogus")
 	if err := ValidateAction(invalid); err == nil {
-		t.Fatal("action with mismatched payload was accepted")
+		t.Fatal("unsupported action type was accepted")
 	}
 }
 

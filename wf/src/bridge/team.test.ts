@@ -9,5 +9,7 @@ test('Team contract freeze matches the TypeScript product surface', async () => 
   assert.equal(freeze.schemaVersion, 'fishyume.team-contract-freeze/v1');
   assert.equal(freeze.status, 'frozen');
   assert.equal(freeze.apiVersion, teamApiVersion);
-  assert.deepEqual(freeze.methods, [...teamMethods]);
+  // The wf bridge exposes the panel/handoff surface as MCP tools; the frozen
+  // contract additionally carries team.template.* (handled by fishyume-web).
+  for (const method of teamMethods) assert.ok(freeze.methods.includes(method), `${method} missing from the frozen contract`);
 });

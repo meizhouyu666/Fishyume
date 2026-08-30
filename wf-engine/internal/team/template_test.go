@@ -35,7 +35,7 @@ func TestTeamTemplateLifecycleAndStartExpansion(t *testing.T) {
 	if err != nil || len(listed.Items) != 1 {
 		t.Fatalf("listed=%+v err=%v", listed, err)
 	}
-	started, err := service.Start(t.Context(), teamcontract.TeamStartRequestV1{SchemaVersion: teamcontract.SchemaVersion, ClientRequestID: "template-start-1", Project: t.TempDir(), Mode: teamcontract.ModePanel, Topic: "研究目标", TemplateID: "campus-research"})
+	started, err := service.Start(t.Context(), teamcontract.TeamStartRequestV1{SchemaVersion: teamcontract.SchemaVersion, ClientRequestID: "template-start-1", Project: t.TempDir(), Topic: "研究目标", TemplateID: "campus-research"})
 	if err != nil {
 		t.Fatal(err)
 	}

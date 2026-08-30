@@ -46,8 +46,7 @@ const (
 type Mode string
 
 const (
-	ModePanel   Mode = "panel"
-	ModeSession Mode = "session"
+	ModePanel Mode = "panel"
 )
 
 type Lifecycle string
@@ -123,10 +122,7 @@ const (
 type ActionType string
 
 const (
-	ActionFollowUp   ActionType = "follow_up"
-	ActionCancelTurn ActionType = "cancel_turn"
-	ActionClose      ActionType = "close"
-	ActionCancel     ActionType = "cancel"
+	ActionCancel ActionType = "cancel"
 )
 
 type EventType string
@@ -152,7 +148,6 @@ const (
 	ErrorCapabilityUnavailable ErrorCode = "capability_unavailable"
 	ErrorQuotaExceeded         ErrorCode = "quota_exceeded"
 	ErrorNotReady              ErrorCode = "not_ready"
-	ErrorSessionLost           ErrorCode = "session_lost"
 	ErrorProtocolMismatch      ErrorCode = "protocol_mismatch"
 	ErrorInternal              ErrorCode = "internal"
 )
@@ -163,7 +158,6 @@ type TeamSessionV1 struct {
 	ClientRequestID string          `json:"clientRequestId"`
 	RequestHash     string          `json:"requestHash"`
 	Project         string          `json:"project"`
-	Mode            Mode            `json:"mode"`
 	Topic           string          `json:"topic"`
 	Instructions    string          `json:"instructions,omitempty"`
 	CatalogHash     string          `json:"catalogHash"`
@@ -187,7 +181,6 @@ type TeamStartRequestV1 struct {
 	SchemaVersion   string              `json:"schemaVersion"`
 	ClientRequestID string              `json:"clientRequestId"`
 	Project         string              `json:"project"`
-	Mode            Mode                `json:"mode"`
 	Topic           string              `json:"topic"`
 	Instructions    string              `json:"instructions,omitempty"`
 	TemplateID      string              `json:"templateId,omitempty"`
@@ -319,18 +312,13 @@ type TeamLimitsV1 struct {
 }
 
 type TeamFeatureFlagsV1 struct {
-	Panel      bool `json:"panel"`
-	Handoff    bool `json:"handoff"`
-	Session    bool `json:"session"`
-	FollowUp   bool `json:"followUp"`
-	CancelTurn bool `json:"cancelTurn"`
-	Close      bool `json:"close"`
-	Cancel     bool `json:"cancel"`
+	Panel   bool `json:"panel"`
+	Handoff bool `json:"handoff"`
+	Cancel  bool `json:"cancel"`
 }
 
 type TeamCapabilitiesV1 struct {
 	SchemaVersion        string                  `json:"schemaVersion"`
-	SupportedModes       []Mode                  `json:"supportedModes"`
 	Features             TeamFeatureFlagsV1      `json:"features"`
 	Limits               TeamLimitsV1            `json:"limits"`
 	ParticipantTemplates []ParticipantTemplateV1 `json:"participantTemplates"`
@@ -338,29 +326,12 @@ type TeamCapabilitiesV1 struct {
 	CatalogHash          string                  `json:"catalogHash"`
 }
 
-type FollowUpActionV1 struct {
-	Content              string   `json:"content"`
-	ParticipantIDs       []string `json:"participantIds"`
-	ReferencedMessageIDs []string `json:"referencedMessageIds,omitempty"`
-}
-
-type CancelTurnActionV1 struct {
-	TurnID string `json:"turnId"`
-}
-
-type CloseActionV1 struct {
-	Reason CloseReason `json:"reason"`
-}
-
 type TeamActionV1 struct {
-	SchemaVersion        string              `json:"schemaVersion"`
-	ActionID             string              `json:"actionId"`
-	TeamID               string              `json:"teamId"`
-	ExpectedStateVersion uint64              `json:"expectedStateVersion"`
-	Type                 ActionType          `json:"type"`
-	FollowUp             *FollowUpActionV1   `json:"followUp,omitempty"`
-	CancelTurn           *CancelTurnActionV1 `json:"cancelTurn,omitempty"`
-	Close                *CloseActionV1      `json:"close,omitempty"`
+	SchemaVersion        string     `json:"schemaVersion"`
+	ActionID             string     `json:"actionId"`
+	TeamID               string     `json:"teamId"`
+	ExpectedStateVersion uint64     `json:"expectedStateVersion"`
+	Type                 ActionType `json:"type"`
 }
 
 type HandoffArtifactV1 struct {
@@ -456,9 +427,6 @@ func ValidateTeamSession(value TeamSessionV1) error {
 	if err := validateBounded(value.Project, MaxProjectBytes, "project"); err != nil {
 		return err
 	}
-	if err := validateMode(value.Mode); err != nil {
-		return err
-	}
 	if err := validateBounded(value.Topic, MaxTopicBytes, "topic"); err != nil {
 		return err
 	}
@@ -515,9 +483,6 @@ func ValidateStartRequest(value TeamStartRequestV1) error {
 	}
 	if strings.TrimSpace(value.Project) == "" {
 		return fmt.Errorf("project is required")
-	}
-	if err := validateMode(value.Mode); err != nil {
-		return err
 	}
 	if strings.TrimSpace(value.Topic) == "" {
 		return fmt.Errorf("topic is required")
@@ -755,14 +720,6 @@ func ValidateCapabilities(value TeamCapabilitiesV1) error {
 	if value.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("unsupported team schema version %q", value.SchemaVersion)
 	}
-	if len(value.SupportedModes) == 0 {
-		return fmt.Errorf("supportedModes cannot be empty")
-	}
-	for _, mode := range value.SupportedModes {
-		if err := validateMode(mode); err != nil {
-			return err
-		}
-	}
 	if err := validateHashOrEmpty(value.CatalogHash, "catalogHash"); err != nil {
 		return err
 	}
@@ -826,56 +783,8 @@ func ValidateAction(value TeamActionV1) error {
 	if value.ExpectedStateVersion == 0 {
 		return fmt.Errorf("expectedStateVersion must be positive")
 	}
-	if value.Type != ActionFollowUp && value.Type != ActionCancelTurn && value.Type != ActionClose && value.Type != ActionCancel {
+	if value.Type != ActionCancel {
 		return fmt.Errorf("unsupported action type %q", value.Type)
-	}
-	count := 0
-	if value.FollowUp != nil {
-		count++
-		if value.Type != ActionFollowUp {
-			return fmt.Errorf("followUp payload does not match action type")
-		}
-		if err := validateBounded(value.FollowUp.Content, MaxMessageBytes, "follow-up content"); err != nil {
-			return err
-		}
-		if len(value.FollowUp.ParticipantIDs) == 0 {
-			return fmt.Errorf("follow-up requires participants")
-		}
-		for _, id := range value.FollowUp.ParticipantIDs {
-			if err := validateID(id, "follow-up participant"); err != nil {
-				return err
-			}
-		}
-		for _, id := range value.FollowUp.ReferencedMessageIDs {
-			if err := validateID(id, "follow-up reference"); err != nil {
-				return err
-			}
-		}
-	}
-	if value.CancelTurn != nil {
-		count++
-		if value.Type != ActionCancelTurn {
-			return fmt.Errorf("cancelTurn payload does not match action type")
-		}
-		if err := validateID(value.CancelTurn.TurnID, "turnId"); err != nil {
-			return err
-		}
-	}
-	if value.Close != nil {
-		count++
-		if value.Type != ActionClose {
-			return fmt.Errorf("close payload does not match action type")
-		}
-		if value.Close.Reason != CloseHostClosed && value.Close.Reason != CloseCancelled {
-			return fmt.Errorf("invalid close reason")
-		}
-	}
-	if value.Type == ActionCancel {
-		if count != 0 {
-			return fmt.Errorf("cancel action cannot carry another payload")
-		}
-	} else if count != 1 {
-		return fmt.Errorf("action requires exactly one matching payload")
 	}
 	return nil
 }
@@ -947,12 +856,6 @@ func ValidateError(value TeamErrorV1) error {
 	return validateBounded(value.Message, MaxMessageBytes, "error message")
 }
 
-func validateMode(value Mode) error {
-	if value != ModePanel && value != ModeSession {
-		return fmt.Errorf("unsupported team mode %q", value)
-	}
-	return nil
-}
 func validLifecycle(value Lifecycle) bool {
 	switch value {
 	case LifecycleCreated, LifecycleRunning, LifecycleOpen, LifecycleClosing, LifecycleCancelling, LifecycleClosed:
@@ -979,7 +882,7 @@ func validCloseReason(value CloseReason) bool {
 }
 func validErrorCode(value ErrorCode) bool {
 	switch value {
-	case ErrorInvalidArgument, ErrorNotFound, ErrorConflict, ErrorCapabilityUnavailable, ErrorQuotaExceeded, ErrorNotReady, ErrorSessionLost, ErrorProtocolMismatch, ErrorInternal:
+	case ErrorInvalidArgument, ErrorNotFound, ErrorConflict, ErrorCapabilityUnavailable, ErrorQuotaExceeded, ErrorNotReady, ErrorProtocolMismatch, ErrorInternal:
 		return true
 	}
 	return false

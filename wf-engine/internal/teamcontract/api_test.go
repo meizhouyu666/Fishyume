@@ -31,8 +31,8 @@ func TestTeamContractFreezeMatchesImplementation(t *testing.T) {
 	if !reflect.DeepEqual(freeze.Methods, StableMethods) {
 		t.Fatalf("methods=%v want %v", freeze.Methods, StableMethods)
 	}
-	wantActions := []ActionType{ActionFollowUp, ActionCancelTurn, ActionClose, ActionCancel}
-	wantErrors := []ErrorCode{ErrorInvalidArgument, ErrorNotFound, ErrorConflict, ErrorCapabilityUnavailable, ErrorQuotaExceeded, ErrorNotReady, ErrorSessionLost, ErrorProtocolMismatch, ErrorInternal}
+	wantActions := []ActionType{ActionCancel}
+	wantErrors := []ErrorCode{ErrorInvalidArgument, ErrorNotFound, ErrorConflict, ErrorCapabilityUnavailable, ErrorQuotaExceeded, ErrorNotReady, ErrorProtocolMismatch, ErrorInternal}
 	if !reflect.DeepEqual(freeze.Actions, wantActions) || !reflect.DeepEqual(freeze.ErrorCodes, wantErrors) || !reflect.DeepEqual(freeze.Limits, DefaultLimits()) {
 		t.Fatalf("Team freeze values do not match implementation")
 	}

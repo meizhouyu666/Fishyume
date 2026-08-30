@@ -125,12 +125,8 @@ func (r *teamRouteRuntime) ApplyTeamRoutes(catalog routing.CapabilityCatalogV1, 
 		if err := r.team.ReplaceDriver(r.codex.Exploration()); err != nil {
 			return err
 		}
-		if err := r.team.ReplaceSessionDriver(r.codex.Session()); err != nil {
-			return err
-		}
 	} else if !available["codex"] {
 		r.team.RemoveDriver("codex")
-		r.team.RemoveSessionDriver("codex")
 	}
 	if err := r.applyHarness("claude", available["claude"], catalog); err != nil {
 		return err
@@ -141,7 +137,6 @@ func (r *teamRouteRuntime) ApplyTeamRoutes(catalog routing.CapabilityCatalogV1, 
 func (r *teamRouteRuntime) applyHarness(name string, available bool, catalog routing.CapabilityCatalogV1) error {
 	if !available {
 		r.team.RemoveDriver(name)
-		r.team.RemoveSessionDriver(name)
 		return nil
 	}
 	if !catalogHasDriver(catalog, name) {
@@ -157,11 +152,7 @@ func (r *teamRouteRuntime) applyHarness(name string, available bool, catalog rou
 	}
 	if err != nil {
 		r.team.RemoveDriver(name)
-		r.team.RemoveSessionDriver(name)
 		return nil
-	}
-	if err := r.team.ReplaceSessionDriver(driver); err != nil {
-		return err
 	}
 	return r.team.ReplaceDriver(driver.Exploration())
 }

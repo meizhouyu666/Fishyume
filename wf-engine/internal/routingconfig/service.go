@@ -29,7 +29,7 @@ const (
 )
 
 var StableMethods = []string{
-	"driver.list", "driver.models.discover", "driver.models.probe",
+	"driver.list", "driver.models.discover", "driver.models.probe", "driver.inventory",
 	"routing.config.get", "routing.config.update", "routing.availability", "routing.catalog.effective",
 	"team.routes.get", "team.routes.refresh", "team.routes.upsert", "team.routes.remove",
 }

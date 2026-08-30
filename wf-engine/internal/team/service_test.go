@@ -59,7 +59,7 @@ func (d *immediateDriver) Cancel(context.Context, explorationdriver.ExecutionHan
 }
 
 func startRequest(project, requestID string) teamcontract.TeamStartRequestV1 {
-	return teamcontract.TeamStartRequestV1{SchemaVersion: teamcontract.SchemaVersion, ClientRequestID: requestID, Project: project, Mode: teamcontract.ModePanel, Topic: "Compare two approaches"}
+	return teamcontract.TeamStartRequestV1{SchemaVersion: teamcontract.SchemaVersion, ClientRequestID: requestID, Project: project, Topic: "Compare two approaches"}
 }
 
 func TestServiceUsesInjectedAgentRouteCatalog(t *testing.T) {
@@ -245,11 +245,6 @@ func TestStartRequiresExistingProjectAndTrustedDistinctModels(t *testing.T) {
 	duplicate.Participants = []teamcontract.ParticipantSpecV1{{Label: "one", Role: "one", ModelID: "codex/local/gpt-5.6"}, {Label: "two", Role: "two", ModelID: "codex/local/gpt-5.6"}}
 	if _, err := service.Start(context.Background(), duplicate); err == nil || !strings.Contains(err.Error(), "duplicated") {
 		t.Fatalf("duplicate model error=%v", err)
-	}
-	session := startRequest(project, "session")
-	session.Mode = teamcontract.ModeSession
-	if _, err := service.Start(context.Background(), session); !errors.Is(err, ErrCapabilityUnavailable) {
-		t.Fatalf("session error=%v", err)
 	}
 }
 

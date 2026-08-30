@@ -13,7 +13,7 @@ import {SetupProductCommand} from './commands/setup-product.js';
 import {DemoCommand} from './commands/demo.js';
 import {ExamplesListCommand, ExamplesShowCommand} from './commands/examples.js';
 import {MemoryCreateCommand, MemoryDeleteCommand, MemoryGetCommand, MemoryListCommand, MemorySupersedeCommand} from './commands/memory.js';
-import {TeamCancelCommand, TeamCancelTurnCommand, TeamCloseCommand, TeamFollowUpCommand, TeamListCommand, TeamShowCommand, TeamStartCommand} from './commands/team.js';
+import {TeamCancelCommand, TeamListCommand, TeamShowCommand, TeamStartCommand} from './commands/team.js';
 import {TeamHandoffBindCommand, TeamHandoffCreateCommand, TeamHandoffListCommand, TeamHandoffShowCommand} from './commands/team-handoff.js';
 import {DriversInspectCommand, RoutingDisableCommand, RoutingEnableCommand, RoutingRefreshCommand, RoutingShowCommand, TeamRoutesRefreshCommand, TeamRoutesRemoveCommand, TeamRoutesSetCommand, TeamRoutesShowCommand} from './commands/routing.js';
 
@@ -42,9 +42,6 @@ cli.register(TeamStartCommand);
 cli.register(TeamListCommand);
 cli.register(TeamShowCommand);
 cli.register(TeamCancelCommand);
-cli.register(TeamFollowUpCommand);
-cli.register(TeamCancelTurnCommand);
-cli.register(TeamCloseCommand);
 cli.register(TeamHandoffCreateCommand);
 cli.register(TeamHandoffListCommand);
 cli.register(TeamHandoffShowCommand);

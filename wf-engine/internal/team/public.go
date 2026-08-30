@@ -60,23 +60,8 @@ func (s *Service) Capabilities() (teamcontract.TeamCapabilitiesV1, error) {
 		sort.SliceStable(models, func(i, j int) bool { return models[i].ModelID < models[j].ModelID })
 		harnesses = append(harnesses, teamcontract.HarnessCapabilityV1{Driver: driver, Models: models})
 	}
-	s.mu.Lock()
-	sessionEnabled := true
-	for _, template := range templates {
-		driver := s.sessionDrivers[template.Driver]
-		if driver == nil || !containsString(driver.Capabilities().Targets, template.Target) {
-			sessionEnabled = false
-			break
-		}
-	}
-	s.mu.Unlock()
-	modes := []teamcontract.Mode{teamcontract.ModePanel}
 	features := teamcontract.TeamFeatureFlagsV1{Panel: true, Handoff: true, Cancel: true}
-	if sessionEnabled {
-		modes = append(modes, teamcontract.ModeSession)
-		features.Session, features.FollowUp, features.CancelTurn, features.Close = true, true, true, true
-	}
-	value := teamcontract.TeamCapabilitiesV1{SchemaVersion: teamcontract.SchemaVersion, SupportedModes: modes, Features: features, Limits: teamcontract.DefaultLimits(), ParticipantTemplates: templates, Harnesses: harnesses, CatalogHash: hash}
+	value := teamcontract.TeamCapabilitiesV1{SchemaVersion: teamcontract.SchemaVersion, Features: features, Limits: teamcontract.DefaultLimits(), ParticipantTemplates: templates, Harnesses: harnesses, CatalogHash: hash}
 	return value, teamcontract.ValidateCapabilities(value)
 }
 
@@ -146,7 +131,7 @@ func (s *Service) Recover(ctx context.Context) error {
 			if err := teamcontract.DecodeStrict(raw, &intent); err != nil {
 				return fmt.Errorf("recover Team action: %w", err)
 			}
-			if intent.Response == nil && (snapshot.Mode == teamcontract.ModeSession || intent.Action.Type == teamcontract.ActionCancel) {
+			if intent.Response == nil && intent.Action.Type == teamcontract.ActionCancel {
 				recoveringAction = true
 				s.actionAsync(intent.Action)
 			}
@@ -156,28 +141,6 @@ func (s *Service) Recover(ctx context.Context) error {
 		}
 		if snapshot.State == teamcontract.LifecycleClosed {
 			continue
-		}
-		if snapshot.Mode == teamcontract.ModeSession && snapshot.State != teamcontract.LifecycleCancelling && s.now().UTC().Sub(snapshot.CreatedAt) >= teamSessionLifetime {
-			s.mu.Lock()
-			if err := s.state.ReadTeamSnapshot(teamID, &snapshot); err != nil {
-				s.mu.Unlock()
-				return fmt.Errorf("recover expired Team %q: %w", teamID, err)
-			}
-			if snapshot.State != teamcontract.LifecycleClosed && snapshot.State != teamcontract.LifecycleClosing && snapshot.State != teamcontract.LifecycleCancelling {
-				snapshot.State, snapshot.StateVersion, snapshot.UpdatedAt = teamcontract.LifecycleClosing, snapshot.StateVersion+1, s.now().UTC()
-				if err := s.state.WriteTeamSnapshot(snapshot); err != nil {
-					s.mu.Unlock()
-					return fmt.Errorf("recover expired Team %q: %w", teamID, err)
-				}
-			}
-			terminal := currentParticipantsTerminal(s.state, snapshot)
-			s.mu.Unlock()
-			if terminal {
-				if err := s.finalizeGracefulClose(ctx, teamID); err != nil {
-					return fmt.Errorf("close expired Team %q: %w", teamID, err)
-				}
-				continue
-			}
 		}
 		switch snapshot.State {
 		case teamcontract.LifecycleCreated, teamcontract.LifecycleRunning, teamcontract.LifecycleClosing:
@@ -264,7 +227,7 @@ func (s *Service) List(request teamcontract.TeamListRequestV1) (teamcontract.Tea
 			next = items[len(items)-1].TeamID
 			break
 		}
-		items = append(items, teamcontract.TeamSummaryV1{TeamID: snapshot.TeamID, Project: snapshot.Project, Mode: snapshot.Mode, Topic: snapshot.Topic, State: snapshot.State, StateVersion: snapshot.StateVersion, CloseReason: snapshot.CloseReason, Participants: len(snapshot.Participants), CostGrant: snapshot.CostGrant, CostUsed: snapshot.CostUsed, CreatedAt: snapshot.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: snapshot.UpdatedAt.Format(time.RFC3339Nano)})
+		items = append(items, teamcontract.TeamSummaryV1{TeamID: snapshot.TeamID, Project: snapshot.Project, Topic: snapshot.Topic, State: snapshot.State, StateVersion: snapshot.StateVersion, CloseReason: snapshot.CloseReason, Participants: len(snapshot.Participants), CostGrant: snapshot.CostGrant, CostUsed: snapshot.CostUsed, CreatedAt: snapshot.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: snapshot.UpdatedAt.Format(time.RFC3339Nano)})
 	}
 	return teamcontract.TeamListResponseV1{SchemaVersion: teamcontract.SchemaVersion, Items: items, NextCursor: next}, nil
 }
@@ -345,10 +308,6 @@ func (s *Service) Messages(request teamcontract.TeamMessagesRequestV1) (teamcont
 func (s *Service) Action(ctx context.Context, action teamcontract.TeamActionV1) (teamcontract.TeamActionResponseV1, error) {
 	if err := teamcontract.ValidateActionRequest(action); err != nil {
 		return teamcontract.TeamActionResponseV1{}, err
-	}
-	modeSnapshot, snapshotErr := s.Get(action.TeamID)
-	if snapshotErr == nil && modeSnapshot.Mode == teamcontract.ModeSession {
-		return s.sessionAction(ctx, action)
 	}
 	if action.Type != teamcontract.ActionCancel {
 		return teamcontract.TeamActionResponseV1{}, ErrCapabilityUnavailable

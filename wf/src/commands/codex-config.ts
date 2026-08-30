@@ -34,6 +34,7 @@ export const fishyumeMcpTools = [
   'driver.list',
   'driver.models.discover',
   'driver.models.probe',
+  'driver.inventory',
   'routing.config.get',
   'routing.config.update',
   'routing.availability',

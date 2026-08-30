@@ -6,9 +6,8 @@ export const teamMethods = [
   'team.handoff.create', 'team.handoff.get', 'team.handoff.list', 'team.handoff.bindRun',
 ] as const;
 export type TeamMethod = typeof teamMethods[number];
-export type TeamErrorCode = 'invalid_argument' | 'not_found' | 'conflict' | 'capability_unavailable' | 'quota_exceeded' | 'not_ready' | 'session_lost' | 'protocol_mismatch' | 'internal';
+export type TeamErrorCode = 'invalid_argument' | 'not_found' | 'conflict' | 'capability_unavailable' | 'quota_exceeded' | 'not_ready' | 'protocol_mismatch' | 'internal';
 export interface TeamError {code: TeamErrorCode; message: string; retryable?: boolean}
-export type TeamMode = 'panel' | 'session';
 export type TeamLifecycle = 'created' | 'running' | 'open' | 'closing' | 'cancelling' | 'closed';
 export type TeamCloseReason = 'panel_settled' | 'host_closed' | 'cancelled';
 export type ParticipantState = 'pending' | 'running' | 'responded' | 'failed' | 'indeterminate' | 'cancelled';
@@ -20,20 +19,20 @@ export interface UsageEstimate {inputTokens?: number; outputTokens?: number; tot
 export type ContributionType = 'report' | 'decision' | 'artifact' | 'data' | 'question';
 export interface TeamTurnUsage {target: string; catalogHash: string; costUnits: number; cumulativeCostUnits: number; tokenEstimate?: UsageEstimate}
 export interface ParticipantTurn {schemaVersion: typeof teamApiVersion; teamId: string; participantId: string; turnId: string; number: number; state: TurnState; driver: string; target: string; modelId: string; usage: TeamTurnUsage; contributionMessageId?: string; diagnostic?: string; createdAt: string; updatedAt: string; completedAt?: string}
-export interface TeamSession {schemaVersion: typeof teamApiVersion; teamId: string; clientRequestId: string; requestHash: string; project: string; mode: TeamMode; topic: string; instructions?: string; catalogHash: string; participants: Participant[]; state: TeamLifecycle; stateVersion: number; costGrant: number; costUsed: number; closeReason?: TeamCloseReason; createdAt: string; updatedAt: string}
+export interface TeamSession {schemaVersion: typeof teamApiVersion; teamId: string; clientRequestId: string; requestHash: string; project: string; topic: string; instructions?: string; catalogHash: string; participants: Participant[]; state: TeamLifecycle; stateVersion: number; costGrant: number; costUsed: number; closeReason?: TeamCloseReason; createdAt: string; updatedAt: string}
 export interface Contribution {schemaVersion: typeof teamApiVersion; status: 'completed' | 'partial' | 'unable'; resultType?: ContributionType; output?: unknown; contentMarkdown?: string; warnings?: string[]; openQuestions?: string[]; usageEstimates?: UsageEstimate}
 export interface TeamMessage {schemaVersion: typeof teamApiVersion; messageId: string; teamId: string; sequence: number; kind: 'host_message' | 'participant_contribution'; actor: string; recipients?: string[]; turnId?: string; content: string; referencedMessageIds?: string[]; createdAt: string; contentHash: string}
 export interface TeamEvent {schemaVersion: typeof teamApiVersion; teamId: string; sequence: number; type: string; stateVersion: number; messageId?: string; turnId?: string; summary?: string; createdAt: string}
-export interface TeamCapabilities {schemaVersion: typeof teamApiVersion; supportedModes: TeamMode[]; features: {panel: boolean; handoff: boolean; session: boolean; followUp: boolean; cancelTurn: boolean; close: boolean; cancel: boolean}; limits: Record<string, number>; participantTemplates: Array<ParticipantSpec & {driver: string; target: string}>; catalogHash: string}
-export interface TeamStartRequest {schemaVersion: typeof teamApiVersion; clientRequestId: string; project: string; mode: TeamMode; topic: string; instructions?: string; participants?: ParticipantSpec[]; costGrant?: number}
+export interface TeamCapabilities {schemaVersion: typeof teamApiVersion; features: {panel: boolean; handoff: boolean; cancel: boolean}; limits: Record<string, number>; participantTemplates: Array<ParticipantSpec & {driver: string; target: string}>; catalogHash: string}
+export interface TeamStartRequest {schemaVersion: typeof teamApiVersion; clientRequestId: string; project: string; topic: string; instructions?: string; participants?: ParticipantSpec[]; costGrant?: number}
 export interface TeamStartResponse {schemaVersion: typeof teamApiVersion; team: TeamSession; replayed: boolean}
-export interface TeamSummary {teamId: string; project: string; mode: TeamMode; topic: string; state: TeamLifecycle; stateVersion: number; closeReason?: TeamCloseReason; participants: number; costGrant: number; costUsed: number; createdAt: string; updatedAt: string}
+export interface TeamSummary {teamId: string; project: string; topic: string; state: TeamLifecycle; stateVersion: number; closeReason?: TeamCloseReason; participants: number; costGrant: number; costUsed: number; createdAt: string; updatedAt: string}
 export interface TeamListResponse {schemaVersion: typeof teamApiVersion; items: TeamSummary[]; nextCursor?: string}
 export interface TeamGetResponse {schemaVersion: typeof teamApiVersion; team: TeamSession; turns: ParticipantTurn[]}
 export interface TeamEventsResponse {schemaVersion: typeof teamApiVersion; teamId: string; events: TeamEvent[]; nextAfterSequence: number; more: boolean}
 export interface TeamMessagesResponse {schemaVersion: typeof teamApiVersion; teamId: string; messages: TeamMessage[]; nextAfterSequence: number; more: boolean}
-export type TeamActionType = 'follow_up' | 'cancel_turn' | 'close' | 'cancel';
-export interface TeamActionRequest {schemaVersion: typeof teamApiVersion; actionId: string; teamId: string; expectedStateVersion: number; type: TeamActionType; followUp?: {content: string; participantIds: string[]; referencedMessageIds?: string[]}; cancelTurn?: {turnId: string}; close?: {reason: 'host_closed' | 'cancelled'}}
+export type TeamActionType = 'cancel';
+export interface TeamActionRequest {schemaVersion: typeof teamApiVersion; actionId: string; teamId: string; expectedStateVersion: number; type: TeamActionType}
 export interface TeamActionResponse {schemaVersion: typeof teamApiVersion; actionId: string; teamId: string; type: TeamActionType; stateVersion: number; state: TeamLifecycle; replayed: boolean}
 export interface HandoffArtifact {schemaVersion: typeof teamApiVersion; handoffId: string; teamId: string; sourceTeamVersion: number; goal: string; decisions?: string[]; constraints?: string[]; openQuestions?: string[]; acceptanceExpectations?: string[]; selectedMessageIds: string[]; sourceMessageHashes: string[]; contentHash: string; createdAt: string}
 export interface HandoffBinding {teamId: string; handoffId: string; runId: string; project: string; boundAt: string}

@@ -19,7 +19,7 @@ func TestCapabilitiesAndPublicPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	capabilities, err := service.Capabilities()
-	if err != nil || len(capabilities.ParticipantTemplates) != 2 || len(capabilities.Harnesses) != 1 || len(capabilities.Harnesses[0].Models) != 2 || !capabilities.Features.Panel || !capabilities.Features.Cancel || !capabilities.Features.Handoff || capabilities.Features.Session {
+	if err != nil || len(capabilities.ParticipantTemplates) != 2 || len(capabilities.Harnesses) != 1 || len(capabilities.Harnesses[0].Models) != 2 || !capabilities.Features.Panel || !capabilities.Features.Cancel || !capabilities.Features.Handoff {
 		t.Fatalf("capabilities=%+v err=%v", capabilities, err)
 	}
 	started, err := service.Start(context.Background(), startRequest(t.TempDir(), "public-pages"))
@@ -89,9 +89,9 @@ func TestCancelActionIsConfirmedIdempotentAndCapabilityGated(t *testing.T) {
 	if _, err := service.Action(context.Background(), conflict); !errors.Is(err, ErrConflict) {
 		t.Fatalf("conflict=%v", err)
 	}
-	unsupported := teamcontract.TeamActionV1{SchemaVersion: teamcontract.SchemaVersion, ActionID: "action-follow", TeamID: current.TeamID, ExpectedStateVersion: response.StateVersion, Type: teamcontract.ActionFollowUp, FollowUp: &teamcontract.FollowUpActionV1{Content: "more", ParticipantIDs: []string{"participant-1"}}}
-	if _, err := service.Action(context.Background(), unsupported); !errors.Is(err, ErrCapabilityUnavailable) {
-		t.Fatalf("unsupported=%v", err)
+	unsupported := teamcontract.TeamActionV1{SchemaVersion: teamcontract.SchemaVersion, ActionID: "action-bogus", TeamID: current.TeamID, ExpectedStateVersion: response.StateVersion, Type: teamcontract.ActionType("bogus")}
+	if _, err := service.Action(context.Background(), unsupported); err == nil {
+		t.Fatalf("bogus action was accepted")
 	}
 	intents, err := state.ListTeamActionIntents(current.TeamID)
 	if err != nil || len(intents) != 1 {

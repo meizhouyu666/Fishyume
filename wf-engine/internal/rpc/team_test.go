@@ -93,7 +93,7 @@ func TestTeamRPCStartAndCapabilityGates(t *testing.T) {
 	if err := os.MkdirAll(project, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	startedResponse := callTeamRPC(t, runs, applications, teams, "team.start", teamcontract.TeamStartRequestV1{SchemaVersion: teamcontract.SchemaVersion, ClientRequestID: "rpc-start", Project: project, Mode: teamcontract.ModePanel, Topic: "Compare RPC approaches"})
+	startedResponse := callTeamRPC(t, runs, applications, teams, "team.start", teamcontract.TeamStartRequestV1{SchemaVersion: teamcontract.SchemaVersion, ClientRequestID: "rpc-start", Project: project, Topic: "Compare RPC approaches"})
 	if startedResponse.Error != nil {
 		t.Fatal(startedResponse.Error)
 	}
@@ -220,7 +220,7 @@ func TestTeamRPCRejectsUnknownAndUnsupportedInvalidRequests(t *testing.T) {
 	if unknownHandoffField.Error == nil || unknownHandoffField.Error.Code != -32602 {
 		t.Fatalf("unknown Handoff field response=%+v", unknownHandoffField)
 	}
-	unknownModel := callTeamRPC(t, runs, applications, teams, "team.start", teamcontract.TeamStartRequestV1{SchemaVersion: teamcontract.SchemaVersion, ClientRequestID: "unknown-model", Project: t.TempDir(), Mode: teamcontract.ModePanel, Topic: "Compare", Participants: []teamcontract.ParticipantSpecV1{{Label: "one", Role: "first", ModelID: "codex/local/unknown"}, {Label: "two", Role: "second", ModelID: "codex/local/gpt-5.6"}}})
+	unknownModel := callTeamRPC(t, runs, applications, teams, "team.start", teamcontract.TeamStartRequestV1{SchemaVersion: teamcontract.SchemaVersion, ClientRequestID: "unknown-model", Project: t.TempDir(), Topic: "Compare", Participants: []teamcontract.ParticipantSpecV1{{Label: "one", Role: "first", ModelID: "codex/local/unknown"}, {Label: "two", Role: "second", ModelID: "codex/local/gpt-5.6"}}})
 	if unknownModel.Error == nil || unknownModel.Error.Code != -32602 {
 		t.Fatalf("unknown model error=%+v", unknownModel.Error)
 	}

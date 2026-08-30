@@ -19,7 +19,7 @@
     "team.template.upsert",
     "team.template.delete"
   ],
-  "actions": ["follow_up", "cancel_turn", "close", "cancel"],
+  "actions": ["cancel"],
   "errorCodes": [
     "invalid_argument",
     "not_found",
@@ -27,7 +27,6 @@
     "capability_unavailable",
     "quota_exceeded",
     "not_ready",
-    "session_lost",
     "protocol_mismatch",
     "internal"
   ],

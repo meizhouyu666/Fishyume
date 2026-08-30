@@ -35,7 +35,7 @@ const effectiveCatalog: EffectiveCatalogResponse = {
 };
 
 const teamCapabilities: TeamCapabilities = {
-  schemaVersion: 'fishyume.team/v1', supportedModes: ['panel'], features: {panel: true, handoff: true, session: false, followUp: false, cancelTurn: false, close: false, cancel: true},
+  schemaVersion: 'fishyume.team/v1', features: {panel: true, handoff: true, cancel: true},
   limits: {minParticipants: 2, maxParticipants: 4}, participantTemplates: [
     {label: 'architect', role: 'propose', modelId: 'codex/local/gpt-5.6', driver: 'codex', target: 'local'},
     {label: 'reviewer', role: 'challenge', modelId: 'codex/local/gpt-5.6-luna', driver: 'codex', target: 'local'},
@@ -72,6 +72,7 @@ class FakeApplicationClient implements EngineClient {
     if (method === 'driver.list') return {schemaVersion: 'fishyume.config/v1', drivers: [{driver: 'codex', provider: 'local', workflowEligible: true, teamEligible: true, available: true, modelCount: 1}]} as T;
     if (method === 'driver.models.discover') return {schemaVersion: 'fishyume.config/v1', driver: 'codex', observedAt: '2026-08-27T00:00:00Z', models: [], routes: effectiveCatalog.routes} as T;
     if (method === 'driver.models.probe') return {schemaVersion: 'fishyume.config/v1', entries: [{routeId: 'codex/local/gpt-5.6-sol', model: 'gpt-5.6-sol', status: 'available'}], catalogHash: effectiveCatalog.catalogHash} as T;
+    if (method === 'driver.inventory') return {schemaVersion: 'fishyume.driver-inventory/v1', drivers: [{driver: 'codex', installed: true, version: '0.148.0', authenticated: true, models: ['gpt-5.6-sol'], observedAt: '2026-08-27T00:00:00Z'}, {driver: 'claude', installed: false, authenticated: false, models: [], observedAt: '2026-08-27T00:00:00Z'}, {driver: 'opencode', installed: false, authenticated: false, models: [], observedAt: '2026-08-27T00:00:00Z'}]} as T;
     if (method === 'routing.config.get') return {schemaVersion: 'fishyume.config/v1', config: {schemaVersion: 'fishyume.config/v1', revision: 1, routes: [{routeId: 'codex/local/gpt-5.6-sol', enabled: true}], updatedAt: '2026-08-27T00:00:00Z'}} as T;
     if (method === 'routing.config.update') return {schemaVersion: 'fishyume.config/v1', config: {schemaVersion: 'fishyume.config/v1', revision: 2, routes: [{routeId: 'codex/local/gpt-5.6-sol', enabled: false}], updatedAt: '2026-08-27T00:00:01Z'}, replayed: false} as T;
     if (method === 'routing.availability') return {schemaVersion: 'fishyume.config/v1', entries: [{routeId: 'codex/local/gpt-5.6-sol', model: 'gpt-5.6-sol', status: 'available'}]} as T;
@@ -169,7 +170,7 @@ test('MCP and Machine CLI expose identical Application response JSON', async () 
   await Promise.all([mcpServer.connect(serverTransport), mcpClient.connect(clientTransport)]);
   try {
     const listed = await mcpClient.listTools();
-    assert.deepEqual(listed.tools.map(tool => tool.name), ['system.capabilities', 'routing.catalog', 'workflow.validate', 'workflow.explain', 'run.start', 'run.list', 'run.get', 'run.events', 'run.action', 'run.result', 'memory.create', 'memory.get', 'memory.list', 'memory.supersede', 'memory.delete', 'team.capabilities', 'team.start', 'team.list', 'team.get', 'team.events', 'team.messages', 'team.action', 'team.handoff.create', 'team.handoff.get', 'team.handoff.list', 'team.handoff.bindRun', 'web.open', 'driver.list', 'driver.models.discover', 'driver.models.probe', 'routing.config.get', 'routing.config.update', 'routing.availability', 'routing.catalog.effective', 'team.routes.get', 'team.routes.refresh', 'team.routes.upsert', 'team.routes.remove']);
+    assert.deepEqual(listed.tools.map(tool => tool.name), ['system.capabilities', 'routing.catalog', 'workflow.validate', 'workflow.explain', 'run.start', 'run.list', 'run.get', 'run.events', 'run.action', 'run.result', 'memory.create', 'memory.get', 'memory.list', 'memory.supersede', 'memory.delete', 'team.capabilities', 'team.start', 'team.list', 'team.get', 'team.events', 'team.messages', 'team.action', 'team.handoff.create', 'team.handoff.get', 'team.handoff.list', 'team.handoff.bindRun', 'web.open', 'driver.list', 'driver.models.discover', 'driver.models.probe', 'driver.inventory', 'routing.config.get', 'routing.config.update', 'routing.availability', 'routing.catalog.effective', 'team.routes.get', 'team.routes.refresh', 'team.routes.upsert', 'team.routes.remove']);
     for (const tool of listed.tools) {
       const schema = JSON.stringify(tool.inputSchema);
       for (const legacy of ['"backend"', '"tool"', '"runtime"']) assert.equal(schema.includes(legacy), false, `${tool.name} exposed ${legacy}`);
