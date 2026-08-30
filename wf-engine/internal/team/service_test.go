@@ -248,6 +248,14 @@ func TestStartRequiresExistingProjectAndTrustedDistinctModels(t *testing.T) {
 	}
 }
 
+func TestStartRejectsLegacySessionModeWithoutDispatch(t *testing.T) {
+	request := startRequest(t.TempDir(), "legacy-session")
+	request.Mode = "session"
+	if _, err := NewService(store.New(t.TempDir())).Start(context.Background(), request); !errors.Is(err, ErrCapabilityUnavailable) {
+		t.Fatalf("session mode error = %v", err)
+	}
+}
+
 func TestStartRejectsGrantBelowTrustedInitialReservation(t *testing.T) {
 	project := t.TempDir()
 	request := startRequest(project, "small-grant")

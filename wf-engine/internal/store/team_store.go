@@ -154,13 +154,32 @@ func (s *Store) ReadTeamSnapshot(teamID string, target *teamcontract.TeamSession
 	if err := validateID("team", teamID); err != nil {
 		return err
 	}
-	if err := readTeamContractJSON(s.TeamSnapshotPath(teamID), target); err != nil {
+	if err := readTeamSessionCompatJSON(s.TeamSnapshotPath(teamID), target); err != nil {
 		return err
 	}
 	if target.TeamID != teamID {
 		return fmt.Errorf("Team snapshot ID %q does not match %q", target.TeamID, teamID)
 	}
 	return teamcontract.ValidateTeamSession(*target)
+}
+
+func readTeamSessionCompatJSON(path string, target *teamcontract.TeamSessionV1) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open Team contract %q: %w", path, err)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, int64(teamcontract.MaxHandoffBytes)+1))
+	if err != nil {
+		return fmt.Errorf("read Team contract %q: %w", path, err)
+	}
+	if len(data) > teamcontract.MaxHandoffBytes {
+		return fmt.Errorf("Team contract %q exceeds %d bytes", path, teamcontract.MaxHandoffBytes)
+	}
+	if err := teamcontract.DecodeTeamSessionCompat(data, target); err != nil {
+		return fmt.Errorf("decode Team contract %q: %w", path, err)
+	}
+	return nil
 }
 
 func (s *Store) WriteTeamParticipant(value teamcontract.ParticipantV1, teamID string) error {

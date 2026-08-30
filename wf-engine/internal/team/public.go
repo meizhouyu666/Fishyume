@@ -91,6 +91,11 @@ func (s *Service) Recover(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("recover Team %q: %w", teamID, err)
 		}
+		if snapshot.LegacySession {
+			// Legacy session aggregates and their old action intents are
+			// historical-only. Do not decode or replay removed session actions.
+			continue
+		}
 		handoffIntents, readErr := s.state.ListTeamHandoffIntents(teamID)
 		if readErr != nil {
 			return readErr

@@ -198,6 +198,9 @@ func (s *Service) Drivers() []string {
 }
 
 func (s *Service) Start(ctx context.Context, request teamcontract.TeamStartRequestV1) (StartResult, error) {
+	if request.Mode == "session" {
+		return StartResult{}, ErrCapabilityUnavailable
+	}
 	if s == nil || s.state == nil {
 		return StartResult{}, fmt.Errorf("team state store is unavailable")
 	}

@@ -169,6 +169,9 @@ type TeamSessionV1 struct {
 	CloseReason     CloseReason     `json:"closeReason,omitempty"`
 	CreatedAt       time.Time       `json:"createdAt"`
 	UpdatedAt       time.Time       `json:"updatedAt"`
+	// LegacySession is set only when a pre-panel-only snapshot contained
+	// mode: session. It is process-local metadata and is never serialized.
+	LegacySession bool `json:"-"`
 }
 
 type ParticipantSpecV1 struct {
@@ -186,6 +189,9 @@ type TeamStartRequestV1 struct {
 	TemplateID      string              `json:"templateId,omitempty"`
 	Participants    []ParticipantSpecV1 `json:"participants,omitempty"`
 	CostGrant       int                 `json:"costGrant,omitempty"`
+	// Mode is accepted for wire compatibility with older clients. New clients
+	// omit it; session mode is no longer executable.
+	Mode string `json:"mode,omitempty"`
 }
 
 type ParticipantV1 struct {
@@ -400,6 +406,29 @@ func DecodeStrict(data []byte, target any) error {
 	return nil
 }
 
+// DecodeTeamSessionCompat reads both current panel snapshots and snapshots
+// written before TeamSession mode was removed. Legacy session snapshots are
+// readable but marked so recovery will not replay them.
+func DecodeTeamSessionCompat(data []byte, target *TeamSessionV1) error {
+	var value struct {
+		TeamSessionV1
+		Mode string `json:"mode,omitempty"`
+	}
+	if err := DecodeStrict(data, &value); err != nil {
+		return err
+	}
+	*target = value.TeamSessionV1
+	switch value.Mode {
+	case "", string(ModePanel):
+		// Current snapshots and legacy panel snapshots are equivalent.
+	case "session":
+		target.LegacySession = true
+	default:
+		return fmt.Errorf("unsupported legacy team mode %q", value.Mode)
+	}
+	return ValidateTeamSession(*target)
+}
+
 func CanonicalJSON(value any) ([]byte, error) { return json.Marshal(value) }
 
 func CanonicalHash(value any) (string, []byte, error) {
@@ -492,6 +521,9 @@ func ValidateStartRequest(value TeamStartRequestV1) error {
 	}
 	if err := validateBounded(value.Instructions, MaxInstructionsBytes, "instructions"); err != nil {
 		return err
+	}
+	if value.Mode != "" && value.Mode != string(ModePanel) && value.Mode != "session" {
+		return fmt.Errorf("unsupported team mode %q", value.Mode)
 	}
 	if value.TemplateID != "" {
 		if err := validateTemplateID(value.TemplateID, "templateId"); err != nil {

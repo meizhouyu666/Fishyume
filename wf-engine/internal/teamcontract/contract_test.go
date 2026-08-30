@@ -70,6 +70,30 @@ func TestDecodeStrictRejectsUnknownAndTrailingFields(t *testing.T) {
 	}
 }
 
+func TestDecodeTeamSessionCompatReadsLegacyModesWithoutReintroducingMode(t *testing.T) {
+	team := validTeam()
+	teamJSON, err := CanonicalJSON(team)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"panel", "session"} {
+		legacy := append([]byte(nil), teamJSON[:len(teamJSON)-1]...)
+		legacy = append(legacy, []byte(`,"mode":"`+mode+`"}`)...)
+		var decoded TeamSessionV1
+		if err := DecodeTeamSessionCompat(legacy, &decoded); err != nil {
+			t.Fatalf("mode %s: %v", mode, err)
+		}
+		if decoded.LegacySession != (mode == "session") {
+			t.Fatalf("mode %s legacy marker = %v", mode, decoded.LegacySession)
+		}
+		if output, err := CanonicalJSON(decoded); err != nil {
+			t.Fatal(err)
+		} else if strings.Contains(string(output), `"mode"`) {
+			t.Fatalf("compat decode reintroduced mode: %s", output)
+		}
+	}
+}
+
 func TestByteBoundariesCountUTF8Bytes(t *testing.T) {
 	team := validTeam()
 	base := strings.Repeat("界", MaxTopicBytes/len([]byte("界")))

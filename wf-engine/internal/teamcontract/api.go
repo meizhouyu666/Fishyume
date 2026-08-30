@@ -74,7 +74,6 @@ type TeamTemplateDeleteResponseV1 struct {
 type TeamSummaryV1 struct {
 	TeamID       string      `json:"teamId"`
 	Project      string      `json:"project"`
-	Mode         Mode        `json:"mode"`
 	Topic        string      `json:"topic"`
 	State        Lifecycle   `json:"state"`
 	StateVersion uint64      `json:"stateVersion"`
